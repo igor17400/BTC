@@ -87,38 +87,19 @@ def run_one(model: str, framework: str) -> dict:
             console.print(f"[red]  FAIL: {error_msg}[/red]")
             return result
 
-        # Parse metrics from stdout (look for "Test results:" or "val:" lines)
-        for line in proc.stdout.split("\n"):
-            if "Test results:" in line or "val:" in line:
-                # Extract key=value or key: value pairs
-                for part in line.split():
-                    if "=" in part:
-                        k, v = part.split("=", 1)
-                    elif ":" in part and part[0].isalpha():
-                        continue  # skip "results:" etc
-                    else:
-                        continue
-                    k = k.strip()
-                    try:
-                        v_float = float(v)
-                        if k in ("loss", "auc", "mrr", "ndcg@5", "ndcg@10"):
-                            result[k] = f"{v_float:.4f}"
-                    except ValueError:
-                        pass
+        # Parse metrics from stdout
+        # All frameworks now use shared format: "Test: loss=1.63  auc=0.47  ..."
+        metric_keys = {"loss", "auc", "mrr", "ndcg@5", "ndcg@10"}
 
-        # Also try parsing "key: value" format from JAX output
         for line in proc.stdout.split("\n"):
-            if "Test results:" in line:
-                parts = line.split("Test results:")[-1].strip()
-                for pair in parts.split("  "):
-                    pair = pair.strip()
-                    if ": " in pair:
-                        k, v = pair.split(": ", 1)
-                        k = k.strip()
+            if "Test:" not in line:
+                continue
+            for part in line.split():
+                if "=" in part:
+                    k, _, v = part.partition("=")
+                    if k in metric_keys:
                         try:
-                            v_float = float(v)
-                            if k in ("loss", "auc", "mrr", "ndcg@5", "ndcg@10"):
-                                result[k] = f"{v_float:.4f}"
+                            result[k] = f"{float(v):.4f}"
                         except ValueError:
                             pass
 

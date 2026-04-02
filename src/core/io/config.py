@@ -30,7 +30,7 @@ def save_model_config(config: DictConfig, model_weights_path: Path) -> Path:
     with open(config_path, "w") as f:
         yaml.dump(config_dict, f, default_flow_style=False)
 
-    console.log(f"Saved model configuration to: {config_path}")
+    # Silent — logged at end of training only
     return config_path
 
 

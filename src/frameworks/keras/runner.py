@@ -242,7 +242,7 @@ def run(cfg: DictConfig):
         console=console,
         transient=False,
     ) as global_progress_bar:
-        training_loop_orchestrator(
+        best_epoch_metrics, test_metrics = training_loop_orchestrator(
             model,
             dataset_provider,
             cfg,
@@ -251,4 +251,4 @@ def run(cfg: DictConfig):
             output_run_dir,
         )
 
-    console.log(f"--- {cfg.model_name} Training Run Finished ---")
+    return test_metrics or best_epoch_metrics or {}

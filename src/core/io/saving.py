@@ -92,7 +92,7 @@ def save_run_summary_fn(
                 indent=4,
                 default=lambda o: str(o) if isinstance(o, Path) else None,
             )  # Handle Path objects, raise for others
-        console.log(f"Training run summary saved to {summary_filepath}")
+        # Silent — summary saved alongside other outputs
     except TypeError as e:
         console.log(
             f"[red]Error saving summary to JSON: {e}. Data causing issues might be in complex objects.[/red]"

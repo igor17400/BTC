@@ -5,6 +5,7 @@ keeping train.py as a thin dispatcher.
 """
 
 import random
+import time
 
 import hydra
 import numpy as np
@@ -12,7 +13,7 @@ from flax import nnx
 from omegaconf import DictConfig
 from rich.progress import Progress
 
-from src.core.io.logging import console
+from src.core.io.logging import console, log_test_results, log_training_complete
 from src.core.io.saving import get_output_run_dir
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
@@ -111,6 +112,7 @@ def run(cfg: DictConfig):
     from src.frameworks.jax.evaluation import fast_evaluate
     from src.frameworks.jax.training import training_loop
 
+    start_time = time.time()
     console.log("[bold]Initializing JAX/Flax NNX training...[/bold]")
 
     # Seed everything for reproducibility
@@ -194,10 +196,7 @@ def run(cfg: DictConfig):
                 process_user_id=getattr(model, "process_user_id", False),
                 int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
             )
-        metrics_str = "  ".join(
-            f"{k}: {v:.4f}" for k, v in test_metrics.items() if k != "num_impressions"
-        )
-        console.log(f"[bold green]Test results:[/bold green] {metrics_str}")
+        log_test_results(test_metrics)
 
-    console.log(f"--- {cfg.model_name} JAX Training Run Finished ---")
+    log_training_complete(cfg.model_name, "jax", time.time() - start_time)
     return test_metrics or best_metrics

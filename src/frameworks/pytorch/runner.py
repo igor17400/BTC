@@ -5,13 +5,14 @@ keeping train.py as a thin dispatcher.
 """
 
 import random
+import time
 
 import hydra
 import numpy as np
 import torch
 from omegaconf import DictConfig
 
-from src.core.io.logging import console
+from src.core.io.logging import console, log_training_complete
 from src.core.io.saving import get_output_run_dir
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
@@ -130,6 +131,7 @@ def run(cfg: DictConfig):
     from src.frameworks.pytorch.dataloaders import create_train_dataloader
     from src.frameworks.pytorch.training import training_loop
 
+    start_time = time.time()
     console.log("[bold]Initializing PyTorch training...[/bold]")
 
     # Seed everything for reproducibility
@@ -189,5 +191,5 @@ def run(cfg: DictConfig):
         else None,
     )
 
-    console.log(f"--- {cfg.model_name} PyTorch Training Run Finished ---")
+    log_training_complete(cfg.model_name, "pytorch", time.time() - start_time)
     return result.get("best_metrics", result) if isinstance(result, dict) else {}
