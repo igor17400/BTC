@@ -12,7 +12,9 @@ import numpy as np
 import torch
 from omegaconf import DictConfig
 
-from src.core.io.logging import console, log_training_complete
+from rich.progress import Progress
+
+from src.core.io.logging import console, log_test_results, log_training_complete
 from src.core.io.saving import get_output_run_dir
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
@@ -191,5 +193,32 @@ def run(cfg: DictConfig):
         else None,
     )
 
+    # Test evaluation
+    test_metrics = None
+    if cfg.eval.run_test_after_training:
+        import torch
+
+        from src.frameworks.pytorch.evaluation import run_fast_evaluation
+
+        # Load best checkpoint if available
+        ckpt_path = output_run_dir / "models" / "best_model.pt"
+        if ckpt_path.exists():
+            model.load_state_dict(torch.load(ckpt_path, weights_only=True))
+
+        test_provider = _build_eval_provider(dataset_provider, cfg, mode="test")
+        test_metrics = run_fast_evaluation(
+            model=model,
+            dataset_provider=test_provider,
+            metrics_engine=metrics_engine,
+            progress=Progress(transient=True),
+            cfg=cfg,
+            mode="test",
+            int_to_news_id_map=dataset_provider.get_int_to_news_id_map()
+            if hasattr(dataset_provider, "get_int_to_news_id_map")
+            else None,
+        )
+        if test_metrics:
+            log_test_results(test_metrics)
+
     log_training_complete(cfg.model_name, "pytorch", time.time() - start_time)
-    return result.get("best_metrics", result) if isinstance(result, dict) else {}
+    return test_metrics or result.get("best_metrics", result) if isinstance(result, dict) else {}

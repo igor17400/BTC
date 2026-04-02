@@ -1,11 +1,12 @@
 """Keras framework runner for NewsReX.
 
-Provides ``run(cfg)`` as the single entry point for Keras training,
-keeping train.py as a thin dispatcher.
+Provides ``run(cfg)`` as the single entry point for Keras training.
+Same pattern as JAX/PyTorch: dataset → model → build dataloaders → train.
 """
 
 import os
 
+import numpy as np
 from omegaconf import DictConfig
 from rich.progress import (
     BarColumn,
@@ -20,7 +21,7 @@ from rich.progress import (
 from src.core.io.logging import console, setup_wandb_session
 from src.core.io.saving import get_output_run_dir
 from src.core.metrics.functions import NewsRecommenderMetrics
-
+from src.core.models.spec import build_model_from_spec
 
 SUPPORTED_BACKENDS = ("jax", "torch")
 
@@ -33,99 +34,49 @@ def _setup(cfg: DictConfig):
             f"Unsupported Keras backend: '{backend}'. Use one of: {SUPPORTED_BACKENDS}"
         )
 
-    # KERAS_BACKEND must be set before first import. If keras is already
-    # loaded with a different backend, we cannot switch in-process.
     current = os.environ.get("KERAS_BACKEND")
     if current and current != backend:
         raise RuntimeError(
-            f"Cannot switch Keras backend from '{current}' to '{backend}' "
-            f"in the same process. Run in a separate process."
+            f"Cannot switch Keras backend from '{current}' to '{backend}' in the same process."
         )
     os.environ["KERAS_BACKEND"] = backend
     import keras
 
     console.log(f"Keras backend: {keras.backend.backend()}")
 
-    # Precision setup
+    # Precision
     precision = getattr(cfg.device, "precision", "float32")
-    precision_map = {
-        "float32": "float32",
-        "float16": "mixed_float16",
-        "bfloat16": "mixed_bfloat16",
-    }
+    precision_map = {"float32": "float32", "float16": "mixed_float16", "bfloat16": "mixed_bfloat16"}
     policy_name = precision_map.get(precision, "float32")
-    if precision not in precision_map:
-        console.log(
-            f"[yellow]Warning: Invalid precision '{precision}'. Using 'float32'.[/yellow]"
-        )
-        policy_name = "float32"
-
-    console.log(
-        f"Setting Keras precision policy to '{policy_name}' (precision: {precision})."
-    )
     policy = keras.mixed_precision.Policy(policy_name)
     keras.mixed_precision.set_global_policy(policy)
-    console.log(f"  Compute dtype: {policy.compute_dtype}")
-    console.log(f"  Variable dtype: {policy.variable_dtype}")
 
-    if precision in ["float16", "bfloat16"]:
-        console.log(
-            f"  [green]Mixed precision enabled: Computations in {precision}, variables in float32[/green]"
-        )
-
-    # Set random seeds
+    # Seeds
     keras.utils.set_random_seed(cfg.seed)
 
-    # Device setup
+    # Device
     from src.frameworks.keras.device import setup_device
 
     setup_device(
         gpu_ids=cfg.device.gpu_ids if hasattr(cfg.device, "gpu_ids") else [],
-        memory_limit=cfg.device.memory_limit
-        if hasattr(cfg.device, "memory_limit")
-        else 0.9,
+        memory_limit=cfg.device.memory_limit if hasattr(cfg.device, "memory_limit") else 0.9,
     )
 
 
-def _ensure_keras_dataloaders(dataset_provider):
-    """Add Keras dataloader methods if the dataset doesn't have them."""
-    if hasattr(dataset_provider, "train_dataloader"):
-        return dataset_provider
-
+def _build_eval_fn(dataset_provider, metrics_engine, cfg, progress):
+    """Build an eval function that creates Keras dataloaders on the fly."""
     from src.frameworks.keras.dataloaders import (
         ImpressionIterator,
         NewsBatchDataloader,
-        NewsDataLoader,
         UserHistoryBatchDataloader,
     )
 
-    import numpy as np
-
-    def train_dataloader(batch_size, model_name="nrms"):
-        data = dataset_provider.train_behaviors_data
-        return NewsDataLoader.create_train_dataset(
-            history_news_tokens=data["history_news_tokens"],
-            history_news_abstract_tokens=data["history_news_abstract_tokens"],
-            history_news_category=data["history_news_categories"],
-            history_news_subcategory=data["history_news_subcategories"],
-            candidate_news_tokens=data["candidate_news_tokens"],
-            candidate_news_abstract_tokens=data["candidate_news_abstract_tokens"],
-            candidate_news_category=data["candidate_news_categories"],
-            candidate_news_subcategory=data["candidate_news_subcategories"],
-            labels=data["labels"],
-            user_ids=data["user_ids"],
-            batch_size=batch_size,
-            process_title=dataset_provider.process_title,
-            process_abstract=dataset_provider.process_abstract,
-            process_category=dataset_provider.process_category,
-            process_subcategory=dataset_provider.process_subcategory,
-            process_user_id=dataset_provider.process_user_id,
-            model_name=model_name,
-        )
-
-    def user_history_dataloader(mode, batch_size=32):
+    def eval_fn(model, mode="val"):
         data = dataset_provider.val_behaviors_data if mode == "val" else dataset_provider.test_behaviors_data
-        return UserHistoryBatchDataloader(
+        pn = dataset_provider.processed_news
+        batch_size = cfg.eval.batch_size
+
+        user_dl = UserHistoryBatchDataloader(
             history_tokens=data["history_news_tokens"],
             history_abstract_tokens=data["history_news_abstract_tokens"],
             history_category=data["history_news_categories"],
@@ -138,10 +89,19 @@ def _ensure_keras_dataloaders(dataset_provider):
             process_category=dataset_provider.process_category,
             process_subcategory=dataset_provider.process_subcategory,
         )
-
-    def impression_dataloader(mode):
-        data = dataset_provider.val_behaviors_data if mode == "val" else dataset_provider.test_behaviors_data
-        return ImpressionIterator(
+        news_dl = NewsBatchDataloader(
+            news_ids=np.array(pn["news_ids_original_strings"]),
+            news_tokens=pn["tokens"],
+            news_abstract_tokens=pn["abstract_tokens"],
+            news_category_indices=pn["category_indices"],
+            news_subcategory_indices=pn["subcategory_indices"],
+            batch_size=batch_size,
+            process_title=dataset_provider.process_title,
+            process_abstract=dataset_provider.process_abstract,
+            process_category=dataset_provider.process_category,
+            process_subcategory=dataset_provider.process_subcategory,
+        )
+        imp_iter = ImpressionIterator(
             impression_tokens=data["candidate_news_tokens"],
             impression_abstract_tokens=data["candidate_news_abstract_tokens"],
             impression_category=data["candidate_news_categories"],
@@ -155,100 +115,128 @@ def _ensure_keras_dataloaders(dataset_provider):
             process_subcategory=dataset_provider.process_subcategory,
         )
 
-    def news_dataloader(batch_size=64):
-        pn = dataset_provider.processed_news
-        return NewsBatchDataloader(
-            news_ids=np.array(pn["news_ids_original_strings"]),
-            news_tokens=pn["tokens"],
-            news_abstract_tokens=pn["abstract_tokens"],
-            news_category_indices=pn["category_indices"],
-            news_subcategory_indices=pn["subcategory_indices"],
-            batch_size=batch_size,
-            process_title=dataset_provider.process_title,
-            process_abstract=dataset_provider.process_abstract,
-            process_category=dataset_provider.process_category,
-            process_subcategory=dataset_provider.process_subcategory,
+        return model.fast_evaluate(
+            user_hist_dataloader=user_dl,
+            impression_iterator=imp_iter,
+            news_dataloader=news_dl,
+            metrics_calculator=metrics_engine,
+            progress=progress,
+            mode=mode,
+            int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
         )
 
-    dataset_provider.train_dataloader = train_dataloader
-    dataset_provider.user_history_dataloader = user_history_dataloader
-    dataset_provider.impression_dataloader = impression_dataloader
-    dataset_provider.news_dataloader = news_dataloader
-    return dataset_provider
+    return eval_fn
+
+
+def _build_test_fn(eval_fn):
+    """Build a test function that loads best weights then evaluates."""
+
+    def test_fn(model, best_model_path):
+        if best_model_path.exists():
+            model.load_weights(best_model_path)
+        else:
+            console.log("[yellow]Best weights not found, using current weights.[/yellow]")
+        return eval_fn(model, mode="test")
+
+    return test_fn
 
 
 def run(cfg: DictConfig):
     """Run training with Keras framework."""
     _setup(cfg)
 
-    from src.frameworks.keras.training import training_loop_orchestrator
-    from src.frameworks.keras.utils import (
-        LightweightNewsMetrics,
-        create_news_metrics,
-        initialize_model_and_dataset,
-        initialize_model_from_spec,
-    )
+    import hydra as _hydra
+    import keras
 
-    # Initialize WandB
+    from src.frameworks.keras.dataloaders import NewsDataLoader
+    from src.frameworks.keras.losses import get_loss
+    from src.frameworks.keras.training import training_loop
+    from src.frameworks.keras.utils import LightweightNewsMetrics, create_news_metrics
+
     setup_wandb_session(cfg)
 
-    # Prepare training metrics
-    if LightweightNewsMetrics.should_use_lightweight_metrics(cfg):
-        training_metrics = LightweightNewsMetrics.create_training_metrics()
-        console.log(
-            "Using lightweight metrics during training with custom metrics in callbacks"
+    # Dataset (same as JAX/PyTorch)
+    dataset_provider = _hydra.utils.instantiate(cfg.dataset, mode="train")
+    processed_news = dataset_provider.processed_news
+
+    # Model from spec (same as JAX/PyTorch)
+    spec = cfg.spec
+    model = build_model_from_spec(spec, "keras", processed_news)
+    console.log(f"Model {spec.model.name} instantiated for Keras.")
+
+    # Compile
+    optimizer = keras.optimizers.Adam(learning_rate=cfg.train.learning_rate)
+    loss_fn = get_loss(
+        loss_name=spec.training.loss.name,
+        from_logits=spec.training.loss.get("from_logits", False),
+        reduction=spec.training.loss.get("reduction", "sum_over_batch_size"),
+        label_smoothing=spec.training.loss.get("label_smoothing", 0.0),
+    )
+    training_metrics = (
+        LightweightNewsMetrics.create_training_metrics()
+        if LightweightNewsMetrics.should_use_lightweight_metrics(cfg)
+        else create_news_metrics(
+            NewsRecommenderMetrics(**cfg.metrics.params if hasattr(cfg.metrics, "params") else {})
         )
-    else:
-        training_metrics = create_news_metrics(
-            NewsRecommenderMetrics(
-                **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
-            )
-        )
-        console.log("Using full custom metrics during training")
+    )
+    model.compile(optimizer=optimizer, loss=loss_fn, metrics=training_metrics)
 
-    # Model and Dataset Initialization
-    has_spec = hasattr(cfg, "spec") and cfg.spec is not None
-    if has_spec:
-        console.log("Using YAML DSL spec for model initialization.")
-        model, dataset_provider = initialize_model_from_spec(cfg, training_metrics)
-    else:
-        model, dataset_provider = initialize_model_and_dataset(cfg, training_metrics)
+    # Build train dataset (Keras-specific: needs keras.utils.Sequence)
+    data = dataset_provider.train_behaviors_data
+    model_name = spec.model.name.lower()
+    train_dataset = NewsDataLoader.create_train_dataset(
+        history_news_tokens=data["history_news_tokens"],
+        history_news_abstract_tokens=data["history_news_abstract_tokens"],
+        history_news_category=data["history_news_categories"],
+        history_news_subcategory=data["history_news_subcategories"],
+        candidate_news_tokens=data["candidate_news_tokens"],
+        candidate_news_abstract_tokens=data["candidate_news_abstract_tokens"],
+        candidate_news_category=data["candidate_news_categories"],
+        candidate_news_subcategory=data["candidate_news_subcategories"],
+        labels=data["labels"],
+        user_ids=data["user_ids"],
+        batch_size=cfg.train.batch_size,
+        process_title=dataset_provider.process_title,
+        process_abstract=dataset_provider.process_abstract,
+        process_category=dataset_provider.process_category,
+        process_subcategory=dataset_provider.process_subcategory,
+        process_user_id=dataset_provider.process_user_id,
+        model_name=model_name,
+    )
 
-    # Ensure Keras dataloaders are available (for SyntheticDataset or other minimal datasets)
-    dataset_provider = _ensure_keras_dataloaders(dataset_provider)
-
-    # Metrics Calculator
+    # Metrics engine for evaluation
     metrics_engine = NewsRecommenderMetrics(
         **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
     )
 
-    # Setup output directory
+    # Output directory
     output_run_dir = get_output_run_dir(cfg)
     output_run_dir.mkdir(parents=True, exist_ok=True)
-    console.log(
-        f"All outputs for this run will be saved in: {output_run_dir.resolve()}"
-    )
 
-    # Rich Progress Bar
+    # Build eval/test functions (create Keras dataloaders on the fly)
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
         BarColumn(bar_width=None),
         TaskProgressColumn(),
-        TextColumn("({task.completed} of {task.total} batches)"),
         TimeElapsedColumn(),
         TextColumn("|"),
         TimeRemainingColumn(),
         console=console,
         transient=False,
-    ) as global_progress_bar:
-        best_epoch_metrics, test_metrics = training_loop_orchestrator(
-            model,
-            dataset_provider,
-            cfg,
-            metrics_engine,
-            global_progress_bar,
-            output_run_dir,
+    ) as progress:
+        eval_fn = _build_eval_fn(dataset_provider, metrics_engine, cfg, progress)
+        test_fn = _build_test_fn(eval_fn)
+
+        best_epoch_metrics, test_metrics = training_loop(
+            model=model,
+            train_dataset=train_dataset,
+            eval_fn=eval_fn,
+            test_fn=test_fn,
+            cfg=cfg,
+            metrics_engine=metrics_engine,
+            progress=progress,
+            output_directory=output_run_dir,
         )
 
     return test_metrics or best_epoch_metrics or {}

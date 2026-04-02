@@ -87,14 +87,19 @@ def run_one(model: str, framework: str) -> dict:
             console.print(f"[red]  FAIL: {error_msg}[/red]")
             return result
 
-        # Parse metrics from stdout
-        # All frameworks now use shared format: "Test: loss=1.63  auc=0.47  ..."
+        # Parse metrics from combined output
+        # All frameworks use: "Test results: loss=1.63  auc=0.47  ..."
+        # Rich may wrap lines, so join all output and search for key=value pairs
         metric_keys = {"loss", "auc", "mrr", "ndcg@5", "ndcg@10"}
+        full_output = proc.stdout + "\n" + proc.stderr
 
-        for line in proc.stdout.split("\n"):
-            if "Test:" not in line:
-                continue
-            for part in line.split():
+        # Find the test results section and parse all key=value after it
+        if "Test results:" in full_output:
+            after_test = full_output.split("Test results:")[-1]
+            # Take everything until the next log line (starts with timestamp or ---)
+            for part in after_test.split():
+                if part.startswith("---") or part.startswith("["):
+                    break
                 if "=" in part:
                     k, _, v = part.partition("=")
                     if k in metric_keys:
