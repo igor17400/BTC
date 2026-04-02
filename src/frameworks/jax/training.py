@@ -126,7 +126,7 @@ class EarlyStopping:
 
 def training_loop(
     model: nnx.Module,
-    train_iterator,
+    train_dataloader,
     *,
     num_epochs: int = 10,
     learning_rate: float = 1e-4,
@@ -145,7 +145,7 @@ def training_loop(
 
     Args:
         model: A ``BaseModel`` subclass (NRMS / NAML / LSTUR).
-        train_iterator: Iterable yielding ``(features_dict, labels)`` per
+        train_dataloader: Iterable yielding ``(features_dict, labels)`` per
             batch.  It is re-iterated every epoch.
         num_epochs: Maximum number of training epochs.
         learning_rate: Peak learning rate for the optimiser.
@@ -172,7 +172,7 @@ def training_loop(
 
     # ---- JIT warmup ------------------------------------------------------
     try:
-        first_batch = next(iter(train_iterator), None)
+        first_batch = next(iter(train_dataloader), None)
         if first_batch is not None:
             warmup_jit(model, optimizer, first_batch)
     except Exception as exc:
@@ -212,13 +212,13 @@ def training_loop(
             # Batch loop
             batch_task = progress.add_task(
                 f"Epoch {epoch + 1}/{num_epochs}",
-                total=len(train_iterator)
-                if hasattr(train_iterator, "__len__")
+                total=len(train_dataloader)
+                if hasattr(train_dataloader, "__len__")
                 else None,
                 visible=True,
             )
 
-            for batch_features, batch_labels in train_iterator:
+            for batch_features, batch_labels in train_dataloader:
                 loss = train_step(model, optimizer, batch_features, batch_labels)
                 epoch_loss += float(loss)
                 num_batches += 1

@@ -4,7 +4,7 @@ import keras
 from keras import layers, ops
 
 from src.core.models.configs import NRMSConfig
-from src.frameworks.keras.layers import AdditiveAttentionLayer
+from src.frameworks.keras.layers import AdditiveAttention
 from src.frameworks.keras.models.base import BaseModel
 
 
@@ -30,7 +30,7 @@ class NewsEncoder(keras.Model):
             name="title_word_self_attention",
         )
         self.dropout2 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="attention_dropout")
-        self.additive_attention = AdditiveAttentionLayer(
+        self.additive_attention = AdditiveAttention(
             query_vec_dim=self.config.attention_hidden_dim,
             seed=self.config.seed,
             name="title_additive_attention",
@@ -110,7 +110,7 @@ class UserEncoder(keras.Model):
             kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
             name="browsed_news_self_attention",
         )
-        self.user_additive_attention = AdditiveAttentionLayer(
+        self.user_additive_attention = AdditiveAttention(
             query_vec_dim=self.config.attention_hidden_dim,
             seed=self.config.seed,
             name="user_additive_attention",

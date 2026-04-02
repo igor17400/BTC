@@ -1,11 +1,10 @@
 """JAX device configuration utilities."""
 
-import logging
 import os
 
 import jax
 
-logger = logging.getLogger(__name__)
+from src.core.io.logging import console
 
 
 def setup_device(
@@ -19,10 +18,8 @@ def setup_device(
             ``None`` to fall back to CPU.
         memory_limit: Fraction of GPU memory to pre-allocate (0.0 to 1.0).
     """
-    logger.info("Setting up JAX devices...")
-
     if not gpu_ids:
-        logger.info("No GPU IDs specified -- using CPU.")
+        console.log("JAX: no GPU IDs specified -- using CPU.")
         os.environ["JAX_PLATFORM_NAME"] = "cpu"
         return
 
@@ -41,29 +38,18 @@ def setup_device(
                 gpu_devices.append(d)
 
         if not gpu_devices:
-            logger.warning(
-                "No GPU found among available devices: %s. Falling back to CPU.",
-                [str(d) for d in devices],
+            console.log(
+                f"JAX: no GPU found among {[str(d) for d in devices]}. Falling back to CPU."
             )
             os.environ["JAX_PLATFORM_NAME"] = "cpu"
             return
 
-        # Memory fraction
         if memory_limit < 1.0:
             os.environ["XLA_PYTHON_CLIENT_MEM_FRACTION"] = str(memory_limit)
-            logger.info("JAX GPU memory limit set to %.0f%%", memory_limit * 100)
 
-        # Visible GPUs
-        gpu_ids_str = ",".join(map(str, gpu_ids))
-        os.environ["CUDA_VISIBLE_DEVICES"] = gpu_ids_str
-        logger.info("Using GPUs: %s", gpu_ids_str)
-
-        for i, device in enumerate(gpu_devices[: len(gpu_ids)]):
-            logger.info("GPU %d: %s", i, device)
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
+        console.log(f"JAX: using GPU(s) {gpu_ids}, {len(gpu_devices)} available")
 
     except Exception as exc:
-        logger.error("Error setting up JAX GPU: %s -- falling back to CPU", exc)
+        console.log(f"JAX: device setup error: {exc} -- falling back to CPU")
         os.environ["JAX_PLATFORM_NAME"] = "cpu"
-
-    logger.info("JAX backend: %s", jax.default_backend())
-    logger.info("Available JAX devices: %d", len(jax.devices()))

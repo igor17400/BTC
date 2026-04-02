@@ -74,103 +74,33 @@ class TrainingSequence(keras.utils.Sequence):
         np.random.shuffle(self.indices)
 
 
-class NewsDataLoader:
-    """Factory class for creating news recommendation data loaders.
+def create_train_dataloader(
+    features: dict[str, np.ndarray],
+    labels: np.ndarray,
+    batch_size: int,
+    shuffle: bool = True,
+    model_name: str = "nrms",
+) -> TrainingSequence:
+    """Create a training dataloader from numpy feature arrays.
 
-    This class provides static methods to create different types of data loaders
-    for the news recommendation system.
+    Isomorphic with ``create_train_dataloader`` in PyTorch and JAX.
+
+    Args:
+        features: Dict of feature name -> numpy array.
+        labels: Numpy label array.
+        batch_size: Batch size.
+        shuffle: Whether to shuffle each epoch.
+        model_name: Name of the model for input mapping.
+
+    Returns:
+        TrainingSequence instance.
     """
-
-    @staticmethod
-    def create_train_dataset(
-        history_news_tokens: keras.KerasTensor,
-        history_news_abstract_tokens: keras.KerasTensor,
-        history_news_category: keras.KerasTensor,
-        history_news_subcategory: keras.KerasTensor,
-        candidate_news_tokens: keras.KerasTensor,
-        candidate_news_abstract_tokens: keras.KerasTensor,
-        candidate_news_category: keras.KerasTensor,
-        candidate_news_subcategory: keras.KerasTensor,
-        user_ids: keras.KerasTensor,
-        labels: keras.KerasTensor,
-        batch_size: int,
-        process_title: bool = True,
-        process_abstract: bool = True,
-        process_category: bool = True,
-        process_subcategory: bool = True,
-        process_user_id: bool = False,
-        model_name: str = "nrms",
-    ) -> TrainingSequence:
-        """Create a training dataset for Keras model.fit().
-
-        This method creates a TrainingSequence that is compatible with
-        Keras 3's model.fit() method.
-
-        Args:
-            history_news_tokens: User history news tokens
-            history_news_abstract_tokens: User history abstract tokens
-            history_news_category: User history categories
-            history_news_subcategory: User history subcategories
-            candidate_news_tokens: Candidate news tokens
-            candidate_news_abstract_tokens: Candidate abstract tokens
-            candidate_news_category: Candidate categories
-            candidate_news_subcategory: Candidate subcategories
-            user_ids: User IDs
-            labels: Training labels
-            batch_size: Batch size
-            process_title: Whether to include title features
-            process_abstract: Whether to include abstract features
-            process_category: Whether to include category features
-            process_subcategory: Whether to include subcategory features
-            process_user_id: Whether to include user ID features
-            model_name: Name of the model for input mapping
-
-        Returns:
-            TrainingSequence instance
-        """
-        # Build features dictionary based on processing flags
-        features = {}
-
-        if process_title:
-            features["hist_tokens"] = keras.ops.convert_to_numpy(history_news_tokens)
-            features["cand_tokens"] = keras.ops.convert_to_numpy(candidate_news_tokens)
-
-        if process_abstract:
-            features["hist_abstract_tokens"] = keras.ops.convert_to_numpy(
-                history_news_abstract_tokens
-            )
-            features["cand_abstract_tokens"] = keras.ops.convert_to_numpy(
-                candidate_news_abstract_tokens
-            )
-
-        if process_category:
-            features["hist_category"] = keras.ops.convert_to_numpy(
-                history_news_category
-            )
-            features["cand_category"] = keras.ops.convert_to_numpy(
-                candidate_news_category
-            )
-
-        if process_subcategory:
-            features["hist_subcategory"] = keras.ops.convert_to_numpy(
-                history_news_subcategory
-            )
-            features["cand_subcategory"] = keras.ops.convert_to_numpy(
-                candidate_news_subcategory
-            )
-
-        if process_user_id:
-            features["user_ids"] = keras.ops.convert_to_numpy(user_ids)
-
-        # Convert labels to numpy
-        labels_array = keras.ops.convert_to_numpy(labels)
-
-        return TrainingSequence(
-            features=features,
-            labels=labels_array,
-            batch_size=batch_size,
-            model_name=model_name,
-        )
+    return TrainingSequence(
+        features=features,
+        labels=labels,
+        batch_size=batch_size,
+        model_name=model_name,
+    )
 
 
 class ImpressionIterator:

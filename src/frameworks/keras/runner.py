@@ -26,6 +26,36 @@ from src.core.models.spec import build_model_from_spec
 SUPPORTED_BACKENDS = ("jax", "torch")
 
 
+def _build_train_features(dataset_provider) -> tuple:
+    """Extract raw numpy features and labels from the dataset provider."""
+    import keras
+
+    data = dataset_provider.train_behaviors_data
+    features = {}
+
+    if dataset_provider.process_title:
+        features["hist_tokens"] = keras.ops.convert_to_numpy(data["history_news_tokens"])
+        features["cand_tokens"] = keras.ops.convert_to_numpy(data["candidate_news_tokens"])
+    if dataset_provider.process_abstract:
+        features["hist_abstract_tokens"] = keras.ops.convert_to_numpy(
+            data["history_news_abstract_tokens"]
+        )
+        features["cand_abstract_tokens"] = keras.ops.convert_to_numpy(
+            data["candidate_news_abstract_tokens"]
+        )
+    if dataset_provider.process_category:
+        features["hist_category"] = keras.ops.convert_to_numpy(data["history_news_categories"])
+        features["cand_category"] = keras.ops.convert_to_numpy(data["candidate_news_categories"])
+    if dataset_provider.process_subcategory:
+        features["hist_subcategory"] = keras.ops.convert_to_numpy(data["history_news_subcategories"])
+        features["cand_subcategory"] = keras.ops.convert_to_numpy(data["candidate_news_subcategories"])
+    if dataset_provider.process_user_id:
+        features["user_ids"] = keras.ops.convert_to_numpy(data["user_ids"])
+
+    labels = keras.ops.convert_to_numpy(data["labels"])
+    return features, labels
+
+
 def _setup(cfg: DictConfig):
     """Setup Keras backend and precision."""
     backend = getattr(cfg.device, "keras_backend", "jax")
@@ -63,82 +93,67 @@ def _setup(cfg: DictConfig):
     )
 
 
-def _build_eval_fn(dataset_provider, metrics_engine, cfg, progress):
-    """Build an eval function that creates Keras dataloaders on the fly."""
+def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
+    """Build Keras-native dataloaders for evaluation.
+
+    Isomorphic with ``_build_eval_dataloaders`` in PyTorch and JAX runners.
+    """
     from src.frameworks.keras.dataloaders import (
         ImpressionIterator,
         NewsBatchDataloader,
         UserHistoryBatchDataloader,
     )
 
-    def eval_fn(model, mode="val"):
-        data = dataset_provider.val_behaviors_data if mode == "val" else dataset_provider.test_behaviors_data
-        pn = dataset_provider.processed_news
-        batch_size = cfg.eval.batch_size
+    pn = dataset_provider.processed_news
+    data = (
+        dataset_provider.val_behaviors_data
+        if mode == "val"
+        else dataset_provider.test_behaviors_data
+    )
+    batch_size = cfg.eval.batch_size
 
-        user_dl = UserHistoryBatchDataloader(
-            history_tokens=data["history_news_tokens"],
-            history_abstract_tokens=data["history_news_abstract_tokens"],
-            history_category=data["history_news_categories"],
-            history_subcategory=data["history_news_subcategories"],
-            impression_ids=data["impression_ids"],
-            user_ids=data["user_ids"],
-            batch_size=batch_size,
-            process_title=dataset_provider.process_title,
-            process_abstract=dataset_provider.process_abstract,
-            process_category=dataset_provider.process_category,
-            process_subcategory=dataset_provider.process_subcategory,
-        )
-        news_dl = NewsBatchDataloader(
-            news_ids=np.array(pn["news_ids_original_strings"]),
-            news_tokens=pn["tokens"],
-            news_abstract_tokens=pn["abstract_tokens"],
-            news_category_indices=pn["category_indices"],
-            news_subcategory_indices=pn["subcategory_indices"],
-            batch_size=batch_size,
-            process_title=dataset_provider.process_title,
-            process_abstract=dataset_provider.process_abstract,
-            process_category=dataset_provider.process_category,
-            process_subcategory=dataset_provider.process_subcategory,
-        )
-        imp_iter = ImpressionIterator(
-            impression_tokens=data["candidate_news_tokens"],
-            impression_abstract_tokens=data["candidate_news_abstract_tokens"],
-            impression_category=data["candidate_news_categories"],
-            impression_subcategory=data["candidate_news_subcategories"],
-            labels=data["labels"],
-            impression_ids=data["impression_ids"],
-            candidate_ids=data["candidate_news_ids"],
-            process_title=dataset_provider.process_title,
-            process_abstract=dataset_provider.process_abstract,
-            process_category=dataset_provider.process_category,
-            process_subcategory=dataset_provider.process_subcategory,
-        )
+    news_dl = NewsBatchDataloader(
+        news_ids=np.array(pn["news_ids_original_strings"]),
+        news_tokens=pn["tokens"],
+        news_abstract_tokens=pn["abstract_tokens"],
+        news_category_indices=pn["category_indices"],
+        news_subcategory_indices=pn["subcategory_indices"],
+        batch_size=batch_size,
+        process_title=dataset_provider.process_title,
+        process_abstract=dataset_provider.process_abstract,
+        process_category=dataset_provider.process_category,
+        process_subcategory=dataset_provider.process_subcategory,
+    )
 
-        return model.fast_evaluate(
-            user_hist_dataloader=user_dl,
-            impression_iterator=imp_iter,
-            news_dataloader=news_dl,
-            metrics_calculator=metrics_engine,
-            progress=progress,
-            mode=mode,
-            int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
-        )
+    user_dl = UserHistoryBatchDataloader(
+        history_tokens=data["history_news_tokens"],
+        history_abstract_tokens=data["history_news_abstract_tokens"],
+        history_category=data["history_news_categories"],
+        history_subcategory=data["history_news_subcategories"],
+        impression_ids=data["impression_ids"],
+        user_ids=data["user_ids"],
+        batch_size=batch_size,
+        process_title=dataset_provider.process_title,
+        process_abstract=dataset_provider.process_abstract,
+        process_category=dataset_provider.process_category,
+        process_subcategory=dataset_provider.process_subcategory,
+    )
 
-    return eval_fn
+    imp_iter = ImpressionIterator(
+        impression_tokens=data["candidate_news_tokens"],
+        impression_abstract_tokens=data["candidate_news_abstract_tokens"],
+        impression_category=data["candidate_news_categories"],
+        impression_subcategory=data["candidate_news_subcategories"],
+        labels=data["labels"],
+        impression_ids=data["impression_ids"],
+        candidate_ids=data["candidate_news_ids"],
+        process_title=dataset_provider.process_title,
+        process_abstract=dataset_provider.process_abstract,
+        process_category=dataset_provider.process_category,
+        process_subcategory=dataset_provider.process_subcategory,
+    )
 
-
-def _build_test_fn(eval_fn):
-    """Build a test function that loads best weights then evaluates."""
-
-    def test_fn(model, best_model_path):
-        if best_model_path.exists():
-            model.load_weights(best_model_path)
-        else:
-            console.log("[yellow]Best weights not found, using current weights.[/yellow]")
-        return eval_fn(model, mode="test")
-
-    return test_fn
+    return news_dl, user_dl, imp_iter
 
 
 def run(cfg: DictConfig):
@@ -148,7 +163,8 @@ def run(cfg: DictConfig):
     import hydra as _hydra
     import keras
 
-    from src.frameworks.keras.dataloaders import NewsDataLoader
+    from src.frameworks.keras.dataloaders import create_train_dataloader
+    from src.frameworks.keras.evaluation import fast_evaluate
     from src.frameworks.keras.losses import get_loss
     from src.frameworks.keras.training import training_loop
     from src.frameworks.keras.utils import LightweightNewsMetrics, create_news_metrics
@@ -181,27 +197,13 @@ def run(cfg: DictConfig):
     )
     model.compile(optimizer=optimizer, loss=loss_fn, metrics=training_metrics)
 
-    # Build train dataset (Keras-specific: needs keras.utils.Sequence)
-    data = dataset_provider.train_behaviors_data
-    model_name = spec.model.name.lower()
-    train_dataset = NewsDataLoader.create_train_dataset(
-        history_news_tokens=data["history_news_tokens"],
-        history_news_abstract_tokens=data["history_news_abstract_tokens"],
-        history_news_category=data["history_news_categories"],
-        history_news_subcategory=data["history_news_subcategories"],
-        candidate_news_tokens=data["candidate_news_tokens"],
-        candidate_news_abstract_tokens=data["candidate_news_abstract_tokens"],
-        candidate_news_category=data["candidate_news_categories"],
-        candidate_news_subcategory=data["candidate_news_subcategories"],
-        labels=data["labels"],
-        user_ids=data["user_ids"],
+    # Build train dataloader (isomorphic with PyTorch/JAX)
+    features, labels = _build_train_features(dataset_provider)
+    train_dataloader = create_train_dataloader(
+        features=features,
+        labels=labels,
         batch_size=cfg.train.batch_size,
-        process_title=dataset_provider.process_title,
-        process_abstract=dataset_provider.process_abstract,
-        process_category=dataset_provider.process_category,
-        process_subcategory=dataset_provider.process_subcategory,
-        process_user_id=dataset_provider.process_user_id,
-        model_name=model_name,
+        model_name=spec.model.name.lower(),
     )
 
     # Metrics engine for evaluation
@@ -213,7 +215,33 @@ def run(cfg: DictConfig):
     output_run_dir = get_output_run_dir(cfg)
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build eval/test functions (create Keras dataloaders on the fly)
+    # Evaluation function (isomorphic with JAX/PyTorch)
+    def eval_fn(model, mode="val"):
+        news_dl, user_dl, imp_iter = _build_eval_dataloaders(
+            dataset_provider, cfg, mode=mode
+        )
+        with Progress(transient=True) as progress:
+            return fast_evaluate(
+                news_encoder=model.news_encoder,
+                user_encoder=model.user_encoder,
+                user_hist_dataloader=user_dl,
+                news_dataloader=news_dl,
+                impression_iterator=imp_iter,
+                metrics_calculator=metrics_engine,
+                progress=progress,
+                process_user_id=getattr(model, "process_user_id", False),
+                int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
+            )
+
+    # Test function
+    def test_fn(model, best_model_path):
+        if best_model_path.exists():
+            model.load_weights(best_model_path)
+        else:
+            console.log("[yellow]Best weights not found, using current weights.[/yellow]")
+        return eval_fn(model, mode="test")
+
+    # Train
     with Progress(
         SpinnerColumn(),
         TextColumn("[progress.description]{task.description}"),
@@ -225,12 +253,9 @@ def run(cfg: DictConfig):
         console=console,
         transient=False,
     ) as progress:
-        eval_fn = _build_eval_fn(dataset_provider, metrics_engine, cfg, progress)
-        test_fn = _build_test_fn(eval_fn)
-
         best_epoch_metrics, test_metrics = training_loop(
             model=model,
-            train_dataset=train_dataset,
+            train_dataset=train_dataloader,
             eval_fn=eval_fn,
             test_fn=test_fn,
             cfg=cfg,

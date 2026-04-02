@@ -1,9 +1,7 @@
 """Fast evaluation with precomputed vectors for PyTorch models.
 
-Delegates to ``BaseModel.fast_evaluate`` which already handles the full
-pipeline (precompute news/user vectors, score impressions, compute metrics).
-This module provides a thin convenience wrapper matching the expected call
-signature from the training loop.
+Provides a standalone ``fast_evaluate`` function isomorphic with the
+Keras and JAX evaluation modules.
 """
 
 from typing import Any
@@ -12,7 +10,7 @@ import torch
 from rich.progress import Progress
 
 
-def run_fast_evaluation(
+def fast_evaluate(
     model: torch.nn.Module,
     dataset_provider: Any,
     metrics_engine: Any,
@@ -25,21 +23,18 @@ def run_fast_evaluation(
 ) -> dict[str, float]:
     """Run fast evaluation using precomputed news and user vectors.
 
-    This is the PyTorch equivalent of calling ``model.fast_evaluate(...)``
-    from the Keras training pipeline.
+    Isomorphic with ``fast_evaluate`` in Keras and JAX evaluation modules.
 
     Args:
         model: A PyTorch ``BaseModel`` subclass (NRMS / NAML / LSTUR).
-        dataset_provider: Object that exposes ``user_hist_dataloader``,
-            ``news_dataloader``, and ``impression_iterator`` attributes
-            (or a callable returning them).
-        metrics_engine: Core metrics calculator with ``compute_metrics``
-            and ``METRIC_NAMES``.
+        dataset_provider: Dict with ``user_hist_dataloader``,
+            ``news_dataloader``, and ``impression_iterator`` keys.
+        metrics_engine: Core metrics calculator.
         progress: Rich progress bar manager.
-        cfg: Configuration object (used for any runtime flags).
+        cfg: Configuration object.
         mode: ``"validate"`` or ``"test"``.
         save_predictions_path: Optional path to save predictions.
-        epoch: Current epoch number (for file naming).
+        epoch: Current epoch number.
         int_to_news_id_map: Optional mapping from int news ids to string ids.
 
     Returns:
@@ -75,3 +70,7 @@ def run_fast_evaluation(
         )
 
     return metrics
+
+
+# Keep old name as alias for backwards compatibility
+run_fast_evaluation = fast_evaluate

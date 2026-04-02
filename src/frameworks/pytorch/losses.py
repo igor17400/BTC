@@ -1,5 +1,7 @@
 """Loss functions for PyTorch news recommendation models."""
 
+from typing import Any
+
 import torch
 import torch.nn as nn
 
@@ -13,9 +15,9 @@ class CategoricalCrossEntropyLoss(nn.Module):
     nn.CrossEntropyLoss which applies log-softmax internally.
     """
 
-    def __init__(self):
+    def __init__(self, label_smoothing: float = 0.0, **kwargs: Any):
         super().__init__()
-        self.ce = nn.CrossEntropyLoss()
+        self.ce = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 
     def forward(self, logits: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
         """Compute the loss.
@@ -29,7 +31,6 @@ class CategoricalCrossEntropyLoss(nn.Module):
             Scalar loss.
         """
         if targets.dim() == logits.dim() and targets.shape == logits.shape:
-            # One-hot encoded targets -> convert to class indices
             targets = targets.argmax(dim=-1)
         return self.ce(logits, targets)
 
@@ -40,7 +41,7 @@ class BinaryCrossEntropyLoss(nn.Module):
     Wraps nn.BCEWithLogitsLoss for convenience.  Accepts raw logits.
     """
 
-    def __init__(self):
+    def __init__(self, **kwargs: Any):
         super().__init__()
         self.bce = nn.BCEWithLogitsLoss()
 
@@ -55,3 +56,29 @@ class BinaryCrossEntropyLoss(nn.Module):
             Scalar loss.
         """
         return self.bce(logits, targets.float())
+
+
+def get_loss(loss_name: str, **kwargs: Any) -> nn.Module:
+    """Get a loss function by name.
+
+    Args:
+        loss_name: Name of the loss function.
+        **kwargs: Additional arguments (label_smoothing, etc.).
+
+    Returns:
+        Loss function instance.
+
+    Raises:
+        ValueError: If the loss name is not recognized.
+    """
+    losses = {
+        "categorical_crossentropy": CategoricalCrossEntropyLoss,
+        "binary_crossentropy": BinaryCrossEntropyLoss,
+    }
+
+    if loss_name not in losses:
+        raise ValueError(
+            f"Unknown loss: {loss_name}. Available losses: {list(losses.keys())}"
+        )
+
+    return losses[loss_name](**kwargs)

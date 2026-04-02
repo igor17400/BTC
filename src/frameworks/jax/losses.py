@@ -1,5 +1,8 @@
 """Pure JAX loss functions for news recommendation training."""
 
+from typing import Any
+from functools import partial
+
 import jax.numpy as jnp
 
 
@@ -60,3 +63,39 @@ def binary_cross_entropy(
 
     loss = -(y_true * jnp.log(y_pred) + (1.0 - y_true) * jnp.log(1.0 - y_pred))
     return jnp.mean(loss)
+
+
+def get_loss(loss_name: str, **kwargs: Any):
+    """Get a loss function by name.
+
+    Returns a callable ``(y_true, y_pred) -> scalar`` with any extra
+    kwargs (like ``label_smoothing``) already bound.
+
+    Args:
+        loss_name: Name of the loss function.
+        **kwargs: Additional arguments (label_smoothing, etc.).
+
+    Returns:
+        Loss function callable.
+
+    Raises:
+        ValueError: If the loss name is not recognized.
+    """
+    losses = {
+        "categorical_crossentropy": categorical_cross_entropy,
+        "binary_crossentropy": binary_cross_entropy,
+    }
+
+    if loss_name not in losses:
+        raise ValueError(
+            f"Unknown loss: {loss_name}. Available losses: {list(losses.keys())}"
+        )
+
+    base_fn = losses[loss_name]
+    if kwargs:
+        # Filter to only params the function accepts
+        return partial(base_fn, **{
+            k: v for k, v in kwargs.items()
+            if k in ("label_smoothing", "epsilon")
+        })
+    return base_fn

@@ -9,7 +9,7 @@ from keras import layers, ops
 
 from src.core.models.configs import CROWNConfig
 from src.frameworks.keras.layers import (
-    AdditiveAttentionLayer, GraphSAGELayer, GraphAttentionLayer, MultiHeadAttentionBlock
+    AdditiveAttention, GraphSAGELayer, GraphAttentionLayer, MultiHeadAttentionBlock
 )
 from src.frameworks.keras.models.base import BaseModel
 
@@ -193,12 +193,12 @@ class NewsEncoder(keras.Model):
             )
 
         # Intent attention layers
-        self.title_intent_attention = AdditiveAttentionLayer(
+        self.title_intent_attention = AdditiveAttention(
             query_vec_dim=config.attention_dim,
             seed=config.seed,
             name='title_intent_attention'
         )
-        self.body_intent_attention = AdditiveAttentionLayer(
+        self.body_intent_attention = AdditiveAttention(
             query_vec_dim=config.attention_dim,
             seed=config.seed,
             name='body_intent_attention'
@@ -399,7 +399,7 @@ class UserEncoder(keras.Model):
         )
 
         # User-level attention (public for direct access when needed)
-        self.user_attention = AdditiveAttentionLayer(
+        self.user_attention = AdditiveAttention(
             self.config.attention_dim,
             seed=self.config.seed,
             name="user_additive_attention",

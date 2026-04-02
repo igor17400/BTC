@@ -48,7 +48,7 @@ def _build_train_features(dataset_provider) -> tuple:
     return features, labels
 
 
-def _build_eval_provider(dataset_provider, cfg, mode="val"):
+def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
     """Build a dict of PyTorch-native eval dataloaders."""
     from src.frameworks.pytorch.dataloaders import (
         ImpressionIterator,
@@ -170,55 +170,61 @@ def run(cfg: DictConfig):
     output_run_dir = get_output_run_dir(cfg)
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Build eval provider with PyTorch-native dataloaders (no Keras dependency)
-    val_provider = _build_eval_provider(dataset_provider, cfg, mode="val")
+    # Evaluation function (isomorphic with Keras/JAX)
+    from src.frameworks.pytorch.evaluation import fast_evaluate
+
+    int_to_news_id_map = (
+        dataset_provider.get_int_to_news_id_map()
+        if hasattr(dataset_provider, "get_int_to_news_id_map")
+        else None
+    )
+
+    def eval_fn(model):
+        val_provider = _build_eval_dataloaders(dataset_provider, cfg, mode="val")
+        return fast_evaluate(
+            model=model,
+            dataset_provider=val_provider,
+            metrics_engine=metrics_engine,
+            progress=Progress(transient=True),
+            cfg=cfg,
+            mode="validate",
+            int_to_news_id_map=int_to_news_id_map,
+        )
 
     # Train
-    result = training_loop(
-        cfg=cfg,
+    best_metrics = training_loop(
         model=model,
         train_dataloader=train_dataloader,
-        val_dataset_provider=val_provider,
-        metrics_engine=metrics_engine,
-        epochs=cfg.train.num_epochs,
+        eval_fn=eval_fn if cfg.eval.fast_evaluation else None,
+        cfg=cfg,
+        num_epochs=cfg.train.num_epochs,
         learning_rate=cfg.train.learning_rate,
-        patience=cfg.train.early_stopping.patience,
-        checkpoint_dir=str(output_run_dir / "models"),
-        use_wandb=cfg.logging.enable_wandb,
-        gpu_ids=",".join(str(g) for g in cfg.device.gpu_ids)
-        if hasattr(cfg.device, "gpu_ids")
-        else "",
-        int_to_news_id_map=dataset_provider.get_int_to_news_id_map()
-        if hasattr(dataset_provider, "get_int_to_news_id_map")
-        else None,
+        early_stopping_patience=cfg.train.early_stopping.patience,
+        enable_wandb=cfg.logging.enable_wandb,
+        save_dir=str(output_run_dir / "models"),
+        gpu_ids=cfg.device.gpu_ids if hasattr(cfg.device, "gpu_ids") else None,
     )
 
     # Test evaluation
     test_metrics = None
     if cfg.eval.run_test_after_training:
-        import torch
-
-        from src.frameworks.pytorch.evaluation import run_fast_evaluation
-
         # Load best checkpoint if available
         ckpt_path = output_run_dir / "models" / "best_model.pt"
         if ckpt_path.exists():
             model.load_state_dict(torch.load(ckpt_path, weights_only=True))
 
-        test_provider = _build_eval_provider(dataset_provider, cfg, mode="test")
-        test_metrics = run_fast_evaluation(
+        test_provider = _build_eval_dataloaders(dataset_provider, cfg, mode="test")
+        test_metrics = fast_evaluate(
             model=model,
             dataset_provider=test_provider,
             metrics_engine=metrics_engine,
             progress=Progress(transient=True),
             cfg=cfg,
             mode="test",
-            int_to_news_id_map=dataset_provider.get_int_to_news_id_map()
-            if hasattr(dataset_provider, "get_int_to_news_id_map")
-            else None,
+            int_to_news_id_map=int_to_news_id_map,
         )
         if test_metrics:
             log_test_results(test_metrics)
 
     log_training_complete(cfg.model_name, "pytorch", time.time() - start_time)
-    return test_metrics or result.get("best_metrics", result) if isinstance(result, dict) else {}
+    return test_metrics or best_metrics

@@ -2,7 +2,22 @@ import keras
 from keras import layers, ops
 
 
-class AdditiveAttentionLayer(layers.Layer):
+# ---------------------------------------------------------------------------
+# Pure-function masking utilities (isomorphic with JAX/PyTorch)
+# ---------------------------------------------------------------------------
+
+
+def compute_mask(inputs):
+    """Compute a boolean mask where non-zero positions are True."""
+    return ops.cast(ops.not_equal(inputs, 0), "float32")
+
+
+def overwrite_mask(values, mask):
+    """Zero out positions indicated by a mask."""
+    return values * ops.expand_dims(mask, axis=-1)
+
+
+class AdditiveAttention(layers.Layer):
     """
     Soft-alignment-based attention layer.
 

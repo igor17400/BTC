@@ -108,7 +108,7 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
 
 def run(cfg: DictConfig):
     """Run training with JAX/Flax NNX framework."""
-    from src.frameworks.jax.dataloaders import TrainingBatchIterator
+    from src.frameworks.jax.dataloaders import create_train_dataloader
     from src.frameworks.jax.evaluation import fast_evaluate
     from src.frameworks.jax.training import training_loop
 
@@ -128,9 +128,9 @@ def run(cfg: DictConfig):
     model = build_model_from_spec(spec, "jax", processed_news, rngs=nnx.Rngs(cfg.seed))
     console.log(f"Model {spec.model.name} instantiated for JAX.")
 
-    # Train iterator
+    # Train dataloader (isomorphic with Keras/PyTorch)
     features, labels = _build_train_features(dataset_provider)
-    train_iterator = TrainingBatchIterator(
+    train_dataloader = create_train_dataloader(
         features=features,
         labels=labels,
         batch_size=cfg.train.batch_size,
@@ -168,7 +168,7 @@ def run(cfg: DictConfig):
     # Train
     best_metrics = training_loop(
         model=model,
-        train_iterator=train_iterator,
+        train_dataloader=train_dataloader,
         num_epochs=cfg.train.num_epochs,
         learning_rate=cfg.train.learning_rate,
         early_stopping_patience=cfg.train.early_stopping.patience,

@@ -1,4 +1,4 @@
-"""Custom PyTorch layers ported from the Keras implementations in src/models/layers.py."""
+"""Custom PyTorch layers for news recommendation models."""
 
 import math
 
@@ -6,6 +6,21 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+# ---------------------------------------------------------------------------
+# Pure-function masking utilities (isomorphic with Keras/JAX)
+# ---------------------------------------------------------------------------
+
+
+def compute_mask(inputs: torch.Tensor) -> torch.Tensor:
+    """Compute a boolean mask where non-zero positions are True."""
+    return (inputs != 0).float()
+
+
+def overwrite_mask(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
+    """Zero out positions indicated by a mask."""
+    return values * mask.unsqueeze(-1)
 
 
 class AdditiveAttention(nn.Module):

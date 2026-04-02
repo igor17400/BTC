@@ -106,6 +106,36 @@ class TrainingBatchIterator:
             yield batch_features, batch_labels
 
 
+def create_train_dataloader(
+    features: dict[str, np.ndarray],
+    labels: np.ndarray,
+    batch_size: int,
+    shuffle: bool = True,
+    seed: int = 42,
+) -> TrainingBatchIterator:
+    """Create a training dataloader from numpy feature arrays.
+
+    Isomorphic with ``create_train_dataloader`` in Keras and PyTorch.
+
+    Args:
+        features: Dict of feature name -> numpy array.
+        labels: Numpy label array.
+        batch_size: Batch size.
+        shuffle: Whether to shuffle each epoch.
+        seed: Random seed for reproducible shuffling.
+
+    Returns:
+        TrainingBatchIterator instance.
+    """
+    return TrainingBatchIterator(
+        features=features,
+        labels=labels,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        seed=seed,
+    )
+
+
 # ---------------------------------------------------------------------------
 # News batch dataloader (for precomputing news vectors)
 # ---------------------------------------------------------------------------

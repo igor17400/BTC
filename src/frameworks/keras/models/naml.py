@@ -4,7 +4,7 @@ import keras
 from keras import layers, ops
 
 from src.core.models.configs import NAMLConfig
-from src.frameworks.keras.layers import AdditiveAttentionLayer
+from src.frameworks.keras.layers import AdditiveAttention
 from src.frameworks.keras.models.base import BaseModel
 
 
@@ -29,7 +29,7 @@ class TitleEncoder(keras.Model):
             name="title_cnn",
         )
         self.dropout2 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="title_cnn_dropout")
-        self.additive_attention = AdditiveAttentionLayer(
+        self.additive_attention = AdditiveAttention(
             self.config.word_attention_query_dim,
             seed=self.config.seed,
             name="title_word_attention",
@@ -102,7 +102,7 @@ class AbstractEncoder(keras.Model):
             name="abstract_cnn",
         )
         self.dropout2 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="abstract_cnn_dropout")
-        self.additive_attention = AdditiveAttentionLayer(
+        self.additive_attention = AdditiveAttention(
             self.config.word_attention_query_dim,
             seed=self.config.seed,
             name="abstract_word_attention",
@@ -299,7 +299,7 @@ class NewsEncoder(keras.Model):
         self.subcategory_encoder = subcategory_encoder
 
         # View-level attention
-        self.view_attention = AdditiveAttentionLayer(
+        self.view_attention = AdditiveAttention(
             self.config.view_attention_query_dim,
             seed=self.config.seed,
             name="view_attention",
@@ -371,7 +371,7 @@ class UserEncoder(keras.Model):
         )
 
         # User-level attention
-        self.user_attention = AdditiveAttentionLayer(
+        self.user_attention = AdditiveAttention(
             self.config.user_attention_query_dim,
             seed=self.config.seed,
             name="user_additive_attention",

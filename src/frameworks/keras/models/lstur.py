@@ -6,7 +6,7 @@ import keras
 from keras import layers, ops
 
 from src.core.models.configs import LSTURConfig
-from src.frameworks.keras.layers import AdditiveAttentionLayer, ComputeMasking, OverwriteMasking
+from src.frameworks.keras.layers import AdditiveAttention, ComputeMasking, OverwriteMasking
 from src.frameworks.keras.models.base import BaseModel
 
 
@@ -41,7 +41,7 @@ class NewsEncoder(keras.Model):
         self.dropout2 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="cnn_dropout")
         self.compute_masking = ComputeMasking(name="compute_masking")
         self.overwrite_masking = OverwriteMasking(name="overwrite_masking")
-        self.additive_attention = AdditiveAttentionLayer(
+        self.additive_attention = AdditiveAttention(
             self.config.attention_hidden_dim,
             seed=self.config.seed,
             name="title_additive_attention",

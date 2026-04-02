@@ -1,13 +1,11 @@
 """Manual training loop for PyTorch news recommendation models.
 
-Provides ``training_loop(cfg)`` as the main entry point, mirroring the
-Keras ``model.fit()`` workflow with:
+Provides ``training_loop`` as the main entry point with:
 - Forward -> loss -> backward -> optimizer.step()
-- Core metrics for validation (via ``run_fast_evaluation``)
+- Pluggable eval_fn for validation (via ``fast_evaluate``)
 - Early stopping and model checkpointing
 - Rich progress bars
 - Optional WandB logging
-- Automatic device handling (CUDA / MPS / CPU)
 """
 
 import time
@@ -31,7 +29,6 @@ from torch.utils.data import DataLoader
 from src.core.io.logging import log_early_stopping, log_epoch_end
 
 from .device import setup_device
-from .evaluation import run_fast_evaluation
 from .losses import CategoricalCrossEntropyLoss
 
 # ------------------------------------------------------------------
@@ -68,46 +65,41 @@ def _build_progress() -> Progress:
 
 
 def training_loop(
-    cfg: Any,
     model: nn.Module,
     train_dataloader: DataLoader,
-    val_dataset_provider: Any = None,
-    metrics_engine: Any = None,
     *,
-    epochs: int = 10,
+    eval_fn=None,
+    cfg: Any = None,
+    num_epochs: int = 10,
     learning_rate: float = 1e-4,
     weight_decay: float = 0.0,
-    gpu_ids: str = "",
-    patience: int = 3,
-    checkpoint_dir: str | None = None,
-    use_wandb: bool = False,
-    wandb_project: str | None = None,
-    wandb_run_name: str | None = None,
+    early_stopping_patience: int = 3,
+    enable_wandb: bool = False,
+    save_dir: str | Path | None = None,
+    gpu_ids: list[int] | None = None,
     loss_fn: nn.Module | None = None,
-    int_to_news_id_map: dict | None = None,
 ) -> dict[str, Any]:
     """Run a full training loop.
 
+    Isomorphic with ``training_loop`` in Keras and JAX.
+
     Args:
-        cfg: Global configuration object (passed through to evaluation).
         model: PyTorch ``BaseModel`` subclass.
         train_dataloader: DataLoader yielding ``(features_dict, labels)``.
-        val_dataset_provider: Provides validation dataloaders for fast eval.
-        metrics_engine: Core metrics calculator.
-        epochs: Number of training epochs.
+        eval_fn: Optional callable ``(model) -> metrics_dict``
+            to run at the end of each epoch.
+        cfg: Global configuration object (optional, for extra context).
+        num_epochs: Number of training epochs.
         learning_rate: Adam learning rate.
         weight_decay: L2 regularisation.
-        gpu_ids: Comma-separated GPU IDs (empty = auto-detect).
-        patience: Early stopping patience (epochs without improvement).
-        checkpoint_dir: Directory to save best model checkpoint.
-        use_wandb: Whether to log to Weights & Biases.
-        wandb_project: WandB project name.
-        wandb_run_name: WandB run name.
+        early_stopping_patience: Epochs without improvement before stopping.
+        enable_wandb: Whether to log to Weights & Biases.
+        save_dir: Directory for saving model checkpoints.
+        gpu_ids: GPU IDs to use.
         loss_fn: Loss function (defaults to CategoricalCrossEntropyLoss).
-        int_to_news_id_map: Mapping for news IDs during evaluation.
 
     Returns:
-        Dictionary with ``best_metrics``, ``best_epoch``, ``history``.
+        Dictionary with ``best_epoch_metrics`` and timing information.
     """
     # ---- Device ----
     device = setup_device(gpu_ids)
@@ -123,25 +115,21 @@ def training_loop(
     )
 
     # ---- WandB ----
-    if use_wandb:
-        wandb.init(
-            project=wandb_project,
-            name=wandb_run_name,
-            config=vars(cfg) if hasattr(cfg, "__dict__") else {},
-        )
-        wandb.watch(model, log="gradients", log_freq=100)
+    wandb_run = wandb.run if enable_wandb else None
 
     # ---- Tracking ----
-    best_val_metric = -float("inf")
-    best_epoch = -1
-    epochs_without_improvement = 0
-    history: dict[str, list] = {"train_loss": [], "val_metrics": []}
+    best_metrics: dict[str, Any] = {"average_metric_value": -float("inf")}
+    timing: dict[str, Any] = {
+        "epoch_training_times": [],
+        "epoch_validation_times": [],
+    }
+    experiment_start = time.time()
 
     # ---- Main loop ----
     with _build_progress() as progress:
-        epoch_task = progress.add_task("Epochs", total=epochs)
+        epoch_task = progress.add_task("Epochs", total=num_epochs)
 
-        for epoch in range(1, epochs + 1):
+        for epoch in range(1, num_epochs + 1):
             # ---------- Training ----------
             epoch_start = time.time()
             model.train()
@@ -149,7 +137,7 @@ def training_loop(
             num_batches = 0
 
             batch_task = progress.add_task(
-                f"Epoch {epoch}/{epochs} - training", total=len(train_dataloader)
+                f"Epoch {epoch}/{num_epochs} - training", total=len(train_dataloader)
             )
 
             for batch_features, batch_labels in train_dataloader:
@@ -172,78 +160,70 @@ def training_loop(
 
             avg_train_loss = running_loss / max(num_batches, 1)
             epoch_train_time = time.time() - epoch_start
-            history["train_loss"].append(avg_train_loss)
+            timing["epoch_training_times"].append(epoch_train_time)
 
             # ---------- Validation ----------
-            val_metrics: dict[str, float] = {}
+            val_metrics: dict[str, float] | None = None
             val_time = None
             is_best = False
 
-            if val_dataset_provider is not None and metrics_engine is not None:
+            if eval_fn is not None:
                 eval_start = time.time()
-                val_metrics = run_fast_evaluation(
-                    model=model,
-                    dataset_provider=val_dataset_provider,
-                    metrics_engine=metrics_engine,
-                    progress=progress,
-                    cfg=cfg,
-                    mode="validate",
-                    epoch=epoch,
-                    int_to_news_id_map=int_to_news_id_map,
-                )
+                val_metrics = eval_fn(model)
                 val_time = time.time() - eval_start
-                history["val_metrics"].append(val_metrics)
+                timing["epoch_validation_times"].append(val_time)
 
-                # Early stopping / checkpointing
-                monitor_value = val_metrics.get("auc", val_metrics.get("loss", 0.0))
-                if "auc" not in val_metrics:
-                    monitor_value = -monitor_value
+                # Best tracking
+                main_metrics = ["auc", "mrr", "ndcg@5", "ndcg@10"]
+                vals = [val_metrics[m] for m in main_metrics if m in val_metrics]
+                avg_metric = sum(vals) / len(vals) if vals else 0.0
 
-                if monitor_value > best_val_metric:
-                    best_val_metric = monitor_value
-                    best_epoch = epoch
-                    epochs_without_improvement = 0
+                if avg_metric > best_metrics["average_metric_value"]:
                     is_best = True
+                    best_metrics = {
+                        "epoch_number": epoch,
+                        "train_loss": avg_train_loss,
+                        "average_metric_value": avg_metric,
+                        **{f"val_{k}": v for k, v in val_metrics.items()},
+                    }
 
-                    if checkpoint_dir:
-                        ckpt_path = Path(checkpoint_dir) / "best_model.pt"
+                    if save_dir:
+                        ckpt_path = Path(save_dir) / "best_model.pt"
                         ckpt_path.parent.mkdir(parents=True, exist_ok=True)
                         torch.save(model.state_dict(), ckpt_path)
-                else:
-                    epochs_without_improvement += 1
 
             # Log epoch (shared format)
             log_epoch_end(
                 epoch=epoch,
-                num_epochs=epochs,
+                num_epochs=num_epochs,
                 train_loss=avg_train_loss,
                 train_time=epoch_train_time,
-                val_metrics=val_metrics or None,
+                val_metrics=val_metrics,
                 val_time=val_time,
                 is_best=is_best,
             )
 
-            if epochs_without_improvement >= patience:
-                log_early_stopping(epoch, patience)
-                break
+            # Early stopping
+            if val_metrics is not None:
+                wait = epoch - best_metrics.get("epoch_number", epoch)
+                if wait >= early_stopping_patience:
+                    log_early_stopping(epoch, early_stopping_patience)
+                    break
 
             # WandB
-            if use_wandb:
-                log_dict = {"epoch": epoch, "train_loss": avg_train_loss}
-                for k, v in val_metrics.items():
-                    log_dict[f"val_{k}"] = v
-                wandb.log(log_dict)
+            if wandb_run is not None:
+                log_data = {"train/loss": avg_train_loss, "epoch": epoch}
+                if val_metrics:
+                    log_data.update({f"val/{k}": v for k, v in val_metrics.items()})
+                wandb.log(log_data)
 
             progress.update(epoch_task, advance=1)
 
     # ---- Final ----
-    if use_wandb:
+    if wandb_run is not None:
         wandb.finish()
 
-    return {
-        "best_metrics": history["val_metrics"][best_epoch - 1]
-        if best_epoch > 0 and history["val_metrics"]
-        else {},
-        "best_epoch": best_epoch,
-        "history": history,
-    }
+    timing["total_training_time"] = time.time() - experiment_start
+    best_metrics["timing"] = timing
+
+    return best_metrics
