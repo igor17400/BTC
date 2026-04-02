@@ -160,7 +160,7 @@ def run(cfg: DictConfig):
     val_provider = _build_eval_provider(dataset_provider, cfg, mode="val")
 
     # Train
-    training_loop(
+    result = training_loop(
         cfg=cfg,
         model=model,
         train_dataloader=train_dataloader,
@@ -180,3 +180,4 @@ def run(cfg: DictConfig):
     )
 
     console.log(f"--- {cfg.model_name} PyTorch Training Run Finished ---")
+    return result.get("best_metrics", result) if isinstance(result, dict) else {}

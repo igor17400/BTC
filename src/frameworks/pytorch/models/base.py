@@ -168,7 +168,10 @@ class BaseModel(nn.Module):
         for impression in impression_iterator:
             _, labels, impression_id, cand_ids = impression
 
-            user_vector = user_vecs_dict[impression_id]
+            user_vector = user_vecs_dict.get(int(impression_id))
+            if user_vector is None:
+                progress.update(impression_progress, advance=1)
+                continue
 
             # Resolve candidate IDs to numpy
             if isinstance(cand_ids, torch.Tensor):
@@ -178,10 +181,12 @@ class BaseModel(nn.Module):
 
             news_vectors = []
             for nid in cand_ids_np:
-                if int_to_news_id_map and nid in int_to_news_id_map:
+                if isinstance(nid, (str, np.str_)):
+                    news_key = str(nid)
+                elif int_to_news_id_map and nid in int_to_news_id_map:
                     news_key = int_to_news_id_map[nid]
                 else:
-                    news_key = f"N{str(nid)}"
+                    news_key = f"N{nid}"
 
                 vec = news_vecs_dict.get(news_key)
                 if vec is not None:

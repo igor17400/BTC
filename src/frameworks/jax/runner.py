@@ -170,6 +170,7 @@ def run(cfg: DictConfig):
     )
 
     # Test evaluation
+    test_metrics = None
     if cfg.eval.run_test_after_training:
         console.log("[bold]Running test evaluation...[/bold]")
         news_dl, user_dl, imp_iter = _build_eval_dataloaders(
@@ -193,3 +194,4 @@ def run(cfg: DictConfig):
         console.log(f"[bold green]Test results:[/bold green] {metrics_str}")
 
     console.log(f"--- {cfg.model_name} JAX Training Run Finished ---")
+    return test_metrics or best_metrics
