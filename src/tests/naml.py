@@ -14,7 +14,7 @@ sys.path.insert(0, str(project_root))
 
 import numpy as np
 import keras
-from src.models.naml import NAML
+from src.frameworks.keras.models.naml import NAML
 
 
 def create_dummy_data(batch_size=2, vocab_size=10000):

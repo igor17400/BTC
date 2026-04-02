@@ -1,0 +1,58 @@
+# @package _global_
+#
+# NRMS on Japanese news dataset
+# Usage: python src/train.py experiment=japanese/nrms framework=keras
+
+defaults:
+  - /spec: nrms
+  - /dataset: japanese
+  - /sampling: base
+  - _self_
+
+name: japanese_nrms
+model_name: NRMS
+seed: 42
+
+# Dataset: Japanese-specific overrides
+dataset:
+  version: v1
+  language: japanese
+  embedding_type: bpemb
+  embedding_size: 300
+  max_title_length: 40  # longer for Japanese text
+  max_history_length: ${spec.inputs.history.max_length}
+  process_title: ${spec.inputs.process_title}
+  process_abstract: ${spec.inputs.process_abstract}
+  process_category: ${spec.inputs.process_category}
+  process_subcategory: ${spec.inputs.process_subcategory}
+  process_user_id: ${spec.inputs.process_user_id}
+
+# Training: from spec
+train:
+  batch_size: ${spec.training.batch_size}
+  num_epochs: ${spec.training.num_epochs}
+  learning_rate: ${spec.training.learning_rate}
+  early_stopping:
+    patience: ${spec.training.early_stopping.patience}
+    min_improvement: ${spec.training.early_stopping.min_improvement}
+
+# Evaluation: smaller batch for Japanese
+eval:
+  fast_evaluation: true
+  batch_size: 1024
+
+# Sampling: from spec
+sampling:
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  strategy: ${spec.training.negative_sampling.strategy}
+  random:
+    replace: false
+
+logging:
+  enable_wandb: true
+  project_name: NewsReX
+  experiment_name: ${name}
+
+device:
+  gpu_ids: [0]
+  precision: float32

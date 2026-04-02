@@ -12,8 +12,8 @@ sys.path.insert(0, str(project_root))
 # Set backend before importing keras
 os.environ["KERAS_BACKEND"] = "jax"
 
-from src.utils.data_aux.cache_manager import CacheManager
-from src.utils.data_aux.embeddings import EmbeddingsManager
+from src.core.data.cache import CacheManager
+from src.core.data.embeddings import EmbeddingsManager
 import logging
 
 # Setup logging

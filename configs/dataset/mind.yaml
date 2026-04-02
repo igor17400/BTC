@@ -1,4 +1,4 @@
-_target_: src.datasets.mind.MINDDataset
+_target_: src.core.data.mind.MINDDataset
 
 # Inherit from base configuration
 defaults:

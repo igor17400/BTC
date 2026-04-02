@@ -14,7 +14,7 @@ sys.path.insert(0, str(project_root))
 
 import numpy as np
 import keras
-from src.models.crown import CROWN
+from src.frameworks.keras.models.crown import CROWN
 
 
 def create_dummy_data(batch_size=2):

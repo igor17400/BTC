@@ -1,0 +1,52 @@
+model:
+  name: nrms
+  architecture:
+    news_encoder:
+      type: multi_head_self_attention
+      num_heads: 16
+      head_dim: 16
+      attention_hidden_dim: 200
+    user_encoder:
+      type: multi_head_self_attention
+      num_heads: 16
+      head_dim: 16
+      attention_hidden_dim: 200
+    click_predictor:
+      type: dot_product
+  embedding:
+    size: 300
+    trainable: true
+  dropout_rate: 0.2
+  seed: 42
+
+inputs:
+  title: { max_length: 32 }
+  history: { max_length: 50 }
+  impressions: { max_length: 5 }
+  process_title: true
+  process_abstract: false
+  process_category: false
+  process_subcategory: false
+  process_user_id: false
+
+training:
+  loss:
+    name: categorical_crossentropy
+    from_logits: false
+    reduction: sum_over_batch_size
+    label_smoothing: 0.0
+  optimizer: adam
+  learning_rate: 0.0001
+  batch_size: 16
+  num_epochs: 5
+  early_stopping:
+    patience: 3
+    min_improvement: 0.01
+  negative_sampling:
+    strategy: random
+    candidates: 4
+
+evaluation:
+  mode: fast
+  metrics: [auc, mrr, ndcg@5, ndcg@10]
+  batch_size: 4096

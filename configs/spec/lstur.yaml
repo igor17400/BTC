@@ -1,0 +1,55 @@
+model:
+  name: lstur
+  architecture:
+    news_encoder:
+      type: cnn
+      filter_num: 400
+      kernel_size: 3
+      activation: relu
+      attention_hidden_dim: 200
+    user_encoder:
+      type: gru
+      gru_unit: 400
+      variant: ini  # "ini" (initial state) or "con" (concatenation)
+    click_predictor:
+      type: dot_product
+  embedding:
+    size: 300
+    trainable: true
+  category_embedding_dim: 100
+  subcategory_embedding_dim: 100
+  dropout_rate: 0.2
+  seed: 42
+  num_users: 94057
+
+inputs:
+  title: { max_length: 32 }
+  history: { max_length: 50 }
+  impressions: { max_length: 5 }
+  process_title: true
+  process_abstract: false
+  process_category: true
+  process_subcategory: true
+  process_user_id: true
+
+training:
+  loss:
+    name: categorical_crossentropy
+    from_logits: false
+    reduction: sum_over_batch_size
+    label_smoothing: 0.0
+  optimizer: adam
+  learning_rate: 0.0001
+  batch_size: 16
+  num_epochs: 5
+  early_stopping:
+    patience: 5
+    min_improvement: 0.01
+  negative_sampling:
+    strategy: random
+    candidates: 4
+
+evaluation:
+  mode: fast
+  metrics: [auc, mrr, ndcg@5, ndcg@10]
+  batch_size: 8192

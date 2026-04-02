@@ -1,0 +1,66 @@
+model:
+  name: crown
+  architecture:
+    news_encoder:
+      type: transformer_intent_disentanglement
+      num_heads: 12
+      head_dim: 25
+      feedforward_dim: 512
+      num_layers: 2
+      intent_num: 3
+      intent_embedding_dim: 200
+      attention_dim: 200
+    user_encoder:
+      type: gnn_hybrid
+      gnn_type: graphsage  # graphsage or gat
+      graph_hidden_dim: 300
+      graph_num_layers: 1
+      sage_aggregator: mean
+      sage_normalize: true
+      gat_num_heads: 4
+      gat_alpha: 0.2
+      gat_concat_heads: true
+      attention_dim: 200
+    click_predictor:
+      type: dot_product
+  embedding:
+    size: 300
+    trainable: true
+  category_embedding_dim: 100
+  subcategory_embedding_dim: 100
+  dropout_rate: 0.2
+  seed: 42
+
+inputs:
+  title: { max_length: 32 }
+  abstract: { max_length: 50 }
+  history: { max_length: 50 }
+  impressions: { max_length: 5 }
+  process_title: true
+  process_abstract: true
+  process_category: true
+  process_subcategory: true
+  process_user_id: false
+
+training:
+  loss:
+    name: crown_combined
+    alpha: 0.3  # weight for auxiliary category prediction loss
+    num_categories: 18
+    reduction: sum_over_batch_size
+    label_smoothing: 0.0
+  optimizer: adam
+  learning_rate: 0.0001
+  batch_size: 16
+  num_epochs: 10
+  early_stopping:
+    patience: 5
+    min_improvement: 0.01
+  negative_sampling:
+    strategy: random
+    candidates: 4
+
+evaluation:
+  mode: fast
+  metrics: [auc, mrr, ndcg@5, ndcg@10]
+  batch_size: 4096

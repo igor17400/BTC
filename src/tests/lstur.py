@@ -14,7 +14,7 @@ sys.path.insert(0, str(project_root))
 
 import numpy as np
 import keras
-from src.models.lstur import LSTUR
+from src.frameworks.keras.models.lstur import LSTUR
 
 
 def create_dummy_data(batch_size=2, num_users=1000):

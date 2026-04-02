@@ -16,7 +16,7 @@ sys.path.insert(0, str(src_path))
 
 import numpy as np
 import keras
-from src.models.nrms import NRMS
+from src.frameworks.keras.models.nrms import NRMS
 
 
 def create_dummy_data(batch_size=2, vocab_size=10000):
