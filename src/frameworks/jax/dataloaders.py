@@ -6,16 +6,16 @@ suitable for use with the Flax NNX training loop.
 
 from __future__ import annotations
 
-from typing import Any
 from collections.abc import Iterator
+from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
 
-
 # ---------------------------------------------------------------------------
 # Generic batch helper
 # ---------------------------------------------------------------------------
+
 
 def create_batches(
     data: dict[str, np.ndarray],
@@ -57,6 +57,7 @@ def create_batches(
 # ---------------------------------------------------------------------------
 # Training data iterator
 # ---------------------------------------------------------------------------
+
 
 class TrainingBatchIterator:
     """Iterate over training data in shuffled batches.
@@ -108,6 +109,7 @@ class TrainingBatchIterator:
 # ---------------------------------------------------------------------------
 # News batch dataloader (for precomputing news vectors)
 # ---------------------------------------------------------------------------
+
 
 class NewsBatchDataloader:
     """Batch-iterate over news articles for precomputing embeddings.
@@ -168,6 +170,7 @@ class NewsBatchDataloader:
 # User history batch dataloader (for precomputing user vectors)
 # ---------------------------------------------------------------------------
 
+
 class UserHistoryBatchDataloader:
     """Batch-iterate over user histories for precomputing user vectors.
 
@@ -210,9 +213,7 @@ class UserHistoryBatchDataloader:
                 subcat_arr = subcat_arr[:, :, None]
             parts.append(subcat_arr)
 
-        self.features = (
-            np.concatenate(parts, axis=-1) if len(parts) > 1 else parts[0]
-        )
+        self.features = np.concatenate(parts, axis=-1) if len(parts) > 1 else parts[0]
 
     def __iter__(
         self,
@@ -221,9 +222,7 @@ class UserHistoryBatchDataloader:
             end = min(i + self.batch_size, self.num_users)
             batch_ids = self.impression_ids[i:end]
             batch_user_ids = (
-                jnp.asarray(self.user_ids[i:end])
-                if self.user_ids is not None
-                else None
+                jnp.asarray(self.user_ids[i:end]) if self.user_ids is not None else None
             )
             batch_features = jnp.asarray(self.features[i:end])
             yield batch_ids, batch_user_ids, batch_features
@@ -235,6 +234,7 @@ class UserHistoryBatchDataloader:
 # ---------------------------------------------------------------------------
 # Impression iterator (for evaluation scoring)
 # ---------------------------------------------------------------------------
+
 
 class ImpressionIterator:
     """Iterate over impressions one at a time for evaluation.
@@ -279,14 +279,10 @@ class ImpressionIterator:
             parts = []
 
             if self.process_title:
-                parts.append(
-                    jnp.asarray(self.impression_tokens[idx], dtype=jnp.int32)
-                )
+                parts.append(jnp.asarray(self.impression_tokens[idx], dtype=jnp.int32))
             if self.process_abstract and self.impression_abstract_tokens is not None:
                 parts.append(
-                    jnp.asarray(
-                        self.impression_abstract_tokens[idx], dtype=jnp.int32
-                    )
+                    jnp.asarray(self.impression_abstract_tokens[idx], dtype=jnp.int32)
                 )
             if self.process_category and self.impression_category is not None:
                 cat = jnp.asarray(self.impression_category[idx], dtype=jnp.int32)
@@ -294,9 +290,7 @@ class ImpressionIterator:
                     cat = jnp.expand_dims(cat, axis=1)
                 parts.append(cat)
             if self.process_subcategory and self.impression_subcategory is not None:
-                subcat = jnp.asarray(
-                    self.impression_subcategory[idx], dtype=jnp.int32
-                )
+                subcat = jnp.asarray(self.impression_subcategory[idx], dtype=jnp.int32)
                 if subcat.ndim == 1:
                     subcat = jnp.expand_dims(subcat, axis=1)
                 parts.append(subcat)
@@ -308,11 +302,7 @@ class ImpressionIterator:
 
             labels_arr = jnp.asarray(self.labels[idx], dtype=jnp.float32)
             imp_id = self.impression_ids[idx]
-            cand_ids = (
-                self.candidate_ids[idx]
-                if idx < len(self.candidate_ids)
-                else []
-            )
+            cand_ids = self.candidate_ids[idx] if idx < len(self.candidate_ids) else []
 
             yield features, labels_arr, imp_id, cand_ids
 

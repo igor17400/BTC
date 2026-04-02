@@ -37,7 +37,7 @@ eval:
   fast_evaluation: true
   batch_size: 64
   run_initial_eval: false
-  run_test_after_training: false
+  run_test_after_training: true
   save_predictions: false
 
 sampling:

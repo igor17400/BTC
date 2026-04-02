@@ -27,16 +27,10 @@ from rich.progress import (
 from torch.utils.data import DataLoader
 
 from .device import setup_device
+import wandb
+
 from .evaluation import run_fast_evaluation
 from .losses import CategoricalCrossEntropyLoss
-
-# Try importing wandb; make it optional
-try:
-    import wandb
-
-    _HAS_WANDB = True
-except ImportError:
-    _HAS_WANDB = False
 
 
 # ------------------------------------------------------------------
@@ -128,7 +122,7 @@ def training_loop(
     )
 
     # ---- WandB ----
-    if use_wandb and _HAS_WANDB:
+    if use_wandb:
         wandb.init(
             project=wandb_project,
             name=wandb_run_name,
@@ -232,7 +226,7 @@ def training_loop(
                         break
 
             # ---- WandB logging ----
-            if use_wandb and _HAS_WANDB:
+            if use_wandb:
                 log_dict = {"epoch": epoch, "train_loss": avg_train_loss}
                 for k, v in val_metrics.items():
                     log_dict[f"val_{k}"] = v
@@ -241,7 +235,7 @@ def training_loop(
             progress.update(epoch_task, advance=1)
 
     # ---- Final ----
-    if use_wandb and _HAS_WANDB:
+    if use_wandb:
         wandb.finish()
 
     return {

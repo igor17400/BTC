@@ -9,7 +9,6 @@ convenience wrapper.
 
 from __future__ import annotations
 
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -135,15 +134,20 @@ def fast_evaluate(
     )
 
     for _, labels, impression_id, cand_ids in impression_iterator:
-        user_vector = user_vecs[impression_id]
+        user_vector = user_vecs.get(int(impression_id))
+        if user_vector is None:
+            continue
         cand_ids_np = np.asarray(cand_ids)
 
         news_vectors = []
         for nid in cand_ids_np:
-            if int_to_news_id_map and nid in int_to_news_id_map:
+            # Resolve news key: nid can be a string ("N42") or int index
+            if isinstance(nid, (str, np.str_)):
+                news_key = str(nid)
+            elif int_to_news_id_map and nid in int_to_news_id_map:
                 news_key = int_to_news_id_map[nid]
             else:
-                news_key = f"N{str(nid)}"
+                news_key = f"N{nid}"
             vec = news_vecs.get(news_key)
             if vec is not None:
                 news_vectors.append(vec)

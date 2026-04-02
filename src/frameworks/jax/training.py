@@ -17,6 +17,7 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import optax
+import wandb
 from flax import nnx
 from rich.console import Console
 from rich.progress import Progress
@@ -56,7 +57,7 @@ def train_step(
         return categorical_cross_entropy(batch_labels, preds)
 
     loss, grads = nnx.value_and_grad(loss_fn)(model)
-    optimizer.update(grads)
+    optimizer.update(model, grads)
     return loss
 
 
@@ -161,13 +162,11 @@ def training_loop(
     else:
         tx = optax.adam(learning_rate)
 
-    optimizer = nnx.Optimizer(model, tx)
+    optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
 
     # ---- JIT warmup ------------------------------------------------------
     try:
-        first_batch = None
-        for first_batch in train_iterator:
-            break
+        first_batch = next(iter(train_iterator), None)
         if first_batch is not None:
             warmup_jit(model, optimizer, first_batch)
     except Exception as exc:
@@ -177,14 +176,7 @@ def training_loop(
     stopper = EarlyStopping(patience=early_stopping_patience)
 
     # ---- WandB -----------------------------------------------------------
-    wandb_run = None
-    if enable_wandb:
-        try:
-            import wandb
-
-            wandb_run = wandb.run
-        except ImportError:
-            logger.warning("wandb not installed; skipping WandB logging.")
+    wandb_run = wandb.run if enable_wandb else None
 
     # ---- Progress --------------------------------------------------------
     own_progress = False
@@ -276,8 +268,6 @@ def training_loop(
 
                 # WandB
                 if wandb_run is not None:
-                    import wandb
-
                     wandb.log(
                         {
                             "train/loss": avg_loss,
@@ -295,8 +285,6 @@ def training_loop(
             else:
                 # WandB without eval
                 if wandb_run is not None:
-                    import wandb
-
                     wandb.log({"train/loss": avg_loss, "epoch": epoch + 1})
 
             progress.update(overall_task, advance=1)
