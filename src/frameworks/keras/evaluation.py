@@ -1,29 +1,29 @@
-import numpy as np
 from pathlib import Path
 from typing import Any
 
 import keras
+import numpy as np
 from omegaconf import DictConfig
 from rich.console import Console
 from rich.progress import Progress
 
-from src.core.metrics.functions import NewsRecommenderMetrics
-from src.core.io.saving import save_predictions_to_file_fn, get_output_run_dir
-from src.frameworks.keras.utils import test_step_fn
 from src.core.io.logging import log_metrics_to_console_fn
+from src.core.io.saving import get_output_run_dir, save_predictions_to_file_fn
+from src.core.metrics.functions import NewsRecommenderMetrics
+from src.frameworks.keras.utils import test_step_fn
 
 console = Console()
 
 
 def run_evaluation_epoch(
-        model: keras.Model,
-        eval_dataloader,
-        custom_metrics_calculator: NewsRecommenderMetrics,
-        num_total_impressions: int,
-        progress: Progress,
-        mode: str = "val",  # "val" or "test"
-        save_predictions_dir: Path | None = None,
-        epoch_idx: int | None = None,  # 0-indexed
+    model: keras.Model,
+    eval_dataloader,
+    custom_metrics_calculator: NewsRecommenderMetrics,
+    num_total_impressions: int,
+    progress: Progress,
+    mode: str = "val",  # "val" or "test"
+    save_predictions_dir: Path | None = None,
+    epoch_idx: int | None = None,  # 0-indexed
 ) -> dict[str, float]:
     """
     Run validation or testing for one epoch (non-fast evaluation).
@@ -77,7 +77,9 @@ def run_evaluation_epoch(
     progress.remove_task(eval_progress_task)
 
     if not all_labels_batched:
-        console.log(f"[yellow][WARNING {mode}] No data processed in evaluation epoch.[/yellow]")
+        console.log(
+            f"[yellow][WARNING {mode}] No data processed in evaluation epoch.[/yellow]"
+        )
         # Return default zeroed metrics
         return {m.name: 0.0 for m in model.metrics} | {
             "loss": 0.0,
@@ -98,28 +100,36 @@ def run_evaluation_epoch(
 
     # Calculate custom metrics (MRR, nDCG) using the custom calculator
     custom_eval_metrics = custom_metrics_calculator.compute_metrics(
-        y_true=concatenated_labels, y_pred_logits=concatenated_predictions, progress=progress
+        y_true=concatenated_labels,
+        y_pred_logits=concatenated_predictions,
+        progress=progress,
     )
 
     final_eval_metrics = (
-            final_eval_metrics | custom_eval_metrics | {"num_impressions": processed_impressions_count}
+        final_eval_metrics
+        | custom_eval_metrics
+        | {"num_impressions": processed_impressions_count}
     )
 
     if save_predictions_dir:
         predictions_to_save = {
             imp_id: (gt.tolist(), pred.tolist())
             for imp_id, gt, pred in zip(
-                all_impression_ids_batched, concatenated_labels, concatenated_predictions
+                all_impression_ids_batched,
+                concatenated_labels,
+                concatenated_predictions,
             )
         }
-        save_predictions_to_file_fn(predictions_to_save, save_predictions_dir, epoch_idx, mode)
+        save_predictions_to_file_fn(
+            predictions_to_save, save_predictions_dir, epoch_idx, mode
+        )
 
     return final_eval_metrics
 
 
 def get_main_comparison_metric(
-        validation_metrics: dict[str, float],
-        min_improvement: float = 0.01,  # Minimum improvement required to consider it better
+    validation_metrics: dict[str, float],
+    min_improvement: float = 0.01,  # Minimum improvement required to consider it better
 ) -> tuple[float, bool]:
     """Extracts the primary metric used for comparing epochs and checks if improvement is significant.
 
@@ -163,14 +173,16 @@ def get_main_comparison_metric(
 
 
 def _run_initial_validation(
-        model: keras.Model,
-        dataset_provider: Any,
-        custom_metrics_engine: NewsRecommenderMetrics,
-        progress_bar_manager: Progress,
-        cfg: DictConfig,
+    model: keras.Model,
+    dataset_provider: Any,
+    custom_metrics_engine: NewsRecommenderMetrics,
+    progress_bar_manager: Progress,
+    cfg: DictConfig,
 ) -> dict[str, float]:
     """Run initial validation before training starts."""
-    console.log("[bold yellow]Running Initial Validation (before training starts)...[/bold yellow]")
+    console.log(
+        "[bold yellow]Running Initial Validation (before training starts)...[/bold yellow]"
+    )
 
     # Setup output directory based on Hydra's current run path
     output_run_dir = get_output_run_dir(cfg)
@@ -181,13 +193,19 @@ def _run_initial_validation(
 
     if cfg.eval.fast_evaluation:
         metrics = model.fast_evaluate(
-            user_hist_dataloader=dataset_provider.user_history_dataloader(mode="val", batch_size=cfg.eval.batch_size),
+            user_hist_dataloader=dataset_provider.user_history_dataloader(
+                mode="val", batch_size=cfg.eval.batch_size
+            ),
             impression_iterator=dataset_provider.impression_dataloader(mode="val"),
-            news_dataloader=dataset_provider.news_dataloader(batch_size=cfg.eval.batch_size),
+            news_dataloader=dataset_provider.news_dataloader(
+                batch_size=cfg.eval.batch_size
+            ),
             metrics_calculator=custom_metrics_engine,
             progress=progress_bar_manager,
             mode="initial_val",
-            save_predictions_path=predictions_save_dir if cfg.eval.save_predictions else None,
+            save_predictions_path=predictions_save_dir
+            if cfg.eval.save_predictions
+            else None,
             epoch=None,
             int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
         )
@@ -199,7 +217,9 @@ def _run_initial_validation(
             dataset_provider.val_size,
             progress_bar_manager,
             mode="initial_val",
-            save_predictions_dir=predictions_save_dir if cfg.eval.save_predictions else None,
+            save_predictions_dir=predictions_save_dir
+            if cfg.eval.save_predictions
+            else None,
             epoch_idx=None,
         )
     log_metrics_to_console_fn(metrics, "Initial Validation")
@@ -207,18 +227,20 @@ def _run_initial_validation(
 
 
 def _run_epoch_evaluation(
-        model: keras.Model,
-        dataset_provider: Any,
-        custom_metrics_engine: NewsRecommenderMetrics,
-        progress_bar_manager: Progress,
-        cfg: DictConfig,
-        epoch_idx: int,
-        predictions_save_dir: Path | None = None,
+    model: keras.Model,
+    dataset_provider: Any,
+    custom_metrics_engine: NewsRecommenderMetrics,
+    progress_bar_manager: Progress,
+    cfg: DictConfig,
+    epoch_idx: int,
+    predictions_save_dir: Path | None = None,
 ) -> dict[str, float]:
     """Run evaluation for a single epoch."""
     if cfg.eval.fast_evaluation:
         # Create mode-specific directory for predictions
-        mode_specific_dir = predictions_save_dir / "val" if predictions_save_dir else None
+        mode_specific_dir = (
+            predictions_save_dir / "val" if predictions_save_dir else None
+        )
         if mode_specific_dir:
             mode_specific_dir.mkdir(parents=True, exist_ok=True)
 
@@ -229,7 +251,9 @@ def _run_epoch_evaluation(
             metrics_calculator=custom_metrics_engine,
             progress=progress_bar_manager,
             mode="val",
-            save_predictions_path=mode_specific_dir if cfg.eval.save_predictions else None,
+            save_predictions_path=mode_specific_dir
+            if cfg.eval.save_predictions
+            else None,
             epoch=epoch_idx,
             int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
         )
@@ -252,25 +276,29 @@ def _run_epoch_evaluation(
 
 
 def _run_final_testing(
-        model: keras.Model,
-        dataset_provider: Any,
-        custom_metrics_engine: NewsRecommenderMetrics,
-        progress_bar_manager: Progress,
-        cfg: DictConfig,
-        best_model_weights_filepath: Path,
-        last_model_weights_filepath: Path,
-        best_epoch_metrics_tracking: dict[str, Any],
-        predictions_save_dir: Path | None = None,
+    model: keras.Model,
+    dataset_provider: Any,
+    custom_metrics_engine: NewsRecommenderMetrics,
+    progress_bar_manager: Progress,
+    cfg: DictConfig,
+    best_model_weights_filepath: Path,
+    last_model_weights_filepath: Path,
+    best_epoch_metrics_tracking: dict[str, Any],
+    predictions_save_dir: Path | None = None,
 ) -> dict[str, float] | None:
     """Run final testing phase after training."""
     console.log("[bold]Loading best model for final testing...[/bold]")
 
-    # Loading weights from the model
-    model.load_weights(best_model_weights_filepath)
+    # Load best weights if they exist, otherwise use current weights
+    if best_model_weights_filepath.exists():
+        model.load_weights(best_model_weights_filepath)
+    else:
+        console.log("[yellow]Best model weights not found, using current weights.[/yellow]")
 
-    # Load test data
-    console.log("Loading test data for final evaluation...")
-    dataset_provider._load_data(mode="test")
+    # Load test data (only for real datasets that need it)
+    if hasattr(dataset_provider, "_load_data"):
+        console.log("Loading test data for final evaluation...")
+        dataset_provider._load_data(mode="test")
 
     # Create mode-specific directory for predictions
     mode_specific_dir = predictions_save_dir / "test" if predictions_save_dir else None
@@ -279,13 +307,19 @@ def _run_final_testing(
 
     if cfg.eval.fast_evaluation:
         return model.fast_evaluate(
-            user_hist_dataloader=dataset_provider.user_history_dataloader(mode="test", batch_size=cfg.eval.batch_size),
+            user_hist_dataloader=dataset_provider.user_history_dataloader(
+                mode="test", batch_size=cfg.eval.batch_size
+            ),
             impression_iterator=dataset_provider.impression_dataloader(mode="test"),
-            news_dataloader=dataset_provider.news_dataloader(batch_size=cfg.eval.batch_size),
+            news_dataloader=dataset_provider.news_dataloader(
+                batch_size=cfg.eval.batch_size
+            ),
             metrics_calculator=custom_metrics_engine,
             progress=progress_bar_manager,
             mode="test",
-            save_predictions_path=mode_specific_dir if cfg.eval.save_predictions else None,
+            save_predictions_path=mode_specific_dir
+            if cfg.eval.save_predictions
+            else None,
             epoch=best_epoch_metrics_tracking.get("epoch_number", -1) - 1,
             int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
         )

@@ -5,8 +5,9 @@ every code path: title, abstract, category, subcategory, user_id.
 Runs in <5 seconds per model.
 """
 
-import numpy as np
 from typing import Any
+
+import numpy as np
 
 
 class SyntheticDataset:
@@ -66,9 +67,13 @@ class SyntheticDataset:
             "vocab_size": V,
             "num_categories": C,
             "num_subcategories": SC,
-            "embeddings": rng.standard_normal((V, self._embedding_size)).astype(np.float32),
+            "embeddings": rng.standard_normal((V, self._embedding_size)).astype(
+                np.float32
+            ),
             "tokens": rng.integers(0, V, (N, self.max_title_length), dtype=np.int32),
-            "abstract_tokens": rng.integers(0, V, (N, self.max_abstract_length), dtype=np.int32),
+            "abstract_tokens": rng.integers(
+                0, V, (N, self.max_abstract_length), dtype=np.int32
+            ),
             "category_indices": rng.integers(0, C, N, dtype=np.int32),
             "subcategory_indices": rng.integers(0, SC, N, dtype=np.int32),
             "news_ids_original_strings": [f"N{i}" for i in range(N)],
@@ -82,7 +87,7 @@ class SyntheticDataset:
         self.val_behaviors_data = self._make_behaviors(self.NUM_VAL)
         self.test_behaviors_data = self.val_behaviors_data  # reuse for simplicity
 
-    def _make_behaviors(self, n: int) -> dict[str, np.ndarray]:
+    def _make_behaviors(self, n: int) -> dict[str, Any]:
         rng = self._rng
         V = self.VOCAB_SIZE
         C = self.NUM_CATEGORIES
@@ -95,22 +100,28 @@ class SyntheticDataset:
         labels = np.zeros((n, K), dtype=np.float32)
         labels[:, 0] = 1.0  # first candidate is positive
 
+        candidate_news_ids = [
+            [f"N{int(nid)}" for nid in rng.integers(0, self.NUM_NEWS, K)]
+            for _ in range(n)
+        ]
+
         return {
             "history_news_tokens": rng.integers(0, V, (n, H, TL), dtype=np.int32),
-            "history_news_abstract_tokens": rng.integers(0, V, (n, H, AL), dtype=np.int32),
+            "history_news_abstract_tokens": rng.integers(
+                0, V, (n, H, AL), dtype=np.int32
+            ),
             "history_news_categories": rng.integers(0, C, (n, H), dtype=np.int32),
             "history_news_subcategories": rng.integers(0, SC, (n, H), dtype=np.int32),
             "candidate_news_tokens": rng.integers(0, V, (n, K, TL), dtype=np.int32),
-            "candidate_news_abstract_tokens": rng.integers(0, V, (n, K, AL), dtype=np.int32),
+            "candidate_news_abstract_tokens": rng.integers(
+                0, V, (n, K, AL), dtype=np.int32
+            ),
             "candidate_news_categories": rng.integers(0, C, (n, K), dtype=np.int32),
             "candidate_news_subcategories": rng.integers(0, SC, (n, K), dtype=np.int32),
             "labels": labels,
             "user_ids": rng.integers(0, self.NUM_USERS, n, dtype=np.int32),
             "impression_ids": np.arange(n, dtype=np.int32),
-            "candidate_news_ids": [
-                [f"N{rng.integers(0, self.NUM_NEWS)}" for _ in range(K)]
-                for _ in range(n)
-            ],
+            "candidate_news_ids": candidate_news_ids,
         }
 
     # --- Properties ---
@@ -130,80 +141,6 @@ class SyntheticDataset:
     @property
     def test_size(self) -> int:
         return len(self.test_behaviors_data["labels"])
-
-    # --- Dataloader factories (Keras-compatible) ---
-
-    def train_dataloader(self, batch_size: int, model_name: str = "nrms"):
-        from src.core.data.loaders.dataloader import NewsDataLoader
-        return NewsDataLoader.create_train_dataset(
-            history_news_tokens=self.train_behaviors_data["history_news_tokens"],
-            history_news_abstract_tokens=self.train_behaviors_data["history_news_abstract_tokens"],
-            history_news_category=self.train_behaviors_data["history_news_categories"],
-            history_news_subcategory=self.train_behaviors_data["history_news_subcategories"],
-            candidate_news_tokens=self.train_behaviors_data["candidate_news_tokens"],
-            candidate_news_abstract_tokens=self.train_behaviors_data["candidate_news_abstract_tokens"],
-            candidate_news_category=self.train_behaviors_data["candidate_news_categories"],
-            candidate_news_subcategory=self.train_behaviors_data["candidate_news_subcategories"],
-            labels=self.train_behaviors_data["labels"],
-            user_ids=self.train_behaviors_data["user_ids"],
-            batch_size=batch_size,
-            process_title=self.process_title,
-            process_abstract=self.process_abstract,
-            process_category=self.process_category,
-            process_subcategory=self.process_subcategory,
-            process_user_id=self.process_user_id,
-            model_name=model_name,
-        )
-
-    def user_history_dataloader(self, mode: str, batch_size: int = 32):
-        from src.core.data.loaders.dataloader import UserHistoryBatchDataloader
-        data = self.val_behaviors_data if mode == "val" else self.test_behaviors_data
-        return UserHistoryBatchDataloader(
-            history_tokens=data["history_news_tokens"],
-            history_abstract_tokens=data["history_news_abstract_tokens"],
-            history_category=data["history_news_categories"],
-            history_subcategory=data["history_news_subcategories"],
-            impression_ids=data["impression_ids"],
-            user_ids=data["user_ids"],
-            batch_size=batch_size,
-            process_title=self.process_title,
-            process_abstract=self.process_abstract,
-            process_category=self.process_category,
-            process_subcategory=self.process_subcategory,
-        )
-
-    def impression_dataloader(self, mode: str):
-        from src.core.data.loaders.dataloader import ImpressionIterator
-        data = self.val_behaviors_data if mode == "val" else self.test_behaviors_data
-        return ImpressionIterator(
-            impression_tokens=data["candidate_news_tokens"],
-            impression_abstract_tokens=data["candidate_news_abstract_tokens"],
-            impression_category=data["candidate_news_categories"],
-            impression_subcategory=data["candidate_news_subcategories"],
-            labels=data["labels"],
-            impression_ids=data["impression_ids"],
-            candidate_ids=data["candidate_news_ids"],
-            process_title=self.process_title,
-            process_abstract=self.process_abstract,
-            process_category=self.process_category,
-            process_subcategory=self.process_subcategory,
-        )
-
-    def news_dataloader(self, batch_size: int = 64):
-        from src.core.data.loaders.dataloader import NewsBatchDataloader
-        pn = self._processed_news
-        return NewsBatchDataloader(
-            news_ids=np.array(pn["news_ids_original_strings"]),
-            news_tokens=pn["tokens"],
-            news_abstract_tokens=pn["abstract_tokens"],
-            news_category_indices=pn["category_indices"],
-            news_subcategory_indices=pn["subcategory_indices"],
-            batch_size=batch_size,
-            process_title=self.process_title,
-            process_abstract=self.process_abstract,
-            process_category=self.process_category,
-            process_subcategory=self.process_subcategory,
-        )
 
     def get_int_to_news_id_map(self) -> dict[int, str]:
         return self._int_to_news_id

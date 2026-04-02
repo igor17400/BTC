@@ -1,7 +1,7 @@
-import keras
-
-from typing import Any
 from collections.abc import Iterator
+from typing import Any
+
+import keras
 import numpy as np
 
 
@@ -16,11 +16,11 @@ class TrainingSequence(keras.utils.Sequence):
     """
 
     def __init__(
-            self,
-            features: dict[str, np.ndarray],
-            labels: np.ndarray,
-            batch_size: int,
-            model_name: str = "nrms"
+        self,
+        features: dict[str, np.ndarray],
+        labels: np.ndarray,
+        batch_size: int,
+        model_name: str = "nrms",
     ):
         """Initialize the training sequence.
 
@@ -83,23 +83,23 @@ class NewsDataLoader:
 
     @staticmethod
     def create_train_dataset(
-            history_news_tokens: keras.KerasTensor,
-            history_news_abstract_tokens: keras.KerasTensor,
-            history_news_category: keras.KerasTensor,
-            history_news_subcategory: keras.KerasTensor,
-            candidate_news_tokens: keras.KerasTensor,
-            candidate_news_abstract_tokens: keras.KerasTensor,
-            candidate_news_category: keras.KerasTensor,
-            candidate_news_subcategory: keras.KerasTensor,
-            user_ids: keras.KerasTensor,
-            labels: keras.KerasTensor,
-            batch_size: int,
-            process_title: bool = True,
-            process_abstract: bool = True,
-            process_category: bool = True,
-            process_subcategory: bool = True,
-            process_user_id: bool = False,
-            model_name: str = "nrms",
+        history_news_tokens: keras.KerasTensor,
+        history_news_abstract_tokens: keras.KerasTensor,
+        history_news_category: keras.KerasTensor,
+        history_news_subcategory: keras.KerasTensor,
+        candidate_news_tokens: keras.KerasTensor,
+        candidate_news_abstract_tokens: keras.KerasTensor,
+        candidate_news_category: keras.KerasTensor,
+        candidate_news_subcategory: keras.KerasTensor,
+        user_ids: keras.KerasTensor,
+        labels: keras.KerasTensor,
+        batch_size: int,
+        process_title: bool = True,
+        process_abstract: bool = True,
+        process_category: bool = True,
+        process_subcategory: bool = True,
+        process_user_id: bool = False,
+        model_name: str = "nrms",
     ) -> TrainingSequence:
         """Create a training dataset for Keras model.fit().
 
@@ -136,16 +136,28 @@ class NewsDataLoader:
             features["cand_tokens"] = keras.ops.convert_to_numpy(candidate_news_tokens)
 
         if process_abstract:
-            features["hist_abstract_tokens"] = keras.ops.convert_to_numpy(history_news_abstract_tokens)
-            features["cand_abstract_tokens"] = keras.ops.convert_to_numpy(candidate_news_abstract_tokens)
+            features["hist_abstract_tokens"] = keras.ops.convert_to_numpy(
+                history_news_abstract_tokens
+            )
+            features["cand_abstract_tokens"] = keras.ops.convert_to_numpy(
+                candidate_news_abstract_tokens
+            )
 
         if process_category:
-            features["hist_category"] = keras.ops.convert_to_numpy(history_news_category)
-            features["cand_category"] = keras.ops.convert_to_numpy(candidate_news_category)
+            features["hist_category"] = keras.ops.convert_to_numpy(
+                history_news_category
+            )
+            features["cand_category"] = keras.ops.convert_to_numpy(
+                candidate_news_category
+            )
 
         if process_subcategory:
-            features["hist_subcategory"] = keras.ops.convert_to_numpy(history_news_subcategory)
-            features["cand_subcategory"] = keras.ops.convert_to_numpy(candidate_news_subcategory)
+            features["hist_subcategory"] = keras.ops.convert_to_numpy(
+                history_news_subcategory
+            )
+            features["cand_subcategory"] = keras.ops.convert_to_numpy(
+                candidate_news_subcategory
+            )
 
         if process_user_id:
             features["user_ids"] = keras.ops.convert_to_numpy(user_ids)
@@ -157,7 +169,7 @@ class NewsDataLoader:
             features=features,
             labels=labels_array,
             batch_size=batch_size,
-            model_name=model_name
+            model_name=model_name,
         )
 
 
@@ -169,18 +181,18 @@ class ImpressionIterator:
     """
 
     def __init__(
-            self,
-            impression_tokens: Any,  # Can be List[List[List[int]]] or np.ndarray
-            impression_abstract_tokens: Any,  # Can be List[List[int]] or np.ndarray
-            impression_category: Any,  # Can be List[List[int]] or np.ndarray
-            impression_subcategory: Any,  # Can be List[List[int]] or np.ndarray
-            labels: Any,  # Can be List[List[float]] or np.ndarray
-            impression_ids: Any,  # Can be List[int] or np.ndarray
-            candidate_ids: Any,  # Can be List[int] or np.ndarray
-            process_title: bool = True,
-            process_abstract: bool = True,
-            process_category: bool = True,
-            process_subcategory: bool = True,
+        self,
+        impression_tokens: Any,  # Can be List[List[List[int]]] or np.ndarray
+        impression_abstract_tokens: Any,  # Can be List[List[int]] or np.ndarray
+        impression_category: Any,  # Can be List[List[int]] or np.ndarray
+        impression_subcategory: Any,  # Can be List[List[int]] or np.ndarray
+        labels: Any,  # Can be List[List[float]] or np.ndarray
+        impression_ids: Any,  # Can be List[int] or np.ndarray
+        candidate_ids: Any,  # Can be List[int] or np.ndarray
+        process_title: bool = True,
+        process_abstract: bool = True,
+        process_category: bool = True,
+        process_subcategory: bool = True,
     ):
         """Initialize the impression iterator."""
         self.impression_tokens = impression_tokens
@@ -200,25 +212,41 @@ class ImpressionIterator:
 
         # Get float dtype from global policy
         policy = keras.mixed_precision.global_policy()
-        self.float_dtype = "float16" if "float16" in str(policy.compute_dtype) else "float32"
+        self.float_dtype = (
+            "float16" if "float16" in str(policy.compute_dtype) else "float32"
+        )
 
-    def __iter__(self) -> Iterator[tuple[keras.KerasTensor, keras.KerasTensor, int, Any]]:
+    def __iter__(
+        self,
+    ) -> Iterator[tuple[keras.KerasTensor, keras.KerasTensor, int, Any]]:
         """Iterate through impressions."""
         for idx in range(self.num_impressions):
             # Build features based on processing flags
             features = []
 
             if self.process_title:
-                features.append(keras.ops.convert_to_tensor(self.impression_tokens[idx], dtype="int32"))
+                features.append(
+                    keras.ops.convert_to_tensor(
+                        self.impression_tokens[idx], dtype="int32"
+                    )
+                )
             if self.process_abstract:
-                features.append(keras.ops.convert_to_tensor(self.impression_abstract_tokens[idx], dtype="int32"))
+                features.append(
+                    keras.ops.convert_to_tensor(
+                        self.impression_abstract_tokens[idx], dtype="int32"
+                    )
+                )
             if self.process_category:
-                category = keras.ops.convert_to_tensor(self.impression_category[idx], dtype="int32")
+                category = keras.ops.convert_to_tensor(
+                    self.impression_category[idx], dtype="int32"
+                )
                 if len(keras.ops.shape(category)) == 1:
                     category = keras.ops.expand_dims(category, axis=1)
                 features.append(category)
             if self.process_subcategory:
-                subcategory = keras.ops.convert_to_tensor(self.impression_subcategory[idx], dtype="int32")
+                subcategory = keras.ops.convert_to_tensor(
+                    self.impression_subcategory[idx], dtype="int32"
+                )
                 if len(keras.ops.shape(subcategory)) == 1:
                     subcategory = keras.ops.expand_dims(subcategory, axis=1)
                 features.append(subcategory)
@@ -230,11 +258,15 @@ class ImpressionIterator:
                 features = features[0]
 
             # Convert labels
-            labels = keras.ops.convert_to_tensor(self.labels[idx], dtype=self.float_dtype)
+            labels = keras.ops.convert_to_tensor(
+                self.labels[idx], dtype=self.float_dtype
+            )
 
             # Get impression ID and candidate IDs
             impression_id = self.impression_ids[idx]
-            candidate_ids = self.candidate_ids[idx] if idx < len(self.candidate_ids) else []
+            candidate_ids = (
+                self.candidate_ids[idx] if idx < len(self.candidate_ids) else []
+            )
 
             yield features, labels, impression_id, candidate_ids
 
@@ -250,17 +282,17 @@ class NewsBatchDataloader:
     """
 
     def __init__(
-            self,
-            news_ids: np.ndarray,
-            news_tokens: keras.KerasTensor,
-            news_abstract_tokens: keras.KerasTensor,
-            news_category_indices: keras.KerasTensor,
-            news_subcategory_indices: keras.KerasTensor,
-            batch_size: int = 1024,
-            process_title: bool = True,
-            process_abstract: bool = True,
-            process_category: bool = True,
-            process_subcategory: bool = True,
+        self,
+        news_ids: np.ndarray,
+        news_tokens: keras.KerasTensor,
+        news_abstract_tokens: keras.KerasTensor,
+        news_category_indices: keras.KerasTensor,
+        news_subcategory_indices: keras.KerasTensor,
+        batch_size: int = 1024,
+        process_title: bool = True,
+        process_abstract: bool = True,
+        process_category: bool = True,
+        process_subcategory: bool = True,
     ):
         """Initialize the news batch dataloader."""
         self.news_ids = news_ids  # Keep as numpy for string IDs
@@ -318,18 +350,18 @@ class UserHistoryBatchDataloader:
     """
 
     def __init__(
-            self,
-            history_tokens: Any,  # Can be List[List[int]] or np.ndarray
-            history_abstract_tokens: Any,  # Can be List[List[int]] or np.ndarray
-            history_category: Any,  # Can be List[List[int]] or np.ndarray
-            history_subcategory: Any,  # Can be List[List[int]] or np.ndarray
-            impression_ids: Any,  # Can be List[int] or np.ndarray
-            user_ids: Any = None,  # Can be List[int] or np.ndarray
-            batch_size: int = 32,
-            process_title: bool = True,
-            process_abstract: bool = True,
-            process_category: bool = True,
-            process_subcategory: bool = True,
+        self,
+        history_tokens: Any,  # Can be List[List[int]] or np.ndarray
+        history_abstract_tokens: Any,  # Can be List[List[int]] or np.ndarray
+        history_category: Any,  # Can be List[List[int]] or np.ndarray
+        history_subcategory: Any,  # Can be List[List[int]] or np.ndarray
+        impression_ids: Any,  # Can be List[int] or np.ndarray
+        user_ids: Any = None,  # Can be List[int] or np.ndarray
+        batch_size: int = 32,
+        process_title: bool = True,
+        process_abstract: bool = True,
+        process_category: bool = True,
+        process_subcategory: bool = True,
     ):
         """Initialize the user history dataloader."""
         self.history_tokens = history_tokens
@@ -347,7 +379,9 @@ class UserHistoryBatchDataloader:
         self.process_category = process_category
         self.process_subcategory = process_subcategory
 
-    def __iter__(self) -> Iterator[tuple[Any, keras.KerasTensor | None, keras.KerasTensor]]:
+    def __iter__(
+        self,
+    ) -> Iterator[tuple[Any, keras.KerasTensor | None, keras.KerasTensor]]:
         """Iterate through user history batches."""
         for i in range(0, self.num_users, self.batch_size):
             end_idx = min(i + self.batch_size, self.num_users)
@@ -364,16 +398,22 @@ class UserHistoryBatchDataloader:
             batch_features = []
 
             if self.process_title:
-                batch_features.append(keras.ops.convert_to_tensor(self.history_tokens[i:end_idx]))
+                batch_features.append(
+                    keras.ops.convert_to_tensor(self.history_tokens[i:end_idx])
+                )
             if self.process_abstract:
-                batch_features.append(keras.ops.convert_to_tensor(self.history_abstract_tokens[i:end_idx]))
+                batch_features.append(
+                    keras.ops.convert_to_tensor(self.history_abstract_tokens[i:end_idx])
+                )
             if self.process_category:
                 category = keras.ops.convert_to_tensor(self.history_category[i:end_idx])
                 if len(keras.ops.shape(category)) == 2:  # If it's 2D, add dimension
                     category = keras.ops.expand_dims(category, axis=2)
                 batch_features.append(category)
             if self.process_subcategory:
-                subcategory = keras.ops.convert_to_tensor(self.history_subcategory[i:end_idx])
+                subcategory = keras.ops.convert_to_tensor(
+                    self.history_subcategory[i:end_idx]
+                )
                 if len(keras.ops.shape(subcategory)) == 2:  # If it's 2D, add dimension
                     subcategory = keras.ops.expand_dims(subcategory, axis=2)
                 batch_features.append(subcategory)

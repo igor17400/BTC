@@ -1,7 +1,6 @@
 import logging
 from pathlib import Path
 
-import keras
 import numpy as np
 
 logger = logging.getLogger("bpemb_manager")
@@ -10,18 +9,11 @@ logger = logging.getLogger("bpemb_manager")
 class BPEmbManager:
     """Manager for BPEmb multilingual embeddings with systematic download and caching."""
 
-    def __init__(self, cache_manager=None):
+    def __init__(self, cache_manager=None, float_dtype: str = "float32"):
         self.cache_manager = cache_manager
-        self.bpemb_models: dict[str, object] = {}  # Cache loaded models
+        self.bpemb_models: dict[str, object] = {}
         self.supported_languages = self._get_supported_languages()
-
-        policy = keras.mixed_precision.global_policy()
-        if policy.compute_dtype == "mixed_float16":
-            self.float_dtype = "float16"
-        elif policy.compute_dtype == "float16":
-            self.float_dtype = "float16"
-        else:
-            self.float_dtype = "float32"
+        self.float_dtype = float_dtype
 
     def _get_supported_languages(self) -> list[str]:
         """Get list of supported BPEmb languages.

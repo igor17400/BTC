@@ -27,7 +27,7 @@ dataset:
 
 train:
   batch_size: 8
-  num_epochs: 1
+  num_epochs: 3
   learning_rate: 0.0001
   early_stopping:
     patience: 1
@@ -57,4 +57,4 @@ metrics:
 device:
   gpu_ids: [0]
   precision: float32
-  keras_backend: jax  # Options: jax, torch, tensorflow
+  keras_backend: jax  # Options: jax, torch

@@ -10,6 +10,7 @@ Keras ``model.fit()`` workflow with:
 - Automatic device handling (CUDA / MPS / CPU)
 """
 
+import time
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +27,8 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 from torch.utils.data import DataLoader
+
+from src.core.io.logging import log_early_stopping, log_epoch_end
 
 from .device import setup_device
 from .evaluation import run_fast_evaluation
@@ -140,6 +143,7 @@ def training_loop(
 
         for epoch in range(1, epochs + 1):
             # ---------- Training ----------
+            epoch_start = time.time()
             model.train()
             running_loss = 0.0
             num_batches = 0
@@ -167,14 +171,16 @@ def training_loop(
             progress.remove_task(batch_task)
 
             avg_train_loss = running_loss / max(num_batches, 1)
+            epoch_train_time = time.time() - epoch_start
             history["train_loss"].append(avg_train_loss)
-            progress.console.print(
-                f"[bold]Epoch {epoch}/{epochs}[/bold]  train_loss={avg_train_loss:.5f}"
-            )
 
             # ---------- Validation ----------
             val_metrics: dict[str, float] = {}
+            val_time = None
+            is_best = False
+
             if val_dataset_provider is not None and metrics_engine is not None:
+                eval_start = time.time()
                 val_metrics = run_fast_evaluation(
                     model=model,
                     dataset_provider=val_dataset_provider,
@@ -185,45 +191,43 @@ def training_loop(
                     epoch=epoch,
                     int_to_news_id_map=int_to_news_id_map,
                 )
+                val_time = time.time() - eval_start
                 history["val_metrics"].append(val_metrics)
 
-                # Pretty-print
-                metrics_str = "  ".join(
-                    f"{k}={v:.5f}"
-                    for k, v in val_metrics.items()
-                    if k != "num_impressions"
-                )
-                progress.console.print(f"  val: {metrics_str}")
-
-                # ---- Early stopping / checkpointing ----
-                # Use AUC as the primary metric (common for news-rec)
+                # Early stopping / checkpointing
                 monitor_value = val_metrics.get("auc", val_metrics.get("loss", 0.0))
                 if "auc" not in val_metrics:
-                    # If AUC not available, use negative loss (lower is better)
                     monitor_value = -monitor_value
 
                 if monitor_value > best_val_metric:
                     best_val_metric = monitor_value
                     best_epoch = epoch
                     epochs_without_improvement = 0
+                    is_best = True
 
                     if checkpoint_dir:
                         ckpt_path = Path(checkpoint_dir) / "best_model.pt"
                         ckpt_path.parent.mkdir(parents=True, exist_ok=True)
                         torch.save(model.state_dict(), ckpt_path)
-                        progress.console.print(
-                            f"  [green]Saved best model to {ckpt_path}[/green]"
-                        )
                 else:
                     epochs_without_improvement += 1
-                    if epochs_without_improvement >= patience:
-                        progress.console.print(
-                            f"[yellow]Early stopping at epoch {epoch} "
-                            f"(no improvement for {patience} epochs)[/yellow]"
-                        )
-                        break
 
-            # ---- WandB logging ----
+            # Log epoch (shared format)
+            log_epoch_end(
+                epoch=epoch,
+                num_epochs=epochs,
+                train_loss=avg_train_loss,
+                train_time=epoch_train_time,
+                val_metrics=val_metrics or None,
+                val_time=val_time,
+                is_best=is_best,
+            )
+
+            if epochs_without_improvement >= patience:
+                log_early_stopping(epoch, patience)
+                break
+
+            # WandB
             if use_wandb:
                 log_dict = {"epoch": epoch, "train_loss": avg_train_loss}
                 for k, v in val_metrics.items():

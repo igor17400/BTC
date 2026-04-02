@@ -3,13 +3,13 @@ model:
   architecture:
     news_encoder:
       type: multi_head_self_attention
-      num_heads: 16
-      head_dim: 16
+      num_heads: 20
+      head_dim: 15
       attention_hidden_dim: 200
     user_encoder:
       type: multi_head_self_attention
-      num_heads: 16
-      head_dim: 16
+      num_heads: 20
+      head_dim: 15
       attention_hidden_dim: 200
     click_predictor:
       type: dot_product

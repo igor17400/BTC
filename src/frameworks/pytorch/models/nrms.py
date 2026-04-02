@@ -19,18 +19,16 @@ class NewsEncoder(nn.Module):
         self.config = config
         self.embedding_layer = embedding_layer
 
-        self.qkv_dim = config.multiheads * config.head_dim
-        self.input_proj = nn.Linear(config.embedding_size, self.qkv_dim)
         self.dropout1 = nn.Dropout(config.dropout_rate)
         self.multi_head_attention = nn.MultiheadAttention(
-            embed_dim=self.qkv_dim,
+            embed_dim=config.embedding_size,
             num_heads=config.multiheads,
             dropout=config.dropout_rate,
             batch_first=True,
         )
         self.dropout2 = nn.Dropout(config.dropout_rate)
         self.additive_attention = AdditiveAttention(
-            input_dim=self.qkv_dim,
+            input_dim=config.embedding_size,
             query_vec_dim=config.attention_hidden_dim,
         )
 
@@ -49,10 +47,9 @@ class NewsEncoder(nn.Module):
         else:
             self.train()
 
-        # Word embedding + project to qkv_dim + dropout
+        # Word embedding + dropout
         embedded = self.embedding_layer(inputs)  # (B, T, E)
-        y = self.input_proj(embedded)  # (B, T, qkv_dim)
-        y = self.dropout1(y)
+        y = self.dropout1(embedded)
 
         # Padding mask: True where padded (PyTorch convention for MHA key_padding_mask)
         key_padding_mask = inputs == 0  # (B, T)
@@ -75,16 +72,14 @@ class UserEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.news_encoder = news_encoder
-        self.qkv_dim = config.multiheads * config.head_dim
-
         self.browsed_news_attention = nn.MultiheadAttention(
-            embed_dim=self.qkv_dim,
+            embed_dim=config.embedding_size,
             num_heads=config.multiheads,
             dropout=config.dropout_rate,
             batch_first=True,
         )
         self.user_additive_attention = AdditiveAttention(
-            input_dim=self.qkv_dim,
+            input_dim=config.embedding_size,
             query_vec_dim=config.attention_hidden_dim,
         )
 

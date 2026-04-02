@@ -109,11 +109,68 @@ def log_epoch_summary_fn(
 
 
 def log_metrics_to_wandb_fn(
-    metrics_payload: dict[str, float],  # Flat dict with prefixes like "train/loss"
-    commit_step: int,  # Usually epoch index
-    wandb_history_cache: dict[str, list[float]],  # Local cache for full history
+    metrics_payload: dict[str, float],
+    commit_step: int,
+    wandb_history_cache: dict[str, list[float]],
 ) -> None:
-    if wandb.run:  # Check if wandb session is active
+    if wandb.run:
         wandb.log(metrics_payload, step=commit_step)
         for key, value in metrics_payload.items():
             wandb_history_cache.setdefault(key, []).append(float(value))
+
+
+# ---------------------------------------------------------------------------
+# Shared training lifecycle logging (framework-agnostic)
+# ---------------------------------------------------------------------------
+
+
+def log_training_start(model_name: str, framework: str, num_epochs: int) -> None:
+    console.log(
+        f"[bold blue]Training {model_name} ({framework}) for {num_epochs} epochs[/bold blue]"
+    )
+
+
+def log_epoch_end(
+    epoch: int,
+    num_epochs: int,
+    train_loss: float,
+    train_time: float,
+    val_metrics: dict[str, float] | None = None,
+    val_time: float | None = None,
+    is_best: bool = False,
+) -> None:
+    """Log a consistent epoch summary across all frameworks."""
+    parts = [f"[bold]Epoch {epoch}/{num_epochs}[/bold]"]
+    parts.append(f"loss={train_loss:.4f}")
+    parts.append(f"time={train_time:.1f}s")
+    console.log("  ".join(parts))
+
+    if val_metrics:
+        val_parts = []
+        for k, v in val_metrics.items():
+            if k != "num_impressions":
+                val_parts.append(f"{k}={v:.4f}")
+        val_str = "  ".join(val_parts)
+        time_str = f"  time={val_time:.1f}s" if val_time else ""
+        console.log(f"  val: {val_str}{time_str}")
+
+    if is_best:
+        console.log("[bold green]  New best epoch![/bold green]")
+
+
+def log_early_stopping(epoch: int, patience: int) -> None:
+    console.log(
+        f"[bold red]Early stopping at epoch {epoch} (no improvement for {patience} epochs)[/bold red]"
+    )
+
+
+def log_test_results(metrics: dict[str, float]) -> None:
+    parts = []
+    for k, v in metrics.items():
+        if k != "num_impressions":
+            parts.append(f"{k}={v:.4f}")
+    console.log(f"[bold green]Test results:[/bold green] {'  '.join(parts)}")
+
+
+def log_training_complete(model_name: str, framework: str, total_time: float) -> None:
+    console.log(f"--- {model_name} ({framework}) finished in {total_time:.1f}s ---")

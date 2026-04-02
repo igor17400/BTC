@@ -1,16 +1,16 @@
-import keras
-
 from typing import Any
+
+import keras
 
 
 class NewsRecommenderLoss(keras.losses.Loss):
     """Base class for news recommendation losses."""
 
     def __init__(
-            self,
-            name: str = "news_recommender_loss",
-            reduction: str = "sum_over_batch_size",
-            **kwargs: Any,
+        self,
+        name: str = "news_recommender_loss",
+        reduction: str = "sum_over_batch_size",
+        **kwargs: Any,
     ) -> None:
         super().__init__(name=name, reduction=reduction, **kwargs)
 
@@ -34,18 +34,20 @@ class CategoricalCrossEntropyLoss(NewsRecommenderLoss):
     """
 
     def __init__(
-            self,
-            name: str = "categorical_crossentropy",
-            from_logits: bool = False,
-            reduction: str = "sum_over_batch_size",
-            label_smoothing: float = 0.0,
-            **kwargs: Any,
+        self,
+        name: str = "categorical_crossentropy",
+        from_logits: bool = False,
+        reduction: str = "sum_over_batch_size",
+        label_smoothing: float = 0.0,
+        **kwargs: Any,
     ) -> None:
         super().__init__(name=name, reduction=reduction, **kwargs)
         self.from_logits = from_logits
         self.label_smoothing = label_smoothing
 
-    def call(self, y_true: keras.KerasTensor, y_pred: keras.KerasTensor) -> keras.KerasTensor:
+    def call(
+        self, y_true: keras.KerasTensor, y_pred: keras.KerasTensor
+    ) -> keras.KerasTensor:
         """Compute the loss.
 
         Args:
@@ -56,7 +58,10 @@ class CategoricalCrossEntropyLoss(NewsRecommenderLoss):
             Loss value
         """
         return keras.losses.categorical_crossentropy(
-            y_true, y_pred, from_logits=self.from_logits, label_smoothing=self.label_smoothing
+            y_true,
+            y_pred,
+            from_logits=self.from_logits,
+            label_smoothing=self.label_smoothing,
         )
 
 
@@ -79,18 +84,20 @@ class BinaryCrossEntropyLoss(NewsRecommenderLoss):
     """
 
     def __init__(
-            self,
-            name: str = "binary_crossentropy",
-            from_logits: bool = False,
-            reduction: str = "sum_over_batch_size",
-            label_smoothing: float = 0.0,
-            **kwargs: Any,
+        self,
+        name: str = "binary_crossentropy",
+        from_logits: bool = False,
+        reduction: str = "sum_over_batch_size",
+        label_smoothing: float = 0.0,
+        **kwargs: Any,
     ) -> None:
         super().__init__(name=name, reduction=reduction, **kwargs)
         self.from_logits = from_logits
         self.label_smoothing = label_smoothing
 
-    def call(self, y_true: keras.KerasTensor, y_pred: keras.KerasTensor) -> keras.KerasTensor:
+    def call(
+        self, y_true: keras.KerasTensor, y_pred: keras.KerasTensor
+    ) -> keras.KerasTensor:
         """Compute the loss.
 
         Args:
@@ -101,7 +108,10 @@ class BinaryCrossEntropyLoss(NewsRecommenderLoss):
             Loss value
         """
         return keras.losses.binary_crossentropy(
-            y_true, y_pred, from_logits=self.from_logits, label_smoothing=self.label_smoothing
+            y_true,
+            y_pred,
+            from_logits=self.from_logits,
+            label_smoothing=self.label_smoothing,
         )
 
 
@@ -124,12 +134,12 @@ class CROWNCombinedLoss(NewsRecommenderLoss):
     """
 
     def __init__(
-            self,
-            alpha: float = 0.3,
-            num_categories: int = 18,
-            name: str = "crown_combined_loss",
-            reduction: str = "sum_over_batch_size",
-            **kwargs: Any,
+        self,
+        alpha: float = 0.3,
+        num_categories: int = 18,
+        name: str = "crown_combined_loss",
+        reduction: str = "sum_over_batch_size",
+        **kwargs: Any,
     ) -> None:
         super().__init__(name=name, reduction=reduction, **kwargs)
         self.alpha = alpha
@@ -168,15 +178,12 @@ class CROWNCombinedLoss(NewsRecommenderLoss):
         if category_logits is not None and category_ids is not None:
             # Create one-hot encoding for true categories
             category_one_hot = keras.ops.one_hot(
-                keras.ops.cast(category_ids, "int32"),
-                self.num_categories
+                keras.ops.cast(category_ids, "int32"), self.num_categories
             )
 
             # Compute category prediction loss
             auxiliary_loss = keras.losses.categorical_crossentropy(
-                category_one_hot,
-                category_logits,
-                from_logits=True
+                category_one_hot, category_logits, from_logits=True
             )
 
             # Combine losses with weight
@@ -213,6 +220,8 @@ def get_loss(loss_name: str, **kwargs: Any) -> NewsRecommenderLoss:
     }
 
     if loss_name not in losses:
-        raise ValueError(f"Unknown loss: {loss_name}. Available losses: {list(losses.keys())}")
+        raise ValueError(
+            f"Unknown loss: {loss_name}. Available losses: {list(losses.keys())}"
+        )
 
     return losses[loss_name](**kwargs)

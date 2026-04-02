@@ -22,6 +22,12 @@ from flax import nnx
 from rich.console import Console
 from rich.progress import Progress
 
+from src.core.io.logging import (
+    log_early_stopping,
+    log_epoch_end,
+    log_training_start,
+)
+
 from .losses import categorical_cross_entropy
 
 logger = logging.getLogger(__name__)
@@ -231,27 +237,16 @@ def training_loop(
             epoch_train_time = time.time() - epoch_start
             timing["epoch_training_times"].append(epoch_train_time)
 
-            console.log(
-                f"Epoch {epoch + 1}/{num_epochs} -- "
-                f"loss: {avg_loss:.4f}  "
-                f"time: {epoch_train_time:.1f}s"
-            )
-
             # ---- Evaluation ----------------------------------------------
             val_metrics: dict[str, float] | None = None
+            eval_time = None
+            is_best = False
+
             if eval_fn is not None:
                 eval_start = time.time()
                 val_metrics = eval_fn(model, **(eval_kwargs or {}))
                 eval_time = time.time() - eval_start
                 timing["epoch_validation_times"].append(eval_time)
-
-                # Log
-                metric_str = "  ".join(
-                    f"{k}: {v:.4f}"
-                    for k, v in val_metrics.items()
-                    if k != "num_impressions"
-                )
-                console.log(f"  Validation -- {metric_str}  time: {eval_time:.1f}s")
 
                 # Best tracking
                 main_metrics = ["auc", "mrr", "ndcg@5", "ndcg@10"]
@@ -259,6 +254,7 @@ def training_loop(
                 avg_metric = sum(vals) / len(vals) if vals else 0.0
 
                 if avg_metric > best_metrics["average_metric_value"]:
+                    is_best = True
                     best_metrics = {
                         "epoch_number": epoch + 1,
                         "train_loss": avg_loss,
@@ -266,26 +262,28 @@ def training_loop(
                         **{f"val_{k}": v for k, v in val_metrics.items()},
                     }
 
-                # WandB
-                if wandb_run is not None:
-                    wandb.log(
-                        {
-                            "train/loss": avg_loss,
-                            "epoch": epoch + 1,
-                            **{f"val/{k}": v for k, v in val_metrics.items()},
-                        }
-                    )
+            # Log epoch (shared format)
+            log_epoch_end(
+                epoch=epoch + 1,
+                num_epochs=num_epochs,
+                train_loss=avg_loss,
+                train_time=epoch_train_time,
+                val_metrics=val_metrics,
+                val_time=eval_time,
+                is_best=is_best,
+            )
 
-                # Early stopping
-                if stopper.step(avg_metric, epoch + 1):
-                    console.log(
-                        f"[bold red]Early stopping at epoch {epoch + 1}.[/bold red]"
-                    )
-                    break
-            else:
-                # WandB without eval
-                if wandb_run is not None:
-                    wandb.log({"train/loss": avg_loss, "epoch": epoch + 1})
+            # WandB
+            if wandb_run is not None:
+                log_data = {"train/loss": avg_loss, "epoch": epoch + 1}
+                if val_metrics:
+                    log_data.update({f"val/{k}": v for k, v in val_metrics.items()})
+                wandb.log(log_data)
+
+            # Early stopping
+            if val_metrics and stopper.step(avg_metric, epoch + 1):
+                log_early_stopping(epoch + 1, early_stopping_patience)
+                break
 
             progress.update(overall_task, advance=1)
 

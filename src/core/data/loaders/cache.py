@@ -52,12 +52,18 @@ class CacheManager:
     def is_dataset_cached(self, dataset_name: str, version: str) -> bool:
         """Check if dataset is cached"""
         cache_path = self.get_dataset_path(dataset_name, version)
-        return cache_path.exists() and f"{dataset_name}/{version}" in self.cache_index["datasets"]
+        return (
+            cache_path.exists()
+            and f"{dataset_name}/{version}" in self.cache_index["datasets"]
+        )
 
     def is_embedding_cached(self, embedding_name: str, dim: int) -> bool:
         """Check if embedding is cached"""
         cache_path = self.get_embedding_path(embedding_name, dim)
-        return cache_path.exists() and f"{embedding_name}_{dim}d" in self.cache_index["embeddings"]
+        return (
+            cache_path.exists()
+            and f"{embedding_name}_{dim}d" in self.cache_index["embeddings"]
+        )
 
     def add_to_cache(
         self, name: str, version: str, cache_type: str, metadata: dict | None = None

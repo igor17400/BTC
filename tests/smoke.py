@@ -8,49 +8,29 @@ Usage:
     # Specific models and frameworks
     uv run python tests/smoke.py --models nrms naml --frameworks jax pytorch
 
-    # Single combo
-    uv run python tests/smoke.py --models nrms --frameworks jax
+    # With Keras backends
+    uv run python tests/smoke.py --models nrms --frameworks jax pytorch keras+jax keras+torch
 """
 
 import argparse
-import importlib
+import json
+import subprocess
 import sys
 import time
 from pathlib import Path
 
-import hydra
-from omegaconf import OmegaConf
 from rich.console import Console
 from rich.table import Table
 
-# Ensure project root is on path
 PROJECT_ROOT = Path(__file__).parent.parent
-sys.path.insert(0, str(PROJECT_ROOT))
-
 console = Console()
 
 ALL_MODELS = ["nrms", "naml", "lstur"]
-ALL_FRAMEWORKS = ["keras", "jax", "pytorch"]
-
-FRAMEWORK_MODULES = {
-    "keras": "src.frameworks.keras.runner",
-    "pytorch": "src.frameworks.pytorch.runner",
-    "jax": "src.frameworks.jax.runner",
-}
-
-
-def load_smoke_config(model: str) -> dict:
-    """Load and resolve a smoke experiment config."""
-    config_dir = PROJECT_ROOT / "configs"
-
-    with hydra.initialize_config_dir(config_dir=str(config_dir), version_base=None):
-        cfg = hydra.compose(config_name="config", overrides=[f"experiment=smoke/{model}"])
-
-    return cfg
+ALL_FRAMEWORKS = ["jax", "pytorch", "keras+jax", "keras+torch"]
 
 
 def run_one(model: str, framework: str) -> dict:
-    """Run a single model×framework smoke test. Returns metrics dict."""
+    """Run a single model×framework smoke test in a subprocess."""
     result = {
         "model": model.upper(),
         "framework": framework,
@@ -64,50 +44,99 @@ def run_one(model: str, framework: str) -> dict:
         "error": None,
     }
 
+    # Build the train.py command with Hydra overrides
+    cmd = [
+        sys.executable,
+        "src/train.py",
+        f"experiment=smoke/{model}",
+        "eval.run_test_after_training=true",
+        "logging.enable_wandb=false",
+    ]
+
+    # Parse framework spec: "keras+jax" → framework=keras, backend=jax
+    if "+" in framework:
+        fw, backend = framework.split("+")
+        cmd.append(f"framework={fw}")
+        cmd.append(f"device.keras_backend={backend}")
+    else:
+        cmd.append(f"framework={framework}")
+
+    start = time.time()
+
     try:
-        cfg = load_smoke_config(model)
-
-        # Override framework
-        cfg.framework = framework
-
-        # Force eval + test on, wandb off
-        cfg.eval.fast_evaluation = True
-        cfg.eval.run_test_after_training = True
-        cfg.logging.enable_wandb = False
-
-        start = time.time()
-
-        runner = importlib.import_module(FRAMEWORK_MODULES[framework])
-        metrics = runner.run(cfg)
+        proc = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=str(PROJECT_ROOT),
+            timeout=120,
+        )
 
         elapsed = time.time() - start
         result["time"] = f"{elapsed:.1f}s"
 
-        # Extract metrics from runner return (if available)
-        if isinstance(metrics, dict):
-            for key in ["loss", "auc", "mrr", "ndcg@5", "ndcg@10"]:
-                val = metrics.get(key) or metrics.get(f"val_{key}")
-                if val is not None and val != 0:
-                    result[key] = f"{float(val):.4f}"
+        if proc.returncode != 0:
+            # Extract last meaningful error line
+            stderr_lines = proc.stderr.strip().split("\n")
+            error_msg = stderr_lines[-1] if stderr_lines else "Unknown error"
+            # Also check stdout for rich-formatted errors
+            for line in proc.stdout.split("\n"):
+                if "ERROR" in line or "Error" in line:
+                    error_msg = line.strip()
+            result["error"] = error_msg
+            console.print(f"[red]  FAIL: {error_msg}[/red]")
+            return result
+
+        # Parse metrics from stdout (look for "Test results:" or "val:" lines)
+        for line in proc.stdout.split("\n"):
+            if "Test results:" in line or "val:" in line:
+                # Extract key=value or key: value pairs
+                for part in line.split():
+                    if "=" in part:
+                        k, v = part.split("=", 1)
+                    elif ":" in part and part[0].isalpha():
+                        continue  # skip "results:" etc
+                    else:
+                        continue
+                    k = k.strip()
+                    try:
+                        v_float = float(v)
+                        if k in ("loss", "auc", "mrr", "ndcg@5", "ndcg@10"):
+                            result[k] = f"{v_float:.4f}"
+                    except ValueError:
+                        pass
+
+        # Also try parsing "key: value" format from JAX output
+        for line in proc.stdout.split("\n"):
+            if "Test results:" in line:
+                parts = line.split("Test results:")[-1].strip()
+                for pair in parts.split("  "):
+                    pair = pair.strip()
+                    if ": " in pair:
+                        k, v = pair.split(": ", 1)
+                        k = k.strip()
+                        try:
+                            v_float = float(v)
+                            if k in ("loss", "auc", "mrr", "ndcg@5", "ndcg@10"):
+                                result[k] = f"{v_float:.4f}"
+                        except ValueError:
+                            pass
 
         result["status"] = "PASS"
 
+    except subprocess.TimeoutExpired:
+        result["error"] = "Timeout (120s)"
+        console.print("[red]  TIMEOUT[/red]")
     except Exception as e:
         result["error"] = str(e)
         console.print(f"[red]  ERROR: {e}[/red]")
-
-    # Clear Hydra global state for next run
-    hydra.core.global_hydra.GlobalHydra.instance().clear()
 
     return result
 
 
 def print_results_table(results: list[dict]) -> None:
     """Print a rich comparison table."""
-    table = Table(
-        title="Smoke Test Results",
-        show_lines=True,
-    )
+    table = Table(title="Smoke Test Results", show_lines=True)
 
     table.add_column("Model", style="bold cyan")
     table.add_column("Framework", style="bold")
@@ -136,10 +165,11 @@ def print_results_table(results: list[dict]) -> None:
     console.print()
     console.print(table)
 
-    # Summary
     passed = sum(1 for r in results if r["status"] == "PASS")
     failed = sum(1 for r in results if r["status"] == "FAIL")
-    console.print(f"\n[bold]{passed} passed[/bold], [bold red]{failed} failed[/bold red]")
+    console.print(
+        f"\n[bold]{passed} passed[/bold], [bold red]{failed} failed[/bold red]"
+    )
 
     if failed > 0:
         console.print("\n[red]Failures:[/red]")
@@ -166,7 +196,9 @@ def main():
     )
     args = parser.parse_args()
 
-    console.print(f"[bold]Running smoke tests: {args.models} × {args.frameworks}[/bold]\n")
+    console.print(
+        f"[bold]Running smoke tests: {args.models} × {args.frameworks}[/bold]\n"
+    )
 
     results = []
     for model in args.models:
@@ -177,7 +209,6 @@ def main():
 
     print_results_table(results)
 
-    # Exit with failure count
     sys.exit(sum(1 for r in results if r["status"] == "FAIL"))
 
 

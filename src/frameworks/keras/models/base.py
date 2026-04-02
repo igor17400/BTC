@@ -162,19 +162,20 @@ class BaseModel(keras.Model):
             _, labels, impression_id, cand_ids = impression
 
             # Get user vector for this impression
-            user_vector = user_vecs_dict[impression_id]
+            user_vector = user_vecs_dict.get(int(impression_id))
+            if user_vector is None:
+                continue
 
             # Get news vectors for candidate news
             cand_ids_np = ops.convert_to_numpy(cand_ids)  # Get numpy array of candidate IDs
             news_vectors = []
             for nid in cand_ids_np:
-                # Convert integer ID to string news ID
-                if int_to_news_id_map and nid in int_to_news_id_map:
-                    # Use the mapping if provided (for datasets with custom IDs)
+                if isinstance(nid, (str, np.str_)):
+                    news_key = str(nid)
+                elif int_to_news_id_map and nid in int_to_news_id_map:
                     news_key = int_to_news_id_map[nid]
                 else:
-                    # Default behavior for MIND dataset (add "N" prefix)
-                    news_key = f"N{str(nid)}"
+                    news_key = f"N{nid}"
 
                 vec = news_vecs_dict.get(news_key)
                 if vec is not None:

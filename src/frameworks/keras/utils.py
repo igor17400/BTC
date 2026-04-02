@@ -13,9 +13,9 @@ import keras
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
-from src.frameworks.keras.losses import get_loss
-from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.io.logging import console
+from src.core.metrics.functions import NewsRecommenderMetrics
+from src.frameworks.keras.losses import get_loss
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 # JIT Warmup
 # =============================================================================
+
 
 def warmup_jit_compilation(model, sample_batch):
     """Warm up JIT compilation by running a forward pass with sample data.
@@ -50,7 +51,7 @@ def warmup_jit_compilation(model, sample_batch):
         _ = model(inputs, training=True)
 
         # If the model has internal models, warm them up too
-        if hasattr(model, 'training_model') and model.training_model is not None:
+        if hasattr(model, "training_model") and model.training_model is not None:
             # For training model, we need to prepare the proper input format
 
             # Our base keys
@@ -78,8 +79,12 @@ def warmup_jit_compilation(model, sample_batch):
                 if hist_key in inputs and cand_key in inputs:
                     # Check if we need to expand dimensions for scalar values.
                     if inputs[hist_key].ndim == 1:
-                        history_to_concat.append(keras.ops.expand_dims(inputs[hist_key], axis=-1))
-                        candidate_to_concat.append(keras.ops.expand_dims(inputs[cand_key], axis=-1))
+                        history_to_concat.append(
+                            keras.ops.expand_dims(inputs[hist_key], axis=-1)
+                        )
+                        candidate_to_concat.append(
+                            keras.ops.expand_dims(inputs[cand_key], axis=-1)
+                        )
                     else:
                         history_to_concat.append(inputs[hist_key])
                         candidate_to_concat.append(inputs[cand_key])
@@ -92,7 +97,7 @@ def warmup_jit_compilation(model, sample_batch):
             _ = model.training_model([history_concat, candidate_concat], training=False)
             _ = model.training_model([history_concat, candidate_concat], training=True)
 
-        if hasattr(model, 'scorer_model') and model.scorer_model is not None:
+        if hasattr(model, "scorer_model") and model.scorer_model is not None:
             # Scorer model warmup - it has different input shapes
             # We'll skip this for now as it's less critical
             pass
@@ -100,6 +105,7 @@ def warmup_jit_compilation(model, sample_batch):
         # Block until computations are complete (backend-specific)
         if keras.backend.backend() == "jax":
             import jax
+
             jax.block_until_ready(jax.device_put(0))
 
         logger.info("JIT compilation warmup completed")
@@ -113,7 +119,10 @@ def warmup_jit_compilation(model, sample_batch):
 # Model and Dataset Initialization
 # =============================================================================
 
-def initialize_model_and_dataset(cfg: DictConfig, training_metrics: list = None) -> tuple[keras.Model, Any]:
+
+def initialize_model_and_dataset(
+    cfg: DictConfig, training_metrics: list = None
+) -> tuple[keras.Model, Any]:
     """Instantiate dataset and model based on Hydra configuration."""
     console.log("Initializing dataset provider...")
     dataset_provider: Any = hydra.utils.instantiate(cfg.dataset, mode="train")
@@ -145,7 +154,9 @@ def initialize_model_and_dataset(cfg: DictConfig, training_metrics: list = None)
         model_params["max_impressions_length"] = cfg.dataset.max_impressions_length
 
     # Filter out any parameters that are not in the model's __init__ signature
-    valid_params = {k: v for k, v in model_params.items() if k in model_signature.parameters}
+    valid_params = {
+        k: v for k, v in model_params.items() if k in model_signature.parameters
+    }
 
     model: keras.Model = model_class(**valid_params)
     # --- End Generic Model Instantiation ---
@@ -153,14 +164,14 @@ def initialize_model_and_dataset(cfg: DictConfig, training_metrics: list = None)
     console.log(f"Successfully instantiated {model.name} model.")
 
     optimizer = keras.optimizers.Adam(learning_rate=cfg.train.learning_rate)
-    if (keras.mixed_precision.global_policy().name == "mixed_float16"):
+    if keras.mixed_precision.global_policy().name == "mixed_float16":
         optimizer = keras.mixed_precision.LossScaleOptimizer(optimizer)
 
     loss_function = get_loss(
         loss_name=cfg.model.loss.name,
         from_logits=cfg.model.loss.from_logits,
         reduction=cfg.model.loss.reduction,
-        label_smoothing=cfg.model.loss.label_smoothing
+        label_smoothing=cfg.model.loss.label_smoothing,
     )
 
     # Compile with metrics if provided
@@ -170,18 +181,24 @@ def initialize_model_and_dataset(cfg: DictConfig, training_metrics: list = None)
 
     model.compile(**compile_kwargs)
 
-    metrics_info = f", Metrics: {len(training_metrics)} metrics" if training_metrics else ""
+    metrics_info = (
+        f", Metrics: {len(training_metrics)} metrics" if training_metrics else ""
+    )
     console.log(
         f"Model compiled. Optimizer: {type(optimizer).__name__}, Loss: {loss_function.name}{metrics_info}"
     )
 
-    console.log(f"Mixed precision global policy: {keras.mixed_precision.global_policy().name}")
+    console.log(
+        f"Mixed precision global policy: {keras.mixed_precision.global_policy().name}"
+    )
     console.log(f"Optimizer type: {type(optimizer)}")
 
     return model, dataset_provider
 
 
-def initialize_model_from_spec(cfg: DictConfig, training_metrics: list = None) -> tuple[keras.Model, Any]:
+def initialize_model_from_spec(
+    cfg: DictConfig, training_metrics: list = None
+) -> tuple[keras.Model, Any]:
     """Instantiate dataset and model from a YAML DSL spec.
 
     This is the spec-aware alternative to initialize_model_and_dataset().
@@ -195,7 +212,9 @@ def initialize_model_from_spec(cfg: DictConfig, training_metrics: list = None) -
 
     spec = cfg.spec
     framework = getattr(cfg, "framework", "keras")
-    console.log(f"Initializing model from spec: {spec.model.name} (framework: {framework})...")
+    console.log(
+        f"Initializing model from spec: {spec.model.name} (framework: {framework})..."
+    )
 
     model = build_model_from_spec(spec, framework, processed_news_data)
     console.log(f"Successfully instantiated {model.name} model from spec.")
@@ -219,7 +238,9 @@ def initialize_model_from_spec(cfg: DictConfig, training_metrics: list = None) -
 
     model.compile(**compile_kwargs)
 
-    metrics_info = f", Metrics: {len(training_metrics)} metrics" if training_metrics else ""
+    metrics_info = (
+        f", Metrics: {len(training_metrics)} metrics" if training_metrics else ""
+    )
     console.log(
         f"Model compiled. Optimizer: {type(optimizer).__name__}, Loss: {loss_function.name}{metrics_info}"
     )
@@ -231,17 +252,24 @@ def initialize_model_from_spec(cfg: DictConfig, training_metrics: list = None) -
 # Keras Metric Wrappers
 # =============================================================================
 
+
 class NewsRecommenderKerasMetric(keras.metrics.Metric):
     """Keras 3 compatible wrapper for news recommendation metrics."""
 
-    def __init__(self, metric_name: str, custom_metrics_engine: NewsRecommenderMetrics, **kwargs):
+    def __init__(
+        self, metric_name: str, custom_metrics_engine: NewsRecommenderMetrics, **kwargs
+    ):
         super().__init__(name=metric_name, **kwargs)
         self.metric_name = metric_name
         self.custom_metrics_engine = custom_metrics_engine
 
         # State variables to accumulate predictions and labels
-        self.total_predictions = self.add_weight(name="total_predictions", initializer="zeros", shape=())
-        self.total_labels = self.add_weight(name="total_labels", initializer="zeros", shape=())
+        self.total_predictions = self.add_weight(
+            name="total_predictions", initializer="zeros", shape=()
+        )
+        self.total_labels = self.add_weight(
+            name="total_labels", initializer="zeros", shape=()
+        )
 
         # Lists to store batch data (note: this is not ideal for very large datasets)
         self.predictions_list = []
@@ -275,7 +303,7 @@ class NewsRecommenderKerasMetric(keras.metrics.Metric):
             metrics_dict = self.custom_metrics_engine.compute_metrics(
                 y_true=all_labels,
                 y_pred_logits=all_predictions,
-                progress=None  # No progress bar in metric computation
+                progress=None,  # No progress bar in metric computation
             )
 
             # Return the specific metric
@@ -297,28 +325,36 @@ class AUCNewsMetric(NewsRecommenderKerasMetric):
     """Keras 3 compatible AUC metric for news recommendation."""
 
     def __init__(self, custom_metrics_engine: NewsRecommenderMetrics, **kwargs):
-        super().__init__(metric_name="auc", custom_metrics_engine=custom_metrics_engine, **kwargs)
+        super().__init__(
+            metric_name="auc", custom_metrics_engine=custom_metrics_engine, **kwargs
+        )
 
 
 class MRRNewsMetric(NewsRecommenderKerasMetric):
     """Keras 3 compatible MRR metric for news recommendation."""
 
     def __init__(self, custom_metrics_engine: NewsRecommenderMetrics, **kwargs):
-        super().__init__(metric_name="mrr", custom_metrics_engine=custom_metrics_engine, **kwargs)
+        super().__init__(
+            metric_name="mrr", custom_metrics_engine=custom_metrics_engine, **kwargs
+        )
 
 
 class NDCG5NewsMetric(NewsRecommenderKerasMetric):
     """Keras 3 compatible nDCG@5 metric for news recommendation."""
 
     def __init__(self, custom_metrics_engine: NewsRecommenderMetrics, **kwargs):
-        super().__init__(metric_name="ndcg@5", custom_metrics_engine=custom_metrics_engine, **kwargs)
+        super().__init__(
+            metric_name="ndcg@5", custom_metrics_engine=custom_metrics_engine, **kwargs
+        )
 
 
 class NDCG10NewsMetric(NewsRecommenderKerasMetric):
     """Keras 3 compatible nDCG@10 metric for news recommendation."""
 
     def __init__(self, custom_metrics_engine: NewsRecommenderMetrics, **kwargs):
-        super().__init__(metric_name="ndcg@10", custom_metrics_engine=custom_metrics_engine, **kwargs)
+        super().__init__(
+            metric_name="ndcg@10", custom_metrics_engine=custom_metrics_engine, **kwargs
+        )
 
 
 def create_news_metrics(custom_metrics_engine: NewsRecommenderMetrics) -> list:
@@ -349,8 +385,8 @@ class LightweightNewsMetrics:
         without the computational overhead of custom news recommendation metrics.
         """
         return [
-            'accuracy',  # Standard accuracy for quick monitoring
-            keras.metrics.AUC(name='keras_auc'),  # Standard AUC
+            "accuracy",  # Standard accuracy for quick monitoring
+            keras.metrics.AUC(name="keras_auc"),  # Standard AUC
         ]
 
     @staticmethod
@@ -372,8 +408,9 @@ class LightweightNewsMetrics:
 # Test Step Function
 # =============================================================================
 
+
 def test_step_fn(
-        model: keras.Model, data: tuple[dict[str, keras.KerasTensor], keras.KerasTensor]
+    model: keras.Model, data: tuple[dict[str, keras.KerasTensor], keras.KerasTensor]
 ) -> dict[str, keras.KerasTensor]:
     """Custom test step logic."""
     features, labels = data
@@ -381,5 +418,3 @@ def test_step_fn(
     # Use Keras 3's backend-agnostic test step
     batch_metrics = model.test_on_batch(features, labels, return_dict=True)
     return batch_metrics
-
-

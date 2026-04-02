@@ -16,7 +16,9 @@ def get_output_run_dir(cfg):
     Uses Hydra's working directory when available, otherwise builds from config.
     """
     try:
-        output_run_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+        output_run_dir = Path(
+            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+        )
     except ValueError:
         # Running outside @hydra.main (e.g., smoke tests with hydra.compose)
         import datetime

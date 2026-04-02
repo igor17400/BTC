@@ -13,7 +13,6 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-import keras
 import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
@@ -27,17 +26,15 @@ from rich.progress import (
 )
 
 from src.core.data.datasets.base import BaseNewsDataset
+from src.core.data.encoders.bpemb import BPEmbManager
+from src.core.data.encoders.embeddings import EmbeddingsManager
+from src.core.data.loaders.cache import CacheManager
 from src.core.data.processing.behaviors import get_test_data, get_train_val_data
+from src.core.data.processing.knowledge_graph import KnowledgeGraphProcessor
 from src.core.data.processing.news import process_news as _process_news_pipeline
 from src.core.data.processing.news import read_all_news
+from src.core.data.processing.sampling import ImpressionSampler
 from src.core.data.processing.vocabulary import segment_text_into_words
-from src.core.data.loaders.dataloader import (
-    ImpressionIterator,
-    NewsBatchDataloader,
-    NewsDataLoader,
-    UserHistoryBatchDataloader,
-)
-from src.core.data.processing.knowledge_graph import KnowledgeGraphProcessor
 from src.core.data.stats import (
     apply_data_fraction,
     collect_basic_dataset_info,
@@ -50,10 +47,6 @@ from src.core.data.stats import (
     reorder_summary_columns,
     save_unique_users_to_csv,
 )
-from src.core.data.loaders.cache import CacheManager
-from src.core.data.encoders.embeddings import EmbeddingsManager
-from src.core.data.encoders.bpemb import BPEmbManager
-from src.core.data.processing.sampling import ImpressionSampler
 from src.core.io.logging import setup_logging
 
 setup_logging()
@@ -154,11 +147,7 @@ class NewsDatasetBase(BaseNewsDataset):
         self.process_subcategory = process_subcategory
         self.process_user_id = process_user_id
 
-        policy = keras.mixed_precision.global_policy()
-        if policy.compute_dtype in ("mixed_float16", "float16"):
-            self.float_dtype = "float16"
-        else:
-            self.float_dtype = "float32"
+        self.float_dtype = "float32"
 
         self.validation_split_strategy = validation_split_strategy
         self.validation_split_percentage = validation_split_percentage
@@ -370,9 +359,7 @@ class NewsDatasetBase(BaseNewsDataset):
             root_behaviors_path = self.dataset_path / "behaviors.tsv"
 
         if not root_behaviors_path.exists():
-            raise FileNotFoundError(
-                f"behaviors.tsv not found at {root_behaviors_path}"
-            )
+            raise FileNotFoundError(f"behaviors.tsv not found at {root_behaviors_path}")
 
         behaviors_df = pd.read_csv(
             root_behaviors_path,
@@ -389,9 +376,7 @@ class NewsDatasetBase(BaseNewsDataset):
         unique_dates = sorted(behaviors_df["time"].dt.date.unique())
         test_start_date = unique_dates[-1]
 
-        test_behaviors = behaviors_df[
-            behaviors_df["time"].dt.date >= test_start_date
-        ]
+        test_behaviors = behaviors_df[behaviors_df["time"].dt.date >= test_start_date]
         remaining_behaviors = behaviors_df[
             behaviors_df["time"].dt.date < test_start_date
         ]
@@ -460,11 +445,10 @@ class NewsDatasetBase(BaseNewsDataset):
             )
         )
 
-        # Convert embeddings to framework tensor for model consumption
+        # Cast embeddings to target dtype
         if "embeddings" in processed_news_content:
-            processed_news_content["embeddings"] = keras.ops.cast(
-                keras.ops.convert_to_tensor(processed_news_content["embeddings"]),
-                self.float_dtype,
+            processed_news_content["embeddings"] = np.asarray(
+                processed_news_content["embeddings"], dtype=self.float_dtype
             )
 
         # Build fast news-id-to-tokens lookup
@@ -508,7 +492,7 @@ class NewsDatasetBase(BaseNewsDataset):
         if glove_tensor_tf is None or glove_vocab_map is None:
             raise ValueError("GloVe embeddings or vocab map could not be loaded.")
 
-        glove_array = keras.ops.convert_to_numpy(glove_tensor_tf)
+        glove_array = np.asarray(glove_tensor_tf)
         glove_mean_np = np.mean(glove_array, axis=0)
         glove_std_np = np.std(glove_array, axis=0)
 
@@ -571,10 +555,21 @@ class NewsDatasetBase(BaseNewsDataset):
         logger.info(f"Creating BPEmb embeddings for language: {self.language}")
 
         lang_map = {
-            "japanese": "ja", "german": "de", "french": "fr", "spanish": "es",
-            "italian": "it", "portuguese": "pt", "russian": "ru", "korean": "ko",
-            "chinese": "zh", "arabic": "ar", "hindi": "hi", "turkish": "tr",
-            "polish": "pl", "dutch": "nl", "english": "en",
+            "japanese": "ja",
+            "german": "de",
+            "french": "fr",
+            "spanish": "es",
+            "italian": "it",
+            "portuguese": "pt",
+            "russian": "ru",
+            "korean": "ko",
+            "chinese": "zh",
+            "arabic": "ar",
+            "hindi": "hi",
+            "turkish": "tr",
+            "polish": "pl",
+            "dutch": "nl",
+            "english": "en",
         }
         lang_code = lang_map.get(self.language.lower(), self.language.lower())
 
@@ -592,9 +587,7 @@ class NewsDatasetBase(BaseNewsDataset):
                 f"Creating embedding matrix from {len(bpemb_embeddings):,} BPE tokens"
             )
             embedding_matrix = (
-                np.random.randn(len(self.vocab), self.embedding_size).astype(
-                    np.float32
-                )
+                np.random.randn(len(self.vocab), self.embedding_size).astype(np.float32)
                 * 0.1
             )
             embedding_matrix[self.vocab["[PAD]"]] = np.zeros(
@@ -623,8 +616,7 @@ class NewsDatasetBase(BaseNewsDataset):
 
             match_pct = (matched_words / len(self.vocab)) * 100
             logger.info(
-                f"Successfully created BPEmb embedding matrix: "
-                f"{embedding_matrix.shape}"
+                f"Successfully created BPEmb embedding matrix: {embedding_matrix.shape}"
             )
             logger.info(
                 f"Matched {matched_words}/{len(self.vocab)} words ({match_pct:.1f}%)"
@@ -832,12 +824,12 @@ class NewsDatasetBase(BaseNewsDataset):
                     urllib.request.urlretrieve(
                         url,
                         zip_path,
-                        reporthook=lambda count, block_size, total_size: progress.update(
+                        reporthook=lambda count,
+                        block_size,
+                        total_size: progress.update(
                             download_task,
                             total=(
-                                total_size // block_size
-                                if total_size > 0
-                                else None
+                                total_size // block_size if total_size > 0 else None
                             ),
                             completed=count,
                         ),
@@ -890,9 +882,7 @@ class NewsDatasetBase(BaseNewsDataset):
         self, url: str, zip_path: Path, extract_path: Path, description: str
     ) -> None:
         """Download a file from a URL and unzip it."""
-        logger.info(
-            f"Downloading {description} data from {url} to {zip_path}..."
-        )
+        logger.info(f"Downloading {description} data from {url} to {zip_path}...")
         zip_path.parent.mkdir(parents=True, exist_ok=True)
         urllib.request.urlretrieve(url, zip_path)
 
@@ -901,9 +891,7 @@ class NewsDatasetBase(BaseNewsDataset):
             zip_ref.extractall(extract_path)
 
         zip_path.unlink()
-        logger.info(
-            f"Successfully downloaded and extracted {description} data."
-        )
+        logger.info(f"Successfully downloaded and extracted {description} data.")
 
     # ------------------------------------------------------------------
     # Dataloader factory methods
@@ -911,20 +899,18 @@ class NewsDatasetBase(BaseNewsDataset):
 
     def train_dataloader(self, batch_size: int, model_name: str = "nrms"):
         """Create training dataset with token-based inputs."""
+        from src.frameworks.keras.dataloaders import NewsDataLoader
+
         return NewsDataLoader.create_train_dataset(
             history_news_tokens=self.train_behaviors_data["history_news_tokens"],
             history_news_abstract_tokens=self.train_behaviors_data[
                 "history_news_abstract_tokens"
             ],
-            history_news_category=self.train_behaviors_data[
-                "history_news_categories"
-            ],
+            history_news_category=self.train_behaviors_data["history_news_categories"],
             history_news_subcategory=self.train_behaviors_data[
                 "history_news_subcategories"
             ],
-            candidate_news_tokens=self.train_behaviors_data[
-                "candidate_news_tokens"
-            ],
+            candidate_news_tokens=self.train_behaviors_data["candidate_news_tokens"],
             candidate_news_abstract_tokens=self.train_behaviors_data[
                 "candidate_news_abstract_tokens"
             ],
@@ -945,10 +931,10 @@ class NewsDatasetBase(BaseNewsDataset):
             model_name=model_name,
         )
 
-    def user_history_dataloader(
-        self, mode: str, batch_size: int
-    ) -> UserHistoryBatchDataloader:
+    def user_history_dataloader(self, mode: str, batch_size: int):
         """Create dataloader for user history validation/testing."""
+        from src.frameworks.keras.dataloaders import UserHistoryBatchDataloader
+
         if mode == "val":
             data = self.val_behaviors_data
         elif mode == "test":
@@ -970,8 +956,10 @@ class NewsDatasetBase(BaseNewsDataset):
             process_subcategory=self.process_subcategory,
         )
 
-    def impression_dataloader(self, mode: str) -> ImpressionIterator:
+    def impression_dataloader(self, mode: str):
         """Create dataloader for impressions validation/testing."""
+        from src.frameworks.keras.dataloaders import ImpressionIterator
+
         if mode == "val":
             data = self.val_behaviors_data
         elif mode == "test":
@@ -995,13 +983,9 @@ class NewsDatasetBase(BaseNewsDataset):
 
     def news_dataloader(self, batch_size: int) -> NewsBatchDataloader:
         """Create dataloader for processed news validation/testing."""
-        news_ids = self.processed_news.get(
-            "news_ids_original_strings", np.array([])
-        )
+        news_ids = self.processed_news.get("news_ids_original_strings", np.array([]))
         news_tokens = self.processed_news.get("tokens", np.array([]))
-        news_abstract_tokens = self.processed_news.get(
-            "abstract_tokens", np.array([])
-        )
+        news_abstract_tokens = self.processed_news.get("abstract_tokens", np.array([]))
         news_category_indices = self.processed_news.get(
             "category_indices", np.array([])
         )
@@ -1009,16 +993,14 @@ class NewsDatasetBase(BaseNewsDataset):
             "subcategory_indices", np.array([])
         )
 
+        from src.frameworks.keras.dataloaders import NewsBatchDataloader
+
         return NewsBatchDataloader(
             news_ids=news_ids,
-            news_tokens=keras.ops.convert_to_tensor(news_tokens),
-            news_abstract_tokens=keras.ops.convert_to_tensor(news_abstract_tokens),
-            news_category_indices=keras.ops.convert_to_tensor(
-                news_category_indices
-            ),
-            news_subcategory_indices=keras.ops.convert_to_tensor(
-                news_subcategory_indices
-            ),
+            news_tokens=np.asarray(news_tokens),
+            news_abstract_tokens=np.asarray(news_abstract_tokens),
+            news_category_indices=np.asarray(news_category_indices),
+            news_subcategory_indices=np.asarray(news_subcategory_indices),
             batch_size=batch_size,
             process_title=self.process_title,
             process_abstract=self.process_abstract,
