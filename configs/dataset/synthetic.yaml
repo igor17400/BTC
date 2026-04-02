@@ -1,0 +1,21 @@
+_target_: src.core.data.synthetic.SyntheticDataset
+
+# Tiny in-memory dataset for smoke-testing the full pipeline.
+# No downloads, no files — runs in seconds.
+
+name: "Synthetic"
+
+max_title_length: 32
+max_abstract_length: 50
+max_history_length: 50
+max_impressions_length: 5
+embedding_size: 300
+
+# Processing flags (overridden by experiment configs via spec bridge)
+process_title: false
+process_abstract: false
+process_category: false
+process_subcategory: false
+process_user_id: false
+
+seed: 42

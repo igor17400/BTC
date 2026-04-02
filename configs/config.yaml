@@ -23,6 +23,7 @@ output_base_dir: outputs
 device:
   gpu_ids: [0]
   memory_limit: 1
+  keras_backend: jax  # Options: jax, torch, tensorflow
 num_workers: 4
 
 # Default training parameters (overridden by experiment → spec)

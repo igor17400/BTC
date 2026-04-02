@@ -2,7 +2,7 @@ _target_: src.core.data.mind.MINDDataset
 
 # Inherit from base configuration
 defaults:
-- base
+  - base
 
 # Dataset configuration
 name: "MIND"
