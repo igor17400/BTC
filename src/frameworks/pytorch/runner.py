@@ -23,8 +23,12 @@ def _build_train_features(dataset_provider) -> tuple:
         features["hist_tokens"] = np.asarray(data["history_news_tokens"])
         features["cand_tokens"] = np.asarray(data["candidate_news_tokens"])
     if dataset_provider.process_abstract:
-        features["hist_abstract_tokens"] = np.asarray(data["history_news_abstract_tokens"])
-        features["cand_abstract_tokens"] = np.asarray(data["candidate_news_abstract_tokens"])
+        features["hist_abstract_tokens"] = np.asarray(
+            data["history_news_abstract_tokens"]
+        )
+        features["cand_abstract_tokens"] = np.asarray(
+            data["candidate_news_abstract_tokens"]
+        )
     if dataset_provider.process_category:
         features["hist_category"] = np.asarray(data["history_news_categories"])
         features["cand_category"] = np.asarray(data["candidate_news_categories"])
@@ -84,9 +88,12 @@ def run(cfg: DictConfig):
         patience=cfg.train.early_stopping.patience,
         checkpoint_dir=str(output_run_dir / "models"),
         use_wandb=cfg.logging.enable_wandb,
-        gpu_ids=",".join(str(g) for g in cfg.device.gpu_ids) if hasattr(cfg.device, "gpu_ids") else "",
+        gpu_ids=",".join(str(g) for g in cfg.device.gpu_ids)
+        if hasattr(cfg.device, "gpu_ids")
+        else "",
         int_to_news_id_map=dataset_provider.get_int_to_news_id_map()
-        if hasattr(dataset_provider, "get_int_to_news_id_map") else None,
+        if hasattr(dataset_provider, "get_int_to_news_id_map")
+        else None,
     )
 
     console.log(f"--- {cfg.model_name} PyTorch Training Run Finished ---")

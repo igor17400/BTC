@@ -24,8 +24,11 @@ from src.core.io.logging import console, setup_wandb_session
 
 def _setup(cfg: DictConfig):
     """Setup Keras backend and precision."""
-    os.environ["KERAS_BACKEND"] = "jax"
+    backend = getattr(cfg.device, "keras_backend", "jax")
+    os.environ.setdefault("KERAS_BACKEND", backend)
     import keras
+
+    console.log(f"Keras backend: {keras.backend.backend()}")
 
     # Precision setup
     precision = getattr(cfg.device, "precision", "float32")

@@ -1,7 +1,8 @@
 """Utilities for saving and loading model configurations alongside weights."""
 
 from pathlib import Path
-from typing import Dict, Any
+from typing import Any, Dict
+
 import yaml
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
@@ -26,7 +27,7 @@ def save_model_config(config: DictConfig, model_weights_path: Path) -> Path:
     config_dict = OmegaConf.to_container(config, resolve=True)
 
     # Save configuration
-    with open(config_path, 'w') as f:
+    with open(config_path, "w") as f:
         yaml.dump(config_dict, f, default_flow_style=False)
 
     console.log(f"Saved model configuration to: {config_path}")
@@ -55,14 +56,16 @@ def load_model_config(model_weights_path: Path) -> Dict[str, Any]:
         )
 
     # Load configuration
-    with open(config_path, 'r') as f:
+    with open(config_path, "r") as f:
         config_dict = yaml.safe_load(f)
 
     console.log(f"Loaded model configuration from: {config_path}")
     return config_dict
 
 
-def verify_model_compatibility(model_config: Dict[str, Any], weights_path: Path) -> bool:
+def verify_model_compatibility(
+    model_config: Dict[str, Any], weights_path: Path
+) -> bool:
     """Verify that model configuration is compatible with saved weights.
 
     Args:
@@ -74,7 +77,7 @@ def verify_model_compatibility(model_config: Dict[str, Any], weights_path: Path)
     """
     # For now, just check that the config exists and has model section
     # In the future, could add more sophisticated checks
-    if 'model' not in model_config:
+    if "model" not in model_config:
         console.log("[red]Model configuration missing 'model' section[/red]")
         return False
 

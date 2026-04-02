@@ -6,11 +6,11 @@ keeping train.py as a thin dispatcher.
 
 import hydra
 import numpy as np
+from flax import nnx
 from omegaconf import DictConfig
 
 from src.core.io.logging import console
 from src.core.io.saving import get_output_run_dir
-from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
 
 
@@ -23,8 +23,12 @@ def _build_train_features(dataset_provider) -> tuple:
         features["hist_tokens"] = np.asarray(data["history_news_tokens"])
         features["cand_tokens"] = np.asarray(data["candidate_news_tokens"])
     if dataset_provider.process_abstract:
-        features["hist_abstract_tokens"] = np.asarray(data["history_news_abstract_tokens"])
-        features["cand_abstract_tokens"] = np.asarray(data["candidate_news_abstract_tokens"])
+        features["hist_abstract_tokens"] = np.asarray(
+            data["history_news_abstract_tokens"]
+        )
+        features["cand_abstract_tokens"] = np.asarray(
+            data["candidate_news_abstract_tokens"]
+        )
     if dataset_provider.process_category:
         features["hist_category"] = np.asarray(data["history_news_categories"])
         features["cand_category"] = np.asarray(data["candidate_news_categories"])
@@ -51,7 +55,7 @@ def run(cfg: DictConfig):
 
     # Model
     spec = cfg.spec
-    model = build_model_from_spec(spec, "jax", processed_news)
+    model = build_model_from_spec(spec, "jax", processed_news, rngs=nnx.Rngs(cfg.seed))
     console.log(f"Model {spec.model.name} instantiated for JAX.")
 
     # Train iterator

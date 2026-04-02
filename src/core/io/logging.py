@@ -1,13 +1,11 @@
 import datetime
+import logging
 from typing import Dict, List, Optional
 
-import logging
-
+import wandb
+from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
 from rich.logging import RichHandler
-from omegaconf import DictConfig, OmegaConf
-
-import wandb
 
 console = Console()
 
@@ -44,7 +42,9 @@ def setup_logging(level: str = "INFO") -> None:
     logging.getLogger("hydra").propagate = False
 
     # JAX backend logging configuration
-    logging.getLogger("jax").setLevel(logging.WARNING)  # Reduce JAX compilation messages
+    logging.getLogger("jax").setLevel(
+        logging.WARNING
+    )  # Reduce JAX compilation messages
     logging.getLogger("jaxlib").setLevel(logging.WARNING)  # Reduce JAXlib messages
 
     # Keras 3 logging
@@ -71,7 +71,9 @@ def setup_wandb_session(cfg: DictConfig) -> None:
             console.log(f"[red]Failed to initialize Wandb: {e}[/red]")
 
 
-def log_metrics_to_console_fn(metrics_dict: Dict[str, float], header_prefix: str = "") -> None:
+def log_metrics_to_console_fn(
+    metrics_dict: Dict[str, float], header_prefix: str = ""
+) -> None:
     if header_prefix:
         console.log(f"[bold blue]{header_prefix} Metrics:[/bold blue]")
     for name, value in metrics_dict.items():
@@ -89,17 +91,21 @@ def log_epoch_summary_fn(
     wandb_cache: Optional[Dict[str, List[float]]] = None,
 ) -> None:
     """Logs comprehensive summary for an epoch to console and WandB."""
-    console.rule(f"[bold magenta]Epoch {current_epoch_idx + 1} Completed[/bold magenta]")
+    console.rule(
+        f"[bold magenta]Epoch {current_epoch_idx + 1} Completed[/bold magenta]"
+    )
     log_metrics_to_console_fn(epoch_train_metrics_results, "Average Training")
     log_metrics_to_console_fn(epoch_val_metrics_results, "Validation")
     if is_best_epoch:
-        console.log("[bold green]✨ New best epoch based on validation metric! ✨[/bold green]")
+        console.log(
+            "[bold green]✨ New best epoch based on validation metric! ✨[/bold green]"
+        )
     console.rule()
 
     if wandb.run and wandb_cache is not None:
-        wandb_payload = {f"train/{k}": v for k, v in epoch_train_metrics_results.items()} | {
-            f"val/{k}": v for k, v in epoch_val_metrics_results.items()
-        }
+        wandb_payload = {
+            f"train/{k}": v for k, v in epoch_train_metrics_results.items()
+        } | {f"val/{k}": v for k, v in epoch_val_metrics_results.items()}
         log_metrics_to_wandb_fn(wandb_payload, current_epoch_idx + 1, wandb_cache)
 
 

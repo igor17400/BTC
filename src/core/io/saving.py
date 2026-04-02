@@ -2,10 +2,10 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
-import hydra
 
 console = Console()
 
@@ -22,10 +22,10 @@ def get_output_run_dir(cfg):
 
 
 def save_predictions_to_file_fn(
-        predictions_dict: Dict[str, Tuple[List, List]],
-        output_dir: Path,
-        epoch_idx: Optional[int] = None,
-        mode: str = "val",
+    predictions_dict: Dict[str, Tuple[List, List]],
+    output_dir: Path,
+    epoch_idx: Optional[int] = None,
+    mode: str = "val",
 ) -> None:
     console = Console()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -45,24 +45,30 @@ def save_predictions_to_file_fn(
 
 
 def save_run_summary_fn(
-        summary_output_dir: Path,
-        hydra_cfg: DictConfig,
-        initial_metrics_dict: Dict[str, float],
-        best_metrics_summary_dict: Dict[str, Any],
-        test_metrics_dict: Optional[Dict[str, float]] = None,
-        wandb_full_history: Optional[Dict[str, List[float]]] = None,
+    summary_output_dir: Path,
+    hydra_cfg: DictConfig,
+    initial_metrics_dict: Dict[str, float],
+    best_metrics_summary_dict: Dict[str, Any],
+    test_metrics_dict: Optional[Dict[str, float]] = None,
+    wandb_full_history: Optional[Dict[str, List[float]]] = None,
 ) -> None:
     """Saves training config, key metrics, and history to a JSON file."""
     data_to_save = {
-        "configuration": OmegaConf.to_container(hydra_cfg, resolve=True, throw_on_missing=True),
-        "initial_validation_metrics": {k: float(v) for k, v in initial_metrics_dict.items()},
+        "configuration": OmegaConf.to_container(
+            hydra_cfg, resolve=True, throw_on_missing=True
+        ),
+        "initial_validation_metrics": {
+            k: float(v) for k, v in initial_metrics_dict.items()
+        },
         "best_validation_summary": {
             k: (float(v) if isinstance(v, (int, float, np.float32, np.float64)) else v)
             for k, v in best_metrics_summary_dict.items()
         },
     }
     if test_metrics_dict:
-        data_to_save["final_test_metrics"] = {k: float(v) for k, v in test_metrics_dict.items()}
+        data_to_save["final_test_metrics"] = {
+            k: float(v) for k, v in test_metrics_dict.items()
+        }
     if wandb_full_history:
         data_to_save["wandb_run_history"] = wandb_full_history
 
@@ -70,7 +76,10 @@ def save_run_summary_fn(
     try:
         with open(summary_filepath, "w") as f:
             json.dump(
-                data_to_save, f, indent=4, default=lambda o: str(o) if isinstance(o, Path) else None
+                data_to_save,
+                f,
+                indent=4,
+                default=lambda o: str(o) if isinstance(o, Path) else None,
             )  # Handle Path objects, raise for others
         console.log(f"Training run summary saved to {summary_filepath}")
     except TypeError as e:

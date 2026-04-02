@@ -5,10 +5,8 @@ metrics + timing (training time, eval time, memory).
 """
 
 import time
-from typing import Dict, List, Any, Optional
-from pathlib import Path
+from typing import Any, Dict, List, Optional
 
-import numpy as np
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
 from rich.table import Table
@@ -45,6 +43,7 @@ def run_single_framework(
 
     try:
         import importlib
+
         framework_modules = {
             "keras": "src.frameworks.keras.runner",
             "pytorch": "src.frameworks.pytorch.runner",

@@ -9,8 +9,6 @@ import logging
 from typing import Any, Dict, Tuple
 
 import hydra
-import jax
-import jax.numpy as jnp
 import keras
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -81,15 +79,15 @@ def warmup_jit_compilation(model, sample_batch):
                 if hist_key in inputs and cand_key in inputs:
                     # Check if we need to expand dimensions for scalar values.
                     if inputs[hist_key].ndim == 1:
-                        history_to_concat.append(jnp.expand_dims(inputs[hist_key], axis=-1))
-                        candidate_to_concat.append(jnp.expand_dims(inputs[cand_key], axis=-1))
+                        history_to_concat.append(keras.ops.expand_dims(inputs[hist_key], axis=-1))
+                        candidate_to_concat.append(keras.ops.expand_dims(inputs[cand_key], axis=-1))
                     else:
                         history_to_concat.append(inputs[hist_key])
                         candidate_to_concat.append(inputs[cand_key])
 
             # Perform the concatenation.
-            history_concat = jnp.concatenate(history_to_concat, axis=-1)
-            candidate_concat = jnp.concatenate(candidate_to_concat, axis=-1)
+            history_concat = keras.ops.concatenate(history_to_concat, axis=-1)
+            candidate_concat = keras.ops.concatenate(candidate_to_concat, axis=-1)
 
             # Warm up training model with concatenated inputs
             _ = model.training_model([history_concat, candidate_concat], training=False)
@@ -100,8 +98,10 @@ def warmup_jit_compilation(model, sample_batch):
             # We'll skip this for now as it's less critical
             pass
 
-        # Block until computations are complete
-        jax.block_until_ready(jax.device_put(0))
+        # Block until computations are complete (backend-specific)
+        if keras.backend.backend() == "jax":
+            import jax
+            jax.block_until_ready(jax.device_put(0))
 
         logger.info("JIT compilation warmup completed")
 

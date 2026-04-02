@@ -1,5 +1,6 @@
-import numpy as np
 import logging
+
+import numpy as np
 
 # Setup logger
 logger = logging.getLogger(__name__)
@@ -174,7 +175,9 @@ class NewsRecommenderMetrics:
             "ndcg@10": float(np.mean(ndcg10_scores)),
         }
 
-    def compute_metrics_from_scores(self, y_true_grouped, y_pred_scores_grouped, progress=None):
+    def compute_metrics_from_scores(
+        self, y_true_grouped, y_pred_scores_grouped, progress=None
+    ):
         """Compute metrics from grouped scores (for compatibility with existing code).
 
         Args:

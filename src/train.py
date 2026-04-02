@@ -9,8 +9,7 @@ import importlib
 import hydra
 from omegaconf import DictConfig, OmegaConf
 
-from src.core.io.logging import setup_logging, console
-
+from src.core.io.logging import console, setup_logging
 
 FRAMEWORK_MODULES = {
     "keras": "src.frameworks.keras.runner",
@@ -31,7 +30,9 @@ def main(cfg: DictConfig) -> None:
             f"Unknown framework: '{framework}'. Available: {list(FRAMEWORK_MODULES.keys())}"
         )
 
-    console.log(f"--- {cfg.model_name} Training Run Initializing (framework: {framework}) ---")
+    console.log(
+        f"--- {cfg.model_name} Training Run Initializing (framework: {framework}) ---"
+    )
     console.log("Configuration used:")
     console.log(OmegaConf.to_yaml(cfg))
     console.log("------------------------------------")

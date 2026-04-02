@@ -9,12 +9,12 @@ from typing import Any, Dict
 
 from omegaconf import DictConfig
 
-from .configs import NRMSConfig, NAMLConfig, LSTURConfig, CROWNConfig
-
+from .configs import CROWNConfig, LSTURConfig, NAMLConfig, NRMSConfig
 
 # ---------------------------------------------------------------------------
 # Spec → Config translation functions
 # ---------------------------------------------------------------------------
+
 
 def spec_to_nrms_config(spec: DictConfig) -> NRMSConfig:
     """Convert a parsed NRMS spec into NRMSConfig."""
@@ -205,6 +205,7 @@ def get_model_class(model_name: str, framework: str):
 # ---------------------------------------------------------------------------
 # Top-level factory
 # ---------------------------------------------------------------------------
+
 
 def build_model_from_spec(
     spec: DictConfig,

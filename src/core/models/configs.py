@@ -10,6 +10,7 @@ from dataclasses import dataclass
 @dataclass
 class NRMSConfig:
     """Configuration class for NRMS model parameters."""
+
     embedding_size: int = 300
     multiheads: int = 16
     head_dim: int = 16
@@ -25,6 +26,7 @@ class NRMSConfig:
 @dataclass
 class NAMLConfig:
     """Configuration class for NAML model parameters."""
+
     max_title_length: int = 30
     max_abstract_length: int = 50
     embedding_size: int = 300
@@ -46,6 +48,7 @@ class NAMLConfig:
 @dataclass
 class LSTURConfig:
     """Configuration class for LSTUR model parameters."""
+
     embedding_size: int = 300
     cnn_filter_num: int = 300
     cnn_kernel_size: int = 3
@@ -68,6 +71,7 @@ class LSTURConfig:
 @dataclass
 class CROWNConfig:
     """Configuration class for CROWN model parameters."""
+
     # Common parameters
     embedding_size: int = 300
     dropout_rate: float = 0.2
@@ -90,7 +94,7 @@ class CROWNConfig:
     num_layers: int = 2
 
     # GNN parameters
-    gnn_type: str = 'graphsage'  # 'graphsage' or 'gat'
+    gnn_type: str = "graphsage"  # 'graphsage' or 'gat'
     graph_hidden_dim: int = 300
     graph_num_layers: int = 1
 
@@ -100,7 +104,7 @@ class CROWNConfig:
     gat_concat_heads: bool = True
 
     # GraphSAGE-specific parameters
-    sage_aggregator: str = 'mean'  # 'mean', 'max', 'sum', 'attention'
+    sage_aggregator: str = "mean"  # 'mean', 'max', 'sum', 'attention'
     sage_normalize: bool = True
 
     # Input parameters
