@@ -2,7 +2,6 @@
 Simplified MIND Dataset class that inherits from NewsDatasetBase.
 This class only defines MIND-specific configurations.
 """
-from typing import Dict, Optional
 from omegaconf import DictConfig
 
 from src.core.data.datasets.dataset import NewsDatasetBase
@@ -15,7 +14,7 @@ class MINDDataset(NewsDatasetBase):
             self,
             name: str,
             version: str,
-            urls: Dict,
+            urls: dict,
             max_title_length: int,
             max_abstract_length: int,
             max_history_length: int,
@@ -23,7 +22,7 @@ class MINDDataset(NewsDatasetBase):
             seed: int,
             embedding_type: str = "glove",
             embedding_size: int = 300,
-            sampling: Optional[DictConfig] = None,
+            sampling: DictConfig | None = None,
             data_fraction_train: float = 1.0,
             data_fraction_val: float = 1.0,
             data_fraction_test: float = 1.0,
@@ -32,7 +31,7 @@ class MINDDataset(NewsDatasetBase):
             random_train_samples: bool = False,
             validation_split_strategy: str = "chronological",
             validation_split_percentage: float = 0.05,
-            validation_split_seed: Optional[int] = None,
+            validation_split_seed: int | None = None,
             word_threshold: int = 3,
             process_title: bool = True,
             process_abstract: bool = True,

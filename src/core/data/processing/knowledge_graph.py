@@ -1,13 +1,10 @@
-import sys
 import logging
 import pandas as pd
 import numpy as np
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
 import networkx as nx
 from sklearn.preprocessing import normalize
 import requests
-import json
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
@@ -56,7 +53,7 @@ class KnowledgeGraphProcessor:
             logger.error(f"Error finding Wikidata ID for {name}: {str(e)}")
             return "entityNotFound"
 
-    def query_entity_links(self, entity_id: str) -> Dict:
+    def query_entity_links(self, entity_id: str) -> dict:
         """Query entity links from Wikidata."""
         if entity_id == "entityNotFound":
             return {}
@@ -77,7 +74,7 @@ class KnowledgeGraphProcessor:
             logger.error(f"Error querying entity links for {entity_id}: {str(e)}")
             return {}
 
-    def read_linked_entities(self, json_links: Dict) -> List[Tuple[str, str]]:
+    def read_linked_entities(self, json_links: dict) -> list[tuple[str, str]]:
         """Extract linked entities from JSON response."""
         if not json_links or "entities" not in json_links:
             return []
@@ -94,7 +91,7 @@ class KnowledgeGraphProcessor:
 
         return linked_entities
 
-    def search_wikidata(self, names: List[str], extras: Dict = None) -> pd.DataFrame:
+    def search_wikidata(self, names: list[str], extras: dict = None) -> pd.DataFrame:
         """Search Wikidata for a list of names."""
         results_list = []
 
@@ -202,7 +199,7 @@ class KnowledgeGraphProcessor:
                 for entity, embedding in self.context_embeddings.items():
                     f.write(entity + "\t" + "\t".join(map(str, embedding)) + "\n")
 
-    def process(self, news_titles: List[str]) -> None:
+    def process(self, news_titles: list[str]) -> None:
         """Process the knowledge graph data."""
         # Create cache directory if it doesn't exist
         self.cache_dir.mkdir(parents=True, exist_ok=True)

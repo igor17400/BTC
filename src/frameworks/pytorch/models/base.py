@@ -3,7 +3,7 @@
 Ported from src/models/base.py (Keras version).
 """
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 import torch
@@ -25,8 +25,8 @@ class BaseModel(nn.Module):
         super().__init__()
 
         # Subclasses must set these
-        self.news_encoder: Optional[nn.Module] = None
-        self.user_encoder: Optional[nn.Module] = None
+        self.news_encoder: nn.Module | None = None
+        self.user_encoder: nn.Module | None = None
         self.process_user_id: bool = False
         self.float_dtype: str = "float32"
 
@@ -39,7 +39,7 @@ class BaseModel(nn.Module):
         self,
         news_dataloader,
         progress: Progress,
-    ) -> Dict[str, np.ndarray]:
+    ) -> dict[str, np.ndarray]:
         """Precompute vectors for all news articles.
 
         Args:
@@ -50,7 +50,7 @@ class BaseModel(nn.Module):
             Dict mapping news ID strings to numpy vectors.
         """
         self.eval()
-        news_vecs_dict: Dict[str, np.ndarray] = {}
+        news_vecs_dict: dict[str, np.ndarray] = {}
         total_news = len(news_dataloader)
 
         news_progress = progress.add_task(
@@ -84,7 +84,7 @@ class BaseModel(nn.Module):
         self,
         user_dataloader,
         progress: Progress,
-    ) -> Dict[int, np.ndarray]:
+    ) -> dict[int, np.ndarray]:
         """Precompute vectors for all users.
 
         Args:
@@ -96,7 +96,7 @@ class BaseModel(nn.Module):
             Dict mapping impression IDs to numpy user vectors.
         """
         self.eval()
-        user_vecs_dict: Dict[int, np.ndarray] = {}
+        user_vecs_dict: dict[int, np.ndarray] = {}
         user_progress = progress.add_task(
             "Computing user vectors...", total=len(user_dataloader), visible=True
         )
@@ -135,10 +135,10 @@ class BaseModel(nn.Module):
         metrics_calculator,
         progress: Progress,
         mode: str = "validate",
-        save_predictions_path: Optional[str] = None,
-        epoch: Optional[int] = None,
-        int_to_news_id_map: Optional[Dict] = None,
-    ) -> Dict[str, float]:
+        save_predictions_path: str | None = None,
+        epoch: int | None = None,
+        int_to_news_id_map: dict | None = None,
+    ) -> dict[str, float]:
         """Fast evaluation using precomputed news & user vectors."""
         self.eval()
 
@@ -149,9 +149,9 @@ class BaseModel(nn.Module):
         user_vecs_dict = self.precompute_user_vectors(user_hist_dataloader, progress)
 
         # 3. Score impressions
-        group_labels_list: List[np.ndarray] = []
-        group_preds_list: List[np.ndarray] = []
-        predictions_to_save: Dict = {}
+        group_labels_list: list[np.ndarray] = []
+        group_preds_list: list[np.ndarray] = []
+        predictions_to_save: dict = {}
 
         impression_progress = progress.add_task(
             "Processing impressions...", total=len(impression_iterator), visible=True
@@ -222,11 +222,11 @@ class BaseModel(nn.Module):
 
     @staticmethod
     def _compute_metrics(
-        group_labels_list: List[np.ndarray],
-        group_preds_list: List[np.ndarray],
+        group_labels_list: list[np.ndarray],
+        group_preds_list: list[np.ndarray],
         metrics_calculator: Any,
         progress: Progress,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Compute and aggregate metrics from labels and predictions.
 
         Uses the *core* metrics engine (numpy-based) so that results are
@@ -261,7 +261,7 @@ class BaseModel(nn.Module):
                 if metric_name in metric_values_agg:
                     metric_values_agg[metric_name].append(float(value))
 
-        final_metrics: Dict[str, float] = {
+        final_metrics: dict[str, float] = {
             "loss": (val_loss_total / num_valid) if num_valid > 0 else 0.0
         }
         for metric_name, values_list in metric_values_agg.items():

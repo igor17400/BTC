@@ -2,7 +2,6 @@ import urllib.request
 import zipfile
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -12,14 +11,14 @@ class BaseNewsDataset(ABC):
     """Abstract base class for news recommendation datasets"""
 
     def __init__(self) -> None:
-        self.news_data: Dict[str, np.ndarray] = {}  # Store news features
-        self.train_behaviors_data: Dict[
+        self.news_data: dict[str, np.ndarray] = {}  # Store news features
+        self.train_behaviors_data: dict[
             str, np.ndarray
         ] = {}  # Store training behaviors data
-        self.val_behaviors_data: Dict[
+        self.val_behaviors_data: dict[
             str, np.ndarray
         ] = {}  # Store validation behaviors data
-        self.test_behaviors_data: Dict[
+        self.test_behaviors_data: dict[
             str, np.ndarray
         ] = {}  # Store test behaviors data
         self.root_dir = Path(".")  # Define root directory
@@ -30,19 +29,19 @@ class BaseNewsDataset(ABC):
         pass
 
     @abstractmethod
-    def process_news(self, news_df: pd.DataFrame, split: str) -> Dict[str, np.ndarray]:
+    def process_news(self, news_df: pd.DataFrame, split: str) -> dict[str, np.ndarray]:
         """Process news articles into numerical format"""
         pass
 
     @abstractmethod
     def process_behaviors(
-        self, behaviors_df: pd.DataFrame, news_dict: Dict[str, int], stage: str
-    ) -> Dict[str, np.ndarray]:
+        self, behaviors_df: pd.DataFrame, news_dict: dict[str, int], stage: str
+    ) -> dict[str, np.ndarray]:
         """Process user behaviors into numerical format"""
         pass
 
     @abstractmethod
-    def get_train_val_data(self) -> Tuple[Tuple, Tuple]:
+    def get_train_val_data(self) -> tuple[tuple, tuple]:
         """Get processed training and validation data
 
         Returns:
@@ -53,7 +52,7 @@ class BaseNewsDataset(ABC):
         pass
 
     @abstractmethod
-    def get_test_data(self) -> Tuple[Dict[str, np.ndarray], Dict]:
+    def get_test_data(self) -> tuple[dict[str, np.ndarray], dict]:
         """Get processed test data
 
         Returns:

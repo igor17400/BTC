@@ -11,9 +11,8 @@ Keras ``model.fit()`` workflow with:
 """
 
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
 from rich.progress import (
@@ -46,7 +45,7 @@ except ImportError:
 
 
 def _move_batch_to_device(
-    batch_features: Dict[str, torch.Tensor],
+    batch_features: dict[str, torch.Tensor],
     batch_labels: torch.Tensor,
     device: torch.device,
 ):
@@ -85,13 +84,13 @@ def training_loop(
     weight_decay: float = 0.0,
     gpu_ids: str = "",
     patience: int = 3,
-    checkpoint_dir: Optional[str] = None,
+    checkpoint_dir: str | None = None,
     use_wandb: bool = False,
-    wandb_project: Optional[str] = None,
-    wandb_run_name: Optional[str] = None,
-    loss_fn: Optional[nn.Module] = None,
-    int_to_news_id_map: Optional[Dict] = None,
-) -> Dict[str, Any]:
+    wandb_project: str | None = None,
+    wandb_run_name: str | None = None,
+    loss_fn: nn.Module | None = None,
+    int_to_news_id_map: dict | None = None,
+) -> dict[str, Any]:
     """Run a full training loop.
 
     Args:
@@ -141,7 +140,7 @@ def training_loop(
     best_val_metric = -float("inf")
     best_epoch = -1
     epochs_without_improvement = 0
-    history: Dict[str, list] = {"train_loss": [], "val_metrics": []}
+    history: dict[str, list] = {"train_loss": [], "val_metrics": []}
 
     # ---- Main loop ----
     with _build_progress() as progress:
@@ -182,7 +181,7 @@ def training_loop(
             )
 
             # ---------- Validation ----------
-            val_metrics: Dict[str, float] = {}
+            val_metrics: dict[str, float] = {}
             if val_dataset_provider is not None and metrics_engine is not None:
                 val_metrics = run_fast_evaluation(
                     model=model,

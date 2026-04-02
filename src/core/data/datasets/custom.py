@@ -2,7 +2,6 @@
 Simplified Custom Dataset class that inherits from NewsDatasetBase.
 This class allows for flexible dataset configurations.
 """
-from typing import Dict, Optional
 from omegaconf import DictConfig
 
 from src.core.data.datasets.dataset import NewsDatasetBase
@@ -16,8 +15,8 @@ class CustomDataset(NewsDatasetBase):
             name: str,
             version: str,
             language: str,
-            data_path: Optional[str] = None,
-            urls: Optional[Dict] = None,
+            data_path: str | None = None,
+            urls: dict | None = None,
             download_if_missing: bool = True,
             max_title_length: int = 30,
             max_abstract_length: int = 50,
@@ -26,7 +25,7 @@ class CustomDataset(NewsDatasetBase):
             seed: int = 42,
             embedding_type: str = "glove",
             embedding_size: int = 300,
-            sampling: Optional[DictConfig] = None,
+            sampling: DictConfig | None = None,
             data_fraction_train: float = 1.0,
             data_fraction_val: float = 1.0,
             data_fraction_test: float = 1.0,
@@ -35,7 +34,7 @@ class CustomDataset(NewsDatasetBase):
             random_train_samples: bool = False,
             validation_split_strategy: str = "chronological",
             validation_split_percentage: float = 0.05,
-            validation_split_seed: Optional[int] = None,
+            validation_split_seed: int | None = None,
             word_threshold: int = 3,
             process_title: bool = True,
             process_abstract: bool = True,

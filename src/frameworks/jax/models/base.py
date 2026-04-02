@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -22,8 +22,8 @@ class BaseModel(nnx.Module):
     """
 
     # These will be assigned by concrete subclasses.
-    news_encoder: Optional[nnx.Module]
-    user_encoder: Optional[nnx.Module]
+    news_encoder: nnx.Module | None
+    user_encoder: nnx.Module | None
     process_user_id: bool
 
     # ------------------------------------------------------------------
@@ -34,7 +34,7 @@ class BaseModel(nnx.Module):
         self,
         news_dataloader,
         progress: Progress,
-    ) -> Dict[str, np.ndarray]:
+    ) -> dict[str, np.ndarray]:
         """Precompute vectors for all news articles.
 
         Args:
@@ -48,7 +48,7 @@ class BaseModel(nnx.Module):
         if self.news_encoder is None:
             raise RuntimeError("news_encoder is not initialised.")
 
-        news_vecs: Dict[str, np.ndarray] = {}
+        news_vecs: dict[str, np.ndarray] = {}
         total_news = len(news_dataloader)
 
         task = progress.add_task(
@@ -85,7 +85,7 @@ class BaseModel(nnx.Module):
         self,
         user_dataloader,
         progress: Progress,
-    ) -> Dict[int, np.ndarray]:
+    ) -> dict[int, np.ndarray]:
         """Precompute user vectors for fast evaluation.
 
         Args:
@@ -99,7 +99,7 @@ class BaseModel(nnx.Module):
         if self.user_encoder is None:
             raise RuntimeError("user_encoder is not initialised.")
 
-        user_vecs: Dict[int, np.ndarray] = {}
+        user_vecs: dict[int, np.ndarray] = {}
         task = progress.add_task(
             "Computing user vectors...", total=len(user_dataloader), visible=True
         )
@@ -144,9 +144,9 @@ class BaseModel(nnx.Module):
         progress: Progress,
         mode: str = "validate",
         save_predictions_path=None,
-        epoch: Optional[int] = None,
-        int_to_news_id_map: Optional[Dict[int, str]] = None,
-    ) -> Dict[str, float]:
+        epoch: int | None = None,
+        int_to_news_id_map: dict[int, str] | None = None,
+    ) -> dict[str, float]:
         """Evaluate using precomputed news and user vectors.
 
         The flow mirrors ``BaseModel.fast_evaluate`` from the Keras version:
@@ -161,8 +161,8 @@ class BaseModel(nnx.Module):
         news_vecs = self.precompute_news_vectors(news_dataloader, progress)
         user_vecs = self.precompute_user_vectors(user_hist_dataloader, progress)
 
-        group_labels: List[np.ndarray] = []
-        group_preds: List[np.ndarray] = []
+        group_labels: list[np.ndarray] = []
+        group_preds: list[np.ndarray] = []
 
         imp_task = progress.add_task(
             "Processing impressions...",
@@ -209,15 +209,15 @@ class BaseModel(nnx.Module):
 
     @staticmethod
     def _compute_metrics(
-        group_labels: List[np.ndarray],
-        group_preds: List[np.ndarray],
+        group_labels: list[np.ndarray],
+        group_preds: list[np.ndarray],
         metrics_calculator: Any,
         progress: Progress,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Aggregate per-impression metrics."""
         val_loss_total = 0.0
         num_valid = 0
-        metric_agg: Dict[str, list] = {k: [] for k in metrics_calculator.METRIC_NAMES}
+        metric_agg: dict[str, list] = {k: [] for k in metrics_calculator.METRIC_NAMES}
 
         for labels_np, scores_np in zip(group_labels, group_preds):
             if labels_np.size == 0 or scores_np.size == 0:
@@ -240,7 +240,7 @@ class BaseModel(nnx.Module):
                 if name in metric_agg:
                     metric_agg[name].append(float(value))
 
-        final: Dict[str, float] = {
+        final: dict[str, float] = {
             "loss": val_loss_total / num_valid if num_valid > 0 else 0.0,
         }
         for name, vals in metric_agg.items():

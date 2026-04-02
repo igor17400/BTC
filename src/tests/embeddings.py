@@ -5,7 +5,7 @@ Tests embedding quality, consistency, and expected properties.
 
 import numpy as np
 import os
-from typing import Tuple, Dict, Any
+from typing import Any
 from scipy.spatial.distance import cosine
 from scipy.stats import normaltest, kurtosis, skew
 import warnings
@@ -37,7 +37,7 @@ class EmbeddingValidator:
             print(f"Failed to load embeddings: {e}")
             return False
             
-    def test_basic_properties(self) -> Dict[str, Any]:
+    def test_basic_properties(self) -> dict[str, Any]:
         """Test basic statistical properties of embeddings."""
         results = {
             "shape": self.embedding_matrix.shape,
@@ -54,7 +54,7 @@ class EmbeddingValidator:
         }
         return results
         
-    def test_distribution(self) -> Dict[str, Any]:
+    def test_distribution(self) -> dict[str, Any]:
         """Test if embeddings follow expected distribution (roughly normal)."""
         flat_embeddings = self.embedding_matrix.flatten()
         
@@ -76,7 +76,7 @@ class EmbeddingValidator:
         
         return results
         
-    def test_vector_norms(self) -> Dict[str, Any]:
+    def test_vector_norms(self) -> dict[str, Any]:
         """Test vector norm properties."""
         norms = np.linalg.norm(self.embedding_matrix, axis=1)
         
@@ -100,7 +100,7 @@ class EmbeddingValidator:
         
         return results
         
-    def test_similarity_distribution(self, sample_size: int = 1000) -> Dict[str, Any]:
+    def test_similarity_distribution(self, sample_size: int = 1000) -> dict[str, Any]:
         """Test cosine similarity distribution between random pairs."""
         results = {}
         
@@ -136,7 +136,7 @@ class EmbeddingValidator:
         
         return results
         
-    def test_special_tokens(self) -> Dict[str, Any]:
+    def test_special_tokens(self) -> dict[str, Any]:
         """Test properties of special tokens (usually first few indices)."""
         results = {}
         
@@ -154,7 +154,7 @@ class EmbeddingValidator:
             
         return results
         
-    def validate_all(self) -> Dict[str, Any]:
+    def validate_all(self) -> dict[str, Any]:
         """Run all validation tests."""
         if not self.load_embeddings():
             return {"error": "Failed to load embeddings"}
@@ -179,7 +179,7 @@ class EmbeddingValidator:
         
         return all_results
         
-    def assess_quality(self, results: Dict[str, Any]) -> Dict[str, Any]:
+    def assess_quality(self, results: dict[str, Any]) -> dict[str, Any]:
         """Provide overall quality assessment."""
         issues = []
         warnings = []
@@ -219,7 +219,7 @@ class EmbeddingValidator:
             "warnings": warnings
         }
         
-    def print_results(self, results: Dict[str, Any]):
+    def print_results(self, results: dict[str, Any]):
         """Pretty print validation results."""
         print("\n📊 Basic Properties:")
         basic = results["basic_properties"]

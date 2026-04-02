@@ -6,7 +6,7 @@ User Representations", ACL 2019.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -84,8 +84,8 @@ class NewsEncoder(nnx.Module):
         embedding_layer: nnx.Embed,
         *,
         rngs: nnx.Rngs,
-        category_encoder: Optional[CategoryEncoder] = None,
-        subcategory_encoder: Optional[SubcategoryEncoder] = None,
+        category_encoder: CategoryEncoder | None = None,
+        subcategory_encoder: SubcategoryEncoder | None = None,
     ):
         self.config = config
         self.embedding_layer = embedding_layer
@@ -280,7 +280,7 @@ class LSTUR(BaseModel):
 
     def __init__(
         self,
-        processed_news: Dict[str, Any],
+        processed_news: dict[str, Any],
         num_users: int,
         config: LSTURConfig | None = None,
         *,
@@ -304,8 +304,8 @@ class LSTUR(BaseModel):
         self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
 
         # Optional category / subcategory encoders
-        cat_enc: Optional[CategoryEncoder] = None
-        subcat_enc: Optional[SubcategoryEncoder] = None
+        cat_enc: CategoryEncoder | None = None
+        subcat_enc: SubcategoryEncoder | None = None
         if config.use_category:
             cat_enc = CategoryEncoder(
                 config, int(processed_news["num_categories"]), rngs=rngs
@@ -375,7 +375,7 @@ class LSTUR(BaseModel):
     # ---- Helpers for concatenated category/subcategory inputs -----------
 
     def _maybe_concat_category(
-        self, inputs: Dict[str, jax.Array], prefix: str, base_key: str
+        self, inputs: dict[str, jax.Array], prefix: str, base_key: str
     ) -> jax.Array:
         """If category/subcategory data is present, concatenate it."""
         tokens = inputs[base_key]
@@ -397,7 +397,7 @@ class LSTUR(BaseModel):
 
     def __call__(
         self,
-        inputs: Dict[str, jax.Array],
+        inputs: dict[str, jax.Array],
         *,
         training: bool = False,
     ) -> jax.Array:

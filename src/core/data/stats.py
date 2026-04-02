@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 import pandas as pd
-from typing import Dict, Any
+from typing import Any
 from collections import Counter
 
 logger = logging.getLogger(__name__)
@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 
-def display_statistics(data_dict: Dict[str, Dict], mode: str = "train") -> None:
+def display_statistics(data_dict: dict[str, dict], mode: str = "train") -> None:
     """Display statistics about the dataset."""
     logger.info("Displaying dataset statistics...")
 
@@ -484,7 +484,7 @@ def log_key_statistics(summary_data: dict) -> None:
 # ============================================================================
 
 
-def apply_data_fraction(data_dict: Dict[str, np.ndarray], fraction: float) -> Dict[str, np.ndarray]:
+def apply_data_fraction(data_dict: dict[str, np.ndarray], fraction: float) -> dict[str, np.ndarray]:
     """Reduce the dataset size based on the fraction parameter."""
     if fraction < 1.0:
         logger.info(f"Using {fraction * 100:.0f}% of the dataset")

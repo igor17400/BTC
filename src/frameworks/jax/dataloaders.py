@@ -6,7 +6,8 @@ suitable for use with the Flax NNX training loop.
 
 from __future__ import annotations
 
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any
+from collections.abc import Iterator
 
 import jax.numpy as jnp
 import numpy as np
@@ -17,11 +18,11 @@ import numpy as np
 # ---------------------------------------------------------------------------
 
 def create_batches(
-    data: Dict[str, np.ndarray],
+    data: dict[str, np.ndarray],
     batch_size: int,
     shuffle: bool = False,
-    rng: Optional[np.random.Generator] = None,
-) -> Iterator[Dict[str, jnp.ndarray]]:
+    rng: np.random.Generator | None = None,
+) -> Iterator[dict[str, jnp.ndarray]]:
     """Yield dictionaries of JAX arrays from NumPy input arrays.
 
     All arrays in *data* must share the same first-axis length.
@@ -74,7 +75,7 @@ class TrainingBatchIterator:
 
     def __init__(
         self,
-        features: Dict[str, np.ndarray],
+        features: dict[str, np.ndarray],
         labels: np.ndarray,
         batch_size: int,
         shuffle: bool = True,
@@ -90,7 +91,7 @@ class TrainingBatchIterator:
     def __len__(self) -> int:
         return int(np.ceil(self.num_samples / self.batch_size))
 
-    def __iter__(self) -> Iterator[Tuple[Dict[str, jnp.ndarray], jnp.ndarray]]:
+    def __iter__(self) -> Iterator[tuple[dict[str, jnp.ndarray], jnp.ndarray]]:
         indices = np.arange(self.num_samples)
         if self.shuffle:
             self.rng.shuffle(indices)
@@ -119,9 +120,9 @@ class NewsBatchDataloader:
         self,
         news_ids: np.ndarray,
         news_tokens: np.ndarray,
-        news_abstract_tokens: Optional[np.ndarray] = None,
-        news_category_indices: Optional[np.ndarray] = None,
-        news_subcategory_indices: Optional[np.ndarray] = None,
+        news_abstract_tokens: np.ndarray | None = None,
+        news_category_indices: np.ndarray | None = None,
+        news_subcategory_indices: np.ndarray | None = None,
         batch_size: int = 1024,
         process_title: bool = True,
         process_abstract: bool = True,
@@ -133,7 +134,7 @@ class NewsBatchDataloader:
         self.num_news = len(news_ids)
 
         # Build the list of arrays to concatenate along the last axis
-        parts: List[np.ndarray] = []
+        parts: list[np.ndarray] = []
         if process_title:
             parts.append(np.asarray(news_tokens))
         if process_abstract and news_abstract_tokens is not None:
@@ -151,7 +152,7 @@ class NewsBatchDataloader:
 
         self.features = np.concatenate(parts, axis=1) if len(parts) > 1 else parts[0]
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         for i in range(0, self.num_news, self.batch_size):
             end = min(i + self.batch_size, self.num_news)
             yield {
@@ -177,10 +178,10 @@ class UserHistoryBatchDataloader:
         self,
         history_tokens: np.ndarray,
         impression_ids: np.ndarray,
-        history_abstract_tokens: Optional[np.ndarray] = None,
-        history_category: Optional[np.ndarray] = None,
-        history_subcategory: Optional[np.ndarray] = None,
-        user_ids: Optional[np.ndarray] = None,
+        history_abstract_tokens: np.ndarray | None = None,
+        history_category: np.ndarray | None = None,
+        history_subcategory: np.ndarray | None = None,
+        user_ids: np.ndarray | None = None,
         batch_size: int = 32,
         process_title: bool = True,
         process_abstract: bool = True,
@@ -192,7 +193,7 @@ class UserHistoryBatchDataloader:
         self.batch_size = batch_size
         self.num_users = len(impression_ids)
 
-        parts: List[np.ndarray] = []
+        parts: list[np.ndarray] = []
         if process_title:
             parts.append(np.asarray(history_tokens))
         if process_abstract and history_abstract_tokens is not None:
@@ -215,7 +216,7 @@ class UserHistoryBatchDataloader:
 
     def __iter__(
         self,
-    ) -> Iterator[Tuple[np.ndarray, Optional[jnp.ndarray], jnp.ndarray]]:
+    ) -> Iterator[tuple[np.ndarray, jnp.ndarray | None, jnp.ndarray]]:
         for i in range(0, self.num_users, self.batch_size):
             end = min(i + self.batch_size, self.num_users)
             batch_ids = self.impression_ids[i:end]

@@ -6,7 +6,7 @@ Runs in <5 seconds per model.
 """
 
 import numpy as np
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 
 class SyntheticDataset:
@@ -82,7 +82,7 @@ class SyntheticDataset:
         self.val_behaviors_data = self._make_behaviors(self.NUM_VAL)
         self.test_behaviors_data = self.val_behaviors_data  # reuse for simplicity
 
-    def _make_behaviors(self, n: int) -> Dict[str, np.ndarray]:
+    def _make_behaviors(self, n: int) -> dict[str, np.ndarray]:
         rng = self._rng
         V = self.VOCAB_SIZE
         C = self.NUM_CATEGORIES
@@ -116,7 +116,7 @@ class SyntheticDataset:
     # --- Properties ---
 
     @property
-    def processed_news(self) -> Dict[str, Any]:
+    def processed_news(self) -> dict[str, Any]:
         return self._processed_news
 
     @property
@@ -134,7 +134,7 @@ class SyntheticDataset:
     # --- Dataloader factories (Keras-compatible) ---
 
     def train_dataloader(self, batch_size: int, model_name: str = "nrms"):
-        from src.core.data.loaders.dataloader import TrainingSequence, NewsDataLoader
+        from src.core.data.loaders.dataloader import NewsDataLoader
         return NewsDataLoader.create_train_dataset(
             history_news_tokens=self.train_behaviors_data["history_news_tokens"],
             history_news_abstract_tokens=self.train_behaviors_data["history_news_abstract_tokens"],
@@ -205,5 +205,5 @@ class SyntheticDataset:
             process_subcategory=self.process_subcategory,
         )
 
-    def get_int_to_news_id_map(self) -> Dict[int, str]:
+    def get_int_to_news_id_map(self) -> dict[int, str]:
         return self._int_to_news_id

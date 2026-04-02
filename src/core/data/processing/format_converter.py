@@ -12,15 +12,14 @@ The MIND format expects:
 import logging
 import pandas as pd
 from pathlib import Path
-from typing import Dict, Optional, Union
 import ast
 
 logger = logging.getLogger(__name__)
 
 
 def convert_jp_behaviors_to_mind_format(
-        input_file: Union[str, Path],
-        output_file: Union[str, Path],
+        input_file: str | Path,
+        output_file: str | Path,
         user_id_prefix: str = "U",
         news_id_prefix: str = "N",
         impression_id_start: int = 1,
@@ -99,8 +98,8 @@ def convert_jp_behaviors_to_mind_format(
 
 
 def convert_custom_news_to_mind_format(
-        input_file: Union[str, Path],
-        output_file: Union[str, Path],
+        input_file: str | Path,
+        output_file: str | Path,
 ) -> None:
     """
     Convert a custom news dataset to MIND format.
@@ -208,8 +207,8 @@ def _convert_impressions_format(impressions_item) -> str:
 
 
 def preprocess_custom_dataset(
-        input_dir: Union[str, Path],
-        output_dir: Union[str, Path],
+        input_dir: str | Path,
+        output_dir: str | Path,
         behaviors_filename: str = "behaviors.tsv",
         news_filename: str = "news.tsv",
         user_id_prefix: str = "U",

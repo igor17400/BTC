@@ -5,7 +5,7 @@ and provides a factory for building models from specs.
 """
 
 import importlib
-from typing import Any, Dict
+from typing import Any
 
 from omegaconf import DictConfig
 
@@ -210,7 +210,7 @@ def get_model_class(model_name: str, framework: str):
 def build_model_from_spec(
     spec: DictConfig,
     framework: str,
-    processed_news: Dict[str, Any],
+    processed_news: dict[str, Any],
     **extra_kwargs,
 ):
     """Build a model from a YAML spec.

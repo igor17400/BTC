@@ -4,14 +4,13 @@ Supports JAX, PyTorch, and TensorFlow backends.
 """
 
 import os
-from typing import List
 
 import keras
 
 from src.core.io.logging import console
 
 
-def _setup_jax_device(gpu_ids: List[int], memory_limit: float) -> None:
+def _setup_jax_device(gpu_ids: list[int], memory_limit: float) -> None:
     import jax
 
     if not gpu_ids:
@@ -39,7 +38,7 @@ def _setup_jax_device(gpu_ids: List[int], memory_limit: float) -> None:
     console.log(f"JAX: using GPU(s) {gpu_ids}, {len(gpu_devices)} available")
 
 
-def _setup_torch_device(gpu_ids: List[int], memory_limit: float) -> None:
+def _setup_torch_device(gpu_ids: list[int], memory_limit: float) -> None:
     import torch
 
     if not gpu_ids or not torch.cuda.is_available():
@@ -64,7 +63,7 @@ _BACKEND_SETUP = {
 }
 
 
-def setup_device(gpu_ids: List[int], memory_limit: float = 0.9) -> None:
+def setup_device(gpu_ids: list[int], memory_limit: float = 0.9) -> None:
     """Configure device and memory for the active Keras backend.
 
     Args:

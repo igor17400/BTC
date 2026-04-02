@@ -1,7 +1,5 @@
 import logging
-import os
 from pathlib import Path
-from typing import Dict, List, Optional, Tuple
 
 import keras
 import numpy as np
@@ -14,7 +12,7 @@ class BPEmbManager:
 
     def __init__(self, cache_manager=None):
         self.cache_manager = cache_manager
-        self.bpemb_models: Dict[str, object] = {}  # Cache loaded models
+        self.bpemb_models: dict[str, object] = {}  # Cache loaded models
         self.supported_languages = self._get_supported_languages()
 
         policy = keras.mixed_precision.global_policy()
@@ -25,7 +23,7 @@ class BPEmbManager:
         else:
             self.float_dtype = "float32"
 
-    def _get_supported_languages(self) -> List[str]:
+    def _get_supported_languages(self) -> list[str]:
         """Get list of supported BPEmb languages.
 
         Full list available at: https://bpemb.h-its.org/
@@ -109,8 +107,8 @@ class BPEmbManager:
         language: str,
         vocab_size: int = 10000,
         embedding_dim: int = 300,
-        cache_dir: Optional[str] = None,
-    ) -> Optional[object]:
+        cache_dir: str | None = None,
+    ) -> object | None:
         """
         Load a BPEmb model for the specified language.
 
@@ -178,8 +176,8 @@ class BPEmbManager:
         language: str,
         vocab_size: int = 10000,
         embedding_dim: int = 300,
-        max_vocab_size: Optional[int] = None,
-    ) -> Tuple[Optional[np.ndarray], Optional[Dict[str, int]]]:
+        max_vocab_size: int | None = None,
+    ) -> tuple[np.ndarray | None, dict[str, int] | None]:
         """
         Get BPEmb embeddings as numpy array and vocabulary mapping.
 
@@ -228,7 +226,7 @@ class BPEmbManager:
         language: str,
         vocab_size: int = 10000,
         embedding_dim: int = 300,
-    ) -> Optional[List[str]]:
+    ) -> list[str] | None:
         """
         Encode text into BPE subwords.
 
@@ -257,7 +255,7 @@ class BPEmbManager:
         language: str,
         vocab_size: int = 10000,
         embedding_dim: int = 300,
-    ) -> Optional[np.ndarray]:
+    ) -> np.ndarray | None:
         """
         Embed text into vector representation.
 
@@ -281,7 +279,7 @@ class BPEmbManager:
             logger.error(f"Failed to embed text: {e}")
             return None
 
-    def get_language_code_mapping(self) -> Dict[str, str]:
+    def get_language_code_mapping(self) -> dict[str, str]:
         """Get mapping from common language names to BPEmb codes."""
         return {
             "english": "en",
@@ -324,7 +322,7 @@ class BPEmbManager:
 
     def create_filtered_embedding_matrix(
         self,
-        vocab: Dict[str, int],
+        vocab: dict[str, int],
         language: str,
         embedding_dim: int = 300,
         vocab_size: int = 10000,

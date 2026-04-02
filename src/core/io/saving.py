@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import hydra
 import numpy as np
@@ -22,9 +22,9 @@ def get_output_run_dir(cfg):
 
 
 def save_predictions_to_file_fn(
-    predictions_dict: Dict[str, Tuple[List, List]],
+    predictions_dict: dict[str, tuple[list, list]],
     output_dir: Path,
-    epoch_idx: Optional[int] = None,
+    epoch_idx: int | None = None,
     mode: str = "val",
 ) -> None:
     console = Console()
@@ -47,10 +47,10 @@ def save_predictions_to_file_fn(
 def save_run_summary_fn(
     summary_output_dir: Path,
     hydra_cfg: DictConfig,
-    initial_metrics_dict: Dict[str, float],
-    best_metrics_summary_dict: Dict[str, Any],
-    test_metrics_dict: Optional[Dict[str, float]] = None,
-    wandb_full_history: Optional[Dict[str, List[float]]] = None,
+    initial_metrics_dict: dict[str, float],
+    best_metrics_summary_dict: dict[str, Any],
+    test_metrics_dict: dict[str, float] | None = None,
+    wandb_full_history: dict[str, list[float]] | None = None,
 ) -> None:
     """Saves training config, key metrics, and history to a JSON file."""
     data_to_save = {

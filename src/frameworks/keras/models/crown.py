@@ -1,7 +1,7 @@
 """
 Code Reference: https://github.com/seongeunryu/crown-www25
 """
-from typing import Dict, Any, Tuple
+from typing import Any
 import numpy as np
 
 import keras
@@ -810,7 +810,7 @@ class CROWN(BaseModel):
 
     def __init__(
             self,
-            processed_news: Dict[str, Any],
+            processed_news: dict[str, Any],
             # Model dimensions
             embedding_size: int = 300,
             intent_embedding_dim: int = 200,
@@ -957,7 +957,7 @@ class CROWN(BaseModel):
 
         super().build(input_shape)
 
-    def _build_compatibility_models(self) -> Tuple[keras.Model, keras.Model]:
+    def _build_compatibility_models(self) -> tuple[keras.Model, keras.Model]:
         """Build training and scorer models for compatibility."""
         # ----- Training model -----
         # Create concatenated inputs that match the expected format
@@ -1002,7 +1002,7 @@ class CROWN(BaseModel):
 
         return training_model, scorer_model
 
-    def _validate_inputs(self, inputs: Dict, training: bool = None) -> None:
+    def _validate_inputs(self, inputs: dict, training: bool = None) -> None:
         """Validate input format and shapes based on mode."""
         if not isinstance(inputs, dict):
             raise TypeError("Inputs must be a dictionary")

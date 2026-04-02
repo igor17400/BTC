@@ -7,7 +7,7 @@ model consumption.
 
 import logging
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Set, Tuple, Union
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -30,9 +30,9 @@ logger = logging.getLogger(__name__)
 
 def has_at_least_one_pos_neg_samples(
     impressions_item,
-    available_news_ids: Set[int],
+    available_news_ids: set[int],
     parse_news_id: Callable[[str], int],
-    progress_callback: Optional[Callable] = None,
+    progress_callback: Callable | None = None,
 ) -> bool:
     """Check whether an impressions string contains at least one positive and one negative sample.
 
@@ -96,7 +96,7 @@ def has_at_least_one_pos_neg_samples(
 def process_behaviors(
     behaviors_df: pd.DataFrame,
     stage: str,
-    processed_news: Dict[str, np.ndarray],
+    processed_news: dict[str, np.ndarray],
     parse_news_id: Callable[[str], int],
     parse_user_id: Callable[[str], int],
     sampler,
@@ -105,8 +105,8 @@ def process_behaviors(
     max_abstract_length: int,
     random_train_samples: bool = False,
     float_dtype: str = "float32",
-    console: Optional[Console] = None,
-) -> Dict[str, Union[np.ndarray, list]]:
+    console: Console | None = None,
+) -> dict[str, np.ndarray | list]:
     """Process a behaviours DataFrame into arrays of token sequences and labels.
 
     Filters out rows without at least one positive and one negative impression,
@@ -138,25 +138,25 @@ def process_behaviors(
 
     # Build fast lookup dicts from processed news
     news_ids_str = processed_news["news_ids_original_strings"]
-    news_tokens: Dict[int, np.ndarray] = dict(
+    news_tokens: dict[int, np.ndarray] = dict(
         zip(
             [parse_news_id(nid) for nid in news_ids_str],
             processed_news["tokens"],
         )
     )
-    news_abstract_tokens: Dict[int, np.ndarray] = dict(
+    news_abstract_tokens: dict[int, np.ndarray] = dict(
         zip(
             [parse_news_id(nid) for nid in news_ids_str],
             processed_news["abstract_tokens"],
         )
     )
-    news_categories: Dict[int, int] = dict(
+    news_categories: dict[int, int] = dict(
         zip(
             [parse_news_id(nid) for nid in news_ids_str],
             processed_news["category_indices"],
         )
     )
-    news_subcategories: Dict[int, int] = dict(
+    news_subcategories: dict[int, int] = dict(
         zip(
             [parse_news_id(nid) for nid in news_ids_str],
             processed_news["subcategory_indices"],
@@ -164,19 +164,19 @@ def process_behaviors(
     )
 
     # Accumulator lists
-    histories_news_ids: List[list] = []
-    history_news_tokens: List[list] = []
-    history_news_abstract_tokens: List[list] = []
-    history_news_categories: List[list] = []
-    history_news_subcategories: List[list] = []
-    candidate_news_ids: List[list] = []
-    candidate_news_tokens: List[list] = []
-    candidate_news_abstract_tokens: List[list] = []
-    candidate_news_categories: List[list] = []
-    candidate_news_subcategories: List[list] = []
-    labels: List[list] = []
-    impression_ids: List[int] = []
-    user_ids: List[str] = []
+    histories_news_ids: list[list] = []
+    history_news_tokens: list[list] = []
+    history_news_abstract_tokens: list[list] = []
+    history_news_categories: list[list] = []
+    history_news_subcategories: list[list] = []
+    candidate_news_ids: list[list] = []
+    candidate_news_tokens: list[list] = []
+    candidate_news_abstract_tokens: list[list] = []
+    candidate_news_categories: list[list] = []
+    candidate_news_subcategories: list[list] = []
+    labels: list[list] = []
+    impression_ids: list[int] = []
+    user_ids: list[str] = []
 
     total_original_rows = len(behaviors_df)
     total_positives = 0
@@ -260,7 +260,7 @@ def process_behaviors(
             history = history[-max_history_length:]
 
             # Parse history news IDs and filter missing
-            history_nid_list: List[int] = []
+            history_nid_list: list[int] = []
             for h in history:
                 h_idx = parse_news_id(h)
                 if h_idx in news_tokens:
@@ -356,7 +356,7 @@ def process_behaviors(
         # Build result
         if stage == "train":
             np_float = np.float32 if float_dtype in ("float32", "mixed_float16") else np.float16
-            result: Dict[str, Union[np.ndarray, list]] = {
+            result: dict[str, np.ndarray | list] = {
                 "histories_news_ids": np.array(histories_news_ids, dtype=np.int32),
                 "history_news_tokens": np.array(history_news_tokens, dtype=np.int32),
                 "history_news_abstract_tokens": np.array(
@@ -441,7 +441,7 @@ def get_train_val_data(
     validation_split_strategy: str,
     validation_split_percentage: float,
     validation_split_seed: int,
-    processed_news: Dict[str, np.ndarray],
+    processed_news: dict[str, np.ndarray],
     parse_news_id: Callable[[str], int],
     parse_user_id: Callable[[str], int],
     sampler,
@@ -450,9 +450,9 @@ def get_train_val_data(
     max_abstract_length: int,
     random_train_samples: bool = False,
     float_dtype: str = "float32",
-    sampled_user_set: Optional[Set[str]] = None,
-    console: Optional[Console] = None,
-) -> Tuple[Dict[str, Union[np.ndarray, list]], Dict[str, Union[np.ndarray, list]]]:
+    sampled_user_set: set[str] | None = None,
+    console: Console | None = None,
+) -> tuple[dict[str, np.ndarray | list], dict[str, np.ndarray | list]]:
     """Load and process training data, splitting into train and validation sets.
 
     Args:
@@ -554,7 +554,7 @@ def get_train_val_data(
 
 def get_test_data(
     dataset_path: Path,
-    processed_news: Dict[str, np.ndarray],
+    processed_news: dict[str, np.ndarray],
     parse_news_id: Callable[[str], int],
     parse_user_id: Callable[[str], int],
     sampler,
@@ -563,9 +563,9 @@ def get_test_data(
     max_abstract_length: int,
     random_train_samples: bool = False,
     float_dtype: str = "float32",
-    sampled_user_set: Optional[Set[str]] = None,
-    console: Optional[Console] = None,
-) -> Dict[str, Union[np.ndarray, list]]:
+    sampled_user_set: set[str] | None = None,
+    console: Console | None = None,
+) -> dict[str, np.ndarray | list]:
     """Load and process test data from ``valid/behaviors.tsv``.
 
     Args:

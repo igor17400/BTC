@@ -1,6 +1,5 @@
 import datetime
 import logging
-from typing import Dict, List, Optional
 
 import wandb
 from omegaconf import DictConfig, OmegaConf
@@ -72,7 +71,7 @@ def setup_wandb_session(cfg: DictConfig) -> None:
 
 
 def log_metrics_to_console_fn(
-    metrics_dict: Dict[str, float], header_prefix: str = ""
+    metrics_dict: dict[str, float], header_prefix: str = ""
 ) -> None:
     if header_prefix:
         console.log(f"[bold blue]{header_prefix} Metrics:[/bold blue]")
@@ -85,10 +84,10 @@ def log_metrics_to_console_fn(
 
 def log_epoch_summary_fn(
     current_epoch_idx: int,
-    epoch_train_metrics_results: Dict[str, float],
-    epoch_val_metrics_results: Dict[str, float],
+    epoch_train_metrics_results: dict[str, float],
+    epoch_val_metrics_results: dict[str, float],
     is_best_epoch: bool,
-    wandb_cache: Optional[Dict[str, List[float]]] = None,
+    wandb_cache: dict[str, list[float]] | None = None,
 ) -> None:
     """Logs comprehensive summary for an epoch to console and WandB."""
     console.rule(
@@ -110,9 +109,9 @@ def log_epoch_summary_fn(
 
 
 def log_metrics_to_wandb_fn(
-    metrics_payload: Dict[str, float],  # Flat dict with prefixes like "train/loss"
+    metrics_payload: dict[str, float],  # Flat dict with prefixes like "train/loss"
     commit_step: int,  # Usually epoch index
-    wandb_history_cache: Dict[str, List[float]],  # Local cache for full history
+    wandb_history_cache: dict[str, list[float]],  # Local cache for full history
 ) -> None:
     if wandb.run:  # Check if wandb session is active
         wandb.log(metrics_payload, step=commit_step)

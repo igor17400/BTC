@@ -1,8 +1,7 @@
 """NAML (Neural News Recommendation with Attentive Multi-View Learning) -- PyTorch."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -224,8 +223,8 @@ class NAML(BaseModel):
 
     def __init__(
         self,
-        processed_news: Dict[str, Any],
-        config: Optional[NAMLConfig] = None,
+        processed_news: dict[str, Any],
+        config: NAMLConfig | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -261,7 +260,7 @@ class NAML(BaseModel):
 
     def forward(
         self,
-        inputs: Dict[str, torch.Tensor],
+        inputs: dict[str, torch.Tensor],
         training: bool = True,
     ) -> torch.Tensor:
         if training:
@@ -271,7 +270,7 @@ class NAML(BaseModel):
 
     # ----- helpers --------------------------------------------------------
 
-    def _concat_features(self, inputs: Dict[str, torch.Tensor], prefix: str) -> torch.Tensor:
+    def _concat_features(self, inputs: dict[str, torch.Tensor], prefix: str) -> torch.Tensor:
         """Concatenate title, abstract, category, subcategory along last dim."""
         parts = [inputs[f"{prefix}_tokens"]]
 
@@ -292,7 +291,7 @@ class NAML(BaseModel):
 
         return torch.cat(parts, dim=-1)
 
-    def _score_training(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_training(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         hist_concat = self._concat_features(inputs, "hist")
         cand_concat = self._concat_features(inputs, "cand")
 
@@ -305,7 +304,7 @@ class NAML(BaseModel):
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
         return torch.softmax(scores, dim=-1)
 
-    def _score_multi(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_multi(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         hist_concat = self._concat_features(inputs, "hist")
         cand_concat = self._concat_features(inputs, "cand")
 

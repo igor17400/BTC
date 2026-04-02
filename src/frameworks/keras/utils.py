@@ -6,13 +6,12 @@ and test step functions for the Keras framework.
 
 import inspect
 import logging
-from typing import Any, Dict, Tuple
+from typing import Any
 
 import hydra
 import keras
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
-from rich.console import Console
 
 from src.frameworks.keras.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
@@ -114,7 +113,7 @@ def warmup_jit_compilation(model, sample_batch):
 # Model and Dataset Initialization
 # =============================================================================
 
-def initialize_model_and_dataset(cfg: DictConfig, training_metrics: list = None) -> Tuple[keras.Model, Any]:
+def initialize_model_and_dataset(cfg: DictConfig, training_metrics: list = None) -> tuple[keras.Model, Any]:
     """Instantiate dataset and model based on Hydra configuration."""
     console.log("Initializing dataset provider...")
     dataset_provider: Any = hydra.utils.instantiate(cfg.dataset, mode="train")
@@ -182,7 +181,7 @@ def initialize_model_and_dataset(cfg: DictConfig, training_metrics: list = None)
     return model, dataset_provider
 
 
-def initialize_model_from_spec(cfg: DictConfig, training_metrics: list = None) -> Tuple[keras.Model, Any]:
+def initialize_model_from_spec(cfg: DictConfig, training_metrics: list = None) -> tuple[keras.Model, Any]:
     """Instantiate dataset and model from a YAML DSL spec.
 
     This is the spec-aware alternative to initialize_model_and_dataset().
@@ -374,8 +373,8 @@ class LightweightNewsMetrics:
 # =============================================================================
 
 def test_step_fn(
-        model: keras.Model, data: Tuple[Dict[str, keras.KerasTensor], keras.KerasTensor]
-) -> Dict[str, keras.KerasTensor]:
+        model: keras.Model, data: tuple[dict[str, keras.KerasTensor], keras.KerasTensor]
+) -> dict[str, keras.KerasTensor]:
     """Custom test step logic."""
     features, labels = data
 

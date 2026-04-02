@@ -8,7 +8,8 @@ import logging
 import os
 import pickle
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any
+from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -46,7 +47,7 @@ def read_all_news(dataset_path: Path) -> pd.DataFrame:
         FileNotFoundError: If no ``news.tsv`` files are found.
     """
     logger.info("Reading all news (train, dev, test) for vocab building...")
-    news_dfs: List[pd.DataFrame] = []
+    news_dfs: list[pd.DataFrame] = []
 
     column_names = [
         "id",
@@ -90,14 +91,14 @@ def read_all_news(dataset_path: Path) -> pd.DataFrame:
 
 def tokenize_all_news(
     all_news_df: pd.DataFrame,
-    news_str_id_to_int_idx: Dict[str, int],
-    vocab: Dict[str, int],
+    news_str_id_to_int_idx: dict[str, int],
+    vocab: dict[str, int],
     max_title_length: int,
     max_abstract_length: int,
-    tokenize_fn: Optional[Callable] = None,
-    segment_text_fn: Optional[Callable] = None,
-    console: Optional[Console] = None,
-) -> Tuple[np.ndarray, np.ndarray]:
+    tokenize_fn: Callable | None = None,
+    segment_text_fn: Callable | None = None,
+    console: Console | None = None,
+) -> tuple[np.ndarray, np.ndarray]:
     """Tokenize all news titles and abstracts into fixed-length integer arrays.
 
     Args:
@@ -132,7 +133,7 @@ def tokenize_all_news(
         (num_unique_news, max_abstract_length), pad_id, dtype=np.int32
     )
 
-    def _default_tokenize(text: str, v: Dict[str, int], ml: int) -> List[int]:
+    def _default_tokenize(text: str, v: dict[str, int], ml: int) -> list[int]:
         return tokenize_text(
             text, v, ml, unk_token_id=unk_id, pad_token_id=pad_id,
             segment_text_fn=segment_text_fn,
@@ -175,12 +176,12 @@ def process_news(
     embedding_type: str = "glove",
     embedding_size: int = 300,
     download_if_missing: bool = True,
-    download_fn: Optional[Callable] = None,
-    segment_text_fn: Optional[Callable] = None,
-    create_embeddings_fn: Optional[Callable] = None,
-    tokenize_fn: Optional[Callable] = None,
-    console: Optional[Console] = None,
-) -> Tuple[Dict[str, Any], Dict[str, int], Dict[str, int]]:
+    download_fn: Callable | None = None,
+    segment_text_fn: Callable | None = None,
+    create_embeddings_fn: Callable | None = None,
+    tokenize_fn: Callable | None = None,
+    console: Console | None = None,
+) -> tuple[dict[str, Any], dict[str, int], dict[str, int]]:
     """Orchestrate full news processing: vocab building, tokenization, embeddings.
 
     This is the main entry point that coordinates vocabulary construction,
@@ -245,7 +246,7 @@ def process_news(
         all_news_df = read_all_news(dataset_path)
 
         unique_news_ids_str = all_news_df["id"].unique()
-        news_str_id_to_int_idx: Dict[str, int] = {
+        news_str_id_to_int_idx: dict[str, int] = {
             nid_str: i for i, nid_str in enumerate(unique_news_ids_str)
         }
 
@@ -292,12 +293,12 @@ def process_news(
         )
 
         # Create embeddings (returned as NumPy array)
-        embedding_matrix: Optional[np.ndarray] = None
+        embedding_matrix: np.ndarray | None = None
         if create_embeddings_fn is not None:
             embedding_matrix = create_embeddings_fn(vocab)
             np.save(embeddings_file, embedding_matrix)
 
-        processed_news_content: Dict[str, Any] = {
+        processed_news_content: dict[str, Any] = {
             "news_ids_original_strings": unique_news_ids_str,
             "tokens": tokenized_titles_np,
             "abstract_tokens": tokenized_abstracts_np,

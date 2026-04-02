@@ -1,6 +1,6 @@
 import numpy as np
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Any
 
 import keras
 from omegaconf import DictConfig
@@ -22,9 +22,9 @@ def run_evaluation_epoch(
         num_total_impressions: int,
         progress: Progress,
         mode: str = "val",  # "val" or "test"
-        save_predictions_dir: Optional[Path] = None,
-        epoch_idx: Optional[int] = None,  # 0-indexed
-) -> Dict[str, float]:
+        save_predictions_dir: Path | None = None,
+        epoch_idx: int | None = None,  # 0-indexed
+) -> dict[str, float]:
     """
     Run validation or testing for one epoch (non-fast evaluation).
     This path is used if `cfg.eval.fast_evaluation` is False.
@@ -118,9 +118,9 @@ def run_evaluation_epoch(
 
 
 def get_main_comparison_metric(
-        validation_metrics: Dict[str, float],
+        validation_metrics: dict[str, float],
         min_improvement: float = 0.01,  # Minimum improvement required to consider it better
-) -> Tuple[float, bool]:
+) -> tuple[float, bool]:
     """Extracts the primary metric used for comparing epochs and checks if improvement is significant.
 
     Args:
@@ -168,7 +168,7 @@ def _run_initial_validation(
         custom_metrics_engine: NewsRecommenderMetrics,
         progress_bar_manager: Progress,
         cfg: DictConfig,
-) -> Dict[str, float]:
+) -> dict[str, float]:
     """Run initial validation before training starts."""
     console.log("[bold yellow]Running Initial Validation (before training starts)...[/bold yellow]")
 
@@ -213,8 +213,8 @@ def _run_epoch_evaluation(
         progress_bar_manager: Progress,
         cfg: DictConfig,
         epoch_idx: int,
-        predictions_save_dir: Optional[Path] = None,
-) -> Dict[str, float]:
+        predictions_save_dir: Path | None = None,
+) -> dict[str, float]:
     """Run evaluation for a single epoch."""
     if cfg.eval.fast_evaluation:
         # Create mode-specific directory for predictions
@@ -259,9 +259,9 @@ def _run_final_testing(
         cfg: DictConfig,
         best_model_weights_filepath: Path,
         last_model_weights_filepath: Path,
-        best_epoch_metrics_tracking: Dict[str, Any],
-        predictions_save_dir: Optional[Path] = None,
-) -> Optional[Dict[str, float]]:
+        best_epoch_metrics_tracking: dict[str, Any],
+        predictions_save_dir: Path | None = None,
+) -> dict[str, float] | None:
     """Run final testing phase after training."""
     console.log("[bold]Loading best model for final testing...[/bold]")
 

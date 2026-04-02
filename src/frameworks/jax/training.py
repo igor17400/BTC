@@ -12,11 +12,10 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 import optax
 from flax import nnx
 from rich.console import Console
@@ -37,7 +36,7 @@ console = Console()
 def train_step(
     model: nnx.Module,
     optimizer: nnx.Optimizer,
-    batch_features: Dict[str, jnp.ndarray],
+    batch_features: dict[str, jnp.ndarray],
     batch_labels: jnp.ndarray,
 ) -> jnp.ndarray:
     """Single JIT-compiled training step.
@@ -69,7 +68,7 @@ def train_step(
 def warmup_jit(
     model: nnx.Module,
     optimizer: nnx.Optimizer,
-    sample_batch: Tuple[Dict[str, jnp.ndarray], jnp.ndarray],
+    sample_batch: tuple[dict[str, jnp.ndarray], jnp.ndarray],
 ) -> None:
     """Run a single forward + backward pass to trigger XLA compilation.
 
@@ -128,13 +127,13 @@ def training_loop(
     early_stopping_patience: int = 5,
     # Optional evaluation hooks
     eval_fn=None,
-    eval_kwargs: Optional[Dict[str, Any]] = None,
+    eval_kwargs: dict[str, Any] | None = None,
     # Logging
-    progress: Optional[Progress] = None,
+    progress: Progress | None = None,
     enable_wandb: bool = False,
     # Saving
-    save_dir: Optional[str | Path] = None,
-) -> Dict[str, Any]:
+    save_dir: str | Path | None = None,
+) -> dict[str, Any]:
     """Main Flax NNX training entry point.
 
     Args:
@@ -195,13 +194,13 @@ def training_loop(
         own_progress = True
 
     # ---- Timing ----------------------------------------------------------
-    timing: Dict[str, Any] = {
+    timing: dict[str, Any] = {
         "epoch_training_times": [],
         "epoch_validation_times": [],
     }
     experiment_start = time.time()
 
-    best_metrics: Dict[str, Any] = {"average_metric_value": -float("inf")}
+    best_metrics: dict[str, Any] = {"average_metric_value": -float("inf")}
 
     # ---- Epoch loop ------------------------------------------------------
     overall_task = progress.add_task("Training", total=num_epochs)
@@ -247,7 +246,7 @@ def training_loop(
             )
 
             # ---- Evaluation ----------------------------------------------
-            val_metrics: Optional[Dict[str, float]] = None
+            val_metrics: dict[str, float] | None = None
             if eval_fn is not None:
                 eval_start = time.time()
                 val_metrics = eval_fn(model, **(eval_kwargs or {}))

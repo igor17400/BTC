@@ -3,9 +3,8 @@
 Ported from the Keras implementation in src/frameworks/keras/models/crown.py.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -420,8 +419,8 @@ class CROWN(BaseModel):
 
     def __init__(
         self,
-        processed_news: Dict[str, Any],
-        config: Optional[CROWNConfig] = None,
+        processed_news: dict[str, Any],
+        config: CROWNConfig | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -490,7 +489,7 @@ class CROWN(BaseModel):
 
     def forward(
         self,
-        inputs: Dict[str, torch.Tensor],
+        inputs: dict[str, torch.Tensor],
         training: bool = True,
     ) -> torch.Tensor:
         """Main forward pass.
@@ -521,7 +520,7 @@ class CROWN(BaseModel):
 
     # ----- scoring helpers ------------------------------------------------
 
-    def _score_training(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_training(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Softmax scores for training batch."""
         history_concat = self._concat_inputs(
             inputs["hist_tokens"],
@@ -546,7 +545,7 @@ class CROWN(BaseModel):
         scores = (cand_repr * user_repr.unsqueeze(1)).sum(dim=-1)  # (B, C)
         return torch.softmax(scores, dim=-1)
 
-    def _score_single(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Sigmoid score for a single candidate."""
         history_concat = self._concat_inputs(
             inputs["hist_tokens"],
@@ -569,7 +568,7 @@ class CROWN(BaseModel):
         score = (cand_repr * user_repr).sum(dim=-1, keepdim=True)
         return torch.sigmoid(score)
 
-    def _score_multi(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_multi(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Sigmoid scores for multiple candidates (evaluation)."""
         history_concat = self._concat_inputs(
             inputs["hist_tokens"],

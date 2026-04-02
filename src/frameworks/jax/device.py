@@ -2,7 +2,6 @@
 
 import logging
 import os
-from typing import List, Optional
 
 import jax
 
@@ -10,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 
 def setup_device(
-    gpu_ids: Optional[List[int]] = None,
+    gpu_ids: list[int] | None = None,
     memory_limit: float = 0.9,
 ) -> None:
     """Configure JAX devices and GPU memory.

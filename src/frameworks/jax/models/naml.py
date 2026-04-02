@@ -6,7 +6,7 @@ Learning", IJCAI 2019.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -286,7 +286,7 @@ class NAML(BaseModel):
 
     def __init__(
         self,
-        processed_news: Dict[str, Any],
+        processed_news: dict[str, Any],
         config: NAMLConfig | None = None,
         *,
         rngs: nnx.Rngs,
@@ -377,7 +377,7 @@ class NAML(BaseModel):
     # ---- Helpers to build concatenated inputs ---------------------------
 
     @staticmethod
-    def concatenate_features(inputs: Dict[str, jax.Array], prefix: str) -> jax.Array:
+    def concatenate_features(inputs: dict[str, jax.Array], prefix: str) -> jax.Array:
         """Build a single concatenated tensor from separate feature arrays.
 
         Expected keys: ``{prefix}_tokens``, ``{prefix}_abstract_tokens``,
@@ -401,7 +401,7 @@ class NAML(BaseModel):
 
     def __call__(
         self,
-        inputs: Dict[str, jax.Array],
+        inputs: dict[str, jax.Array],
         *,
         training: bool = False,
     ) -> jax.Array:

@@ -1,4 +1,4 @@
-from typing import Tuple, Dict, Any
+from typing import Any
 
 import keras
 from keras import layers, ops
@@ -250,7 +250,7 @@ class NRMS(BaseModel):
 
     def __init__(
             self,
-            processed_news: Dict[str, Any],
+            processed_news: dict[str, Any],
             embedding_size: int = 300,
             multiheads: int = 16,
             head_dim: int = 16,
@@ -323,7 +323,7 @@ class NRMS(BaseModel):
 
         super().build(input_shape)
 
-    def _build_compatibility_models(self) -> Tuple[keras.Model, keras.Model]:
+    def _build_compatibility_models(self) -> tuple[keras.Model, keras.Model]:
         """Build training and scorer models for backward compatibility."""
         # ----- Training model -----
         history_input = keras.Input(
@@ -369,11 +369,11 @@ class NRMS(BaseModel):
         """Legacy method for backward compatibility - returns user encoder."""
         return self.user_encoder
 
-    def _build_graph_models(self) -> Tuple[keras.Model, keras.Model]:
+    def _build_graph_models(self) -> tuple[keras.Model, keras.Model]:
         """Legacy method for backward compatibility - returns training and scorer models."""
         return self.training_model, self.scorer_model
 
-    def _validate_inputs(self, inputs: Dict, training: bool = None) -> None:
+    def _validate_inputs(self, inputs: dict, training: bool = None) -> None:
         """Validate input format and shapes based on mode."""
         if not isinstance(inputs, dict):
             raise TypeError("Inputs must be a dictionary")

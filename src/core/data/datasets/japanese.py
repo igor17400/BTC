@@ -3,7 +3,6 @@ Japanese Dataset class that inherits from NewsDatasetBase.
 This class provides Japanese-specific configurations and text processing.
 """
 import re
-from typing import Dict, List, Optional
 from omegaconf import DictConfig
 
 from src.core.data.datasets.dataset import NewsDatasetBase
@@ -16,8 +15,8 @@ class JapaneseDataset(NewsDatasetBase):
             self,
             name: str,
             version: str,
-            data_path: Optional[str] = None,
-            urls: Optional[Dict] = None,
+            data_path: str | None = None,
+            urls: dict | None = None,
             max_title_length: int = 30,
             max_abstract_length: int = 50,
             max_history_length: int = 50,
@@ -25,7 +24,7 @@ class JapaneseDataset(NewsDatasetBase):
             seed: int = 42,
             embedding_type: str = "random",  # Default to random for Japanese
             embedding_size: int = 300,
-            sampling: Optional[DictConfig] = None,
+            sampling: DictConfig | None = None,
             data_fraction_train: float = 1.0,
             data_fraction_val: float = 1.0,
             data_fraction_test: float = 1.0,
@@ -34,7 +33,7 @@ class JapaneseDataset(NewsDatasetBase):
             random_train_samples: bool = False,
             validation_split_strategy: str = "chronological",
             validation_split_percentage: float = 0.05,
-            validation_split_seed: Optional[int] = None,
+            validation_split_seed: int | None = None,
             auto_split_behaviors: bool = True,
             auto_convert_format: bool = True,  # Auto-convert custom format to MIND format
             word_threshold: int = 3,
@@ -89,7 +88,7 @@ class JapaneseDataset(NewsDatasetBase):
             user_id_prefix=user_id_prefix,
         )
 
-    def _segment_text_into_words(self, sent: str) -> List[str]:
+    def _segment_text_into_words(self, sent: str) -> list[str]:
         """
         Segment Japanese text into words.
         """
@@ -100,7 +99,7 @@ class JapaneseDataset(NewsDatasetBase):
 
         return self._simple_japanese_tokenize(sent)
 
-    def _simple_japanese_tokenize(self, sent: str) -> List[str]:
+    def _simple_japanese_tokenize(self, sent: str) -> list[str]:
         """
         Simple Japanese tokenization using character-based approach.
 

@@ -1,4 +1,3 @@
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from omegaconf import DictConfig
@@ -16,13 +15,13 @@ class ImpressionSampler:
     def sample_candidates_news(
             self,
             stage: str,
-            candidates: List[str],
+            candidates: list[str],
             parse_news_id,
             random_train_samples: bool = False,
-            news_info: Optional[Dict] = None,
-            timestamp: Optional[str] = None,
-            available_news_ids: Optional[set] = None,
-    ) -> Tuple[List[List[int]], List[List[int]]]:
+            news_info: dict | None = None,
+            timestamp: str | None = None,
+            available_news_ids: set | None = None,
+    ) -> tuple[list[list[int]], list[list[int]]]:
         """Sample candidate news with fixed ratio of positive to negative samples.
 
         Args:
@@ -93,11 +92,11 @@ class ImpressionSampler:
 
     def _sample_negatives(
             self,
-            negatives: List[int],
+            negatives: list[int],
             k: int,
-            news_info: Optional[Dict] = None,
-            timestamp: Optional[str] = None,
-    ) -> List[int]:
+            news_info: dict | None = None,
+            timestamp: str | None = None,
+    ) -> list[int]:
         """Sample k negatives using the configured strategy"""
         if self.strategy == "random":
             return self._random_sample_negatives(negatives, k)
@@ -110,7 +109,7 @@ class ImpressionSampler:
         else:
             return self._random_sample_negatives(negatives, k)
 
-    def _random_sample_negatives(self, negatives: List[int], k: int) -> List[int]:
+    def _random_sample_negatives(self, negatives: list[int], k: int) -> list[int]:
         """Random sampling strategy.
 
         Args:
@@ -128,8 +127,8 @@ class ImpressionSampler:
             return list(np.random.choice(negatives, size=k, replace=False))
 
     def _popularity_based_negatives(
-            self, negatives: List[int], k: int, news_info: Dict
-    ) -> List[int]:
+            self, negatives: list[int], k: int, news_info: dict
+    ) -> list[int]:
         """Sample negatives based on popularity"""
         if not news_info:
             return self._random_sample_negatives(negatives, k)
@@ -155,7 +154,7 @@ class ImpressionSampler:
         else:
             return list(np.random.choice(negatives, size=k, replace=False, p=probs))
 
-    def _temporal_based_negatives(self, negatives: List[int], k: int, timestamp: str) -> List[int]:
+    def _temporal_based_negatives(self, negatives: list[int], k: int, timestamp: str) -> list[int]:
         """Sample negatives based on temporal proximity"""
         if not timestamp:
             return self._random_sample_negatives(negatives, k)
@@ -164,7 +163,7 @@ class ImpressionSampler:
         # Could consider time difference between impression and news publication
         return self._random_sample_negatives(negatives, k)  # Placeholder
 
-    def _topic_diverse_negatives(self, negatives: List[int], k: int, news_info: Dict) -> List[int]:
+    def _topic_diverse_negatives(self, negatives: list[int], k: int, news_info: dict) -> list[int]:
         """Sample negatives to ensure topic diversity"""
         if not news_info:
             return self._random_sample_negatives(negatives, k)
@@ -209,13 +208,13 @@ class ImpressionSampler:
 
         return samples[:k]  # Ensure we return exactly k samples
 
-    def _random_sample(self, impressions: List[int]) -> List[int]:
+    def _random_sample(self, impressions: list[int]) -> list[int]:
         """Random sampling strategy."""
         return np.random.choice(
             impressions, size=self.max_length, replace=self.cfg.random.replace
         ).tolist()
 
-    def _topic_diverse_sample(self, impressions: List[int], news_info: Dict) -> List[int]:
+    def _topic_diverse_sample(self, impressions: list[int], news_info: dict) -> list[int]:
         """Topic-diverse sampling strategy."""
         # Implementation for topic diversity
         categories = [news_info[imp]["category"] for imp in impressions]

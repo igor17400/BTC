@@ -1,5 +1,4 @@
-from typing import Tuple, Dict, Any, Optional
-import numpy as np
+from typing import Any
 
 import keras
 from keras import layers, ops
@@ -17,8 +16,8 @@ class NewsEncoder(keras.Model):
     """
 
     def __init__(self, config: LSTURConfig, embedding_layer: layers.Embedding,
-                 category_encoder: Optional['CategoryEncoder'] = None,
-                 subcategory_encoder: Optional['SubcategoryEncoder'] = None,
+                 category_encoder: 'CategoryEncoder' | None = None,
+                 subcategory_encoder: 'SubcategoryEncoder' | None = None,
                  name: str = "news_encoder"):
         super().__init__(name=name)
         self.config = config
@@ -496,7 +495,7 @@ class LSTUR(BaseModel):
 
     def __init__(
             self,
-            processed_news: Dict[str, Any],
+            processed_news: dict[str, Any],
             num_users: int,
             embedding_size: int = 300,
             cnn_filter_num: int = 300,
@@ -609,7 +608,7 @@ class LSTUR(BaseModel):
 
         super().build(input_shape)
 
-    def _build_compatibility_models(self) -> Tuple[keras.Model, keras.Model]:
+    def _build_compatibility_models(self) -> tuple[keras.Model, keras.Model]:
         """Build training and scorer models for backward compatibility."""
         # ----- Training model -----
         history_input = keras.Input(
@@ -665,11 +664,11 @@ class LSTUR(BaseModel):
         """Legacy method for backward compatibility - returns user encoder."""
         return self.user_encoder
 
-    def _build_graph_models(self) -> Tuple[keras.Model, keras.Model]:
+    def _build_graph_models(self) -> tuple[keras.Model, keras.Model]:
         """Legacy method for backward compatibility - returns training and scorer models."""
         return self.training_model, self.scorer_model
 
-    def _validate_inputs(self, inputs: Dict, training: bool = None) -> None:
+    def _validate_inputs(self, inputs: dict, training: bool = None) -> None:
         """Validate input format and shapes based on mode."""
         if not isinstance(inputs, dict):
             raise TypeError("Inputs must be a dictionary")

@@ -2,7 +2,6 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional
 
 from rich.console import Console
 
@@ -30,7 +29,7 @@ class CacheManager:
         self.index_file = self.cache_dir / "cache_index.json"
         self.cache_index = self._load_cache_index()
 
-    def _load_cache_index(self) -> Dict:
+    def _load_cache_index(self) -> dict:
         """Load or create cache index"""
         if self.index_file.exists():
             with open(self.index_file, "r") as f:
@@ -61,7 +60,7 @@ class CacheManager:
         return cache_path.exists() and f"{embedding_name}_{dim}d" in self.cache_index["embeddings"]
 
     def add_to_cache(
-        self, name: str, version: str, cache_type: str, metadata: Optional[Dict] = None
+        self, name: str, version: str, cache_type: str, metadata: dict | None = None
     ) -> None:
         """Add entry to cache index"""
         if cache_type == "dataset":
@@ -76,7 +75,7 @@ class CacheManager:
             }
         self._save_cache_index()
 
-    def clear_cache(self, cache_type: Optional[str] = None) -> None:
+    def clear_cache(self, cache_type: str | None = None) -> None:
         """Clear cache files"""
         if cache_type == "datasets" or cache_type is None:
             logger.info("Clearing dataset cache...")

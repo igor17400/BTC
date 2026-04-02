@@ -6,7 +6,7 @@ This module provides a thin convenience wrapper matching the expected call
 signature from the training loop.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 import torch
 from rich.progress import Progress
@@ -19,10 +19,10 @@ def run_fast_evaluation(
     progress: Progress,
     cfg: Any,
     mode: str = "validate",
-    save_predictions_path: Optional[str] = None,
-    epoch: Optional[int] = None,
-    int_to_news_id_map: Optional[Dict] = None,
-) -> Dict[str, float]:
+    save_predictions_path: str | None = None,
+    epoch: int | None = None,
+    int_to_news_id_map: dict | None = None,
+) -> dict[str, float]:
     """Run fast evaluation using precomputed news and user vectors.
 
     This is the PyTorch equivalent of calling ``model.fast_evaluate(...)``

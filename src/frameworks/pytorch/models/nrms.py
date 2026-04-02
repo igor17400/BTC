@@ -1,8 +1,7 @@
 """NRMS (Neural News Recommendation with Multi-Head Self-Attention) -- PyTorch."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
 
@@ -127,8 +126,8 @@ class NRMS(BaseModel):
 
     def __init__(
         self,
-        processed_news: Dict[str, Any],
-        config: Optional[NRMSConfig] = None,
+        processed_news: dict[str, Any],
+        config: NRMSConfig | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -152,7 +151,7 @@ class NRMS(BaseModel):
 
     def forward(
         self,
-        inputs: Dict[str, torch.Tensor],
+        inputs: dict[str, torch.Tensor],
         training: bool = True,
     ) -> torch.Tensor:
         """Main forward pass.
@@ -176,7 +175,7 @@ class NRMS(BaseModel):
 
     # ----- scoring helpers ------------------------------------------------
 
-    def _score_training(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_training(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Softmax scores for training batch."""
         history_tokens = inputs["hist_tokens"]
         candidate_tokens = inputs["cand_tokens"]
@@ -193,14 +192,14 @@ class NRMS(BaseModel):
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)  # (B, C)
         return torch.softmax(scores, dim=-1)
 
-    def _score_single(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Sigmoid score for a single candidate."""
         user_repr = self.user_encoder(inputs["history_tokens"], training=False)
         cand_repr = self.news_encoder(inputs["single_candidate_tokens"], training=False)
         score = torch.sum(cand_repr * user_repr, dim=-1, keepdim=True)
         return torch.sigmoid(score)
 
-    def _score_multi(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_multi(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Raw dot-product scores for multiple candidates (evaluation)."""
         history_tokens = inputs["hist_tokens"]
         candidate_tokens = inputs["cand_tokens"]

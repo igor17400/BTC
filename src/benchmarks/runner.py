@@ -5,7 +5,7 @@ metrics + timing (training time, eval time, memory).
 """
 
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
@@ -19,7 +19,7 @@ SUPPORTED_FRAMEWORKS = ["keras", "pytorch", "jax"]
 def run_single_framework(
     cfg: DictConfig,
     framework: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run a single framework and collect results.
 
     Args:
@@ -66,8 +66,8 @@ def run_single_framework(
 
 def run_benchmark(
     cfg: DictConfig,
-    frameworks: Optional[List[str]] = None,
-) -> List[Dict[str, Any]]:
+    frameworks: list[str] | None = None,
+) -> list[dict[str, Any]]:
     """Run benchmark across specified frameworks.
 
     Args:
@@ -95,7 +95,7 @@ def run_benchmark(
     return results
 
 
-def display_results_table(results: List[Dict[str, Any]]) -> None:
+def display_results_table(results: list[dict[str, Any]]) -> None:
     """Display benchmark results as a Rich table."""
     table = Table(title="Cross-Framework Benchmark Results")
     table.add_column("Framework", style="cyan")

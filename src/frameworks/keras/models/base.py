@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 import numpy as np
 import keras
 from keras import ops
@@ -19,8 +19,8 @@ class BaseModel(keras.Model):
         super().__init__(name=name)
 
         # Attributes to be set by subclasses
-        self.news_encoder: Optional[keras.Model] = None
-        self.user_encoder: Optional[keras.Model] = None
+        self.news_encoder: keras.Model | None = None
+        self.user_encoder: keras.Model | None = None
         self.process_user_id: bool = False
         self.float_dtype: str = "float32"  # Will be set by training config
 
@@ -45,7 +45,7 @@ class BaseModel(keras.Model):
             self,
             news_dataloader: NewsBatchDataloader,
             progress: Progress,
-    ) -> Dict[str, np.ndarray]:
+    ) -> dict[str, np.ndarray]:
         """Precompute vectors for all news articles.
 
         Args:
@@ -88,7 +88,7 @@ class BaseModel(keras.Model):
 
     def precompute_user_vectors(
             self, user_dataloader: UserHistoryBatchDataloader, progress: Progress
-    ) -> Dict[int, np.ndarray]:
+    ) -> dict[int, np.ndarray]:
         """Pre-compute user vectors for fast evaluation.
 
         Args:
@@ -140,7 +140,7 @@ class BaseModel(keras.Model):
             save_predictions_path=None,
             epoch=None,
             int_to_news_id_map=None,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Fast evaluation of the model using precomputed vectors and dataloader iterators."""
         # 1. Precompute news vectors
         news_vecs_dict = self.precompute_news_vectors(news_dataloader, progress)
@@ -149,8 +149,8 @@ class BaseModel(keras.Model):
         user_vecs_dict = self.precompute_user_vectors(user_hist_dataloader, progress)
 
         # 3. Score impressions using precomputed user and news vectors
-        group_labels_list: List[np.ndarray] = []
-        group_preds_list: List[np.ndarray] = []
+        group_labels_list: list[np.ndarray] = []
+        group_preds_list: list[np.ndarray] = []
         predictions_to_save = {}
 
         # Create progress bar for impressions
@@ -231,11 +231,11 @@ class BaseModel(keras.Model):
 
     def _compute_metrics(
             self,
-            group_labels_list: List[np.ndarray],
-            group_preds_list: List[np.ndarray],
+            group_labels_list: list[np.ndarray],
+            group_preds_list: list[np.ndarray],
             metrics_calculator: Any,
             progress: Progress,
-    ) -> Dict[str, float]:
+    ) -> dict[str, float]:
         """Computes and aggregates metrics from lists of labels and predictions.
 
         This method iterates through each impression's labels and predicted scores.

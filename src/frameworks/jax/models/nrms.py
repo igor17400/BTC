@@ -6,7 +6,7 @@ Self-Attention", EMNLP 2019.
 
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any
 
 import jax
 import jax.numpy as jnp
@@ -161,7 +161,7 @@ class NRMS(BaseModel):
 
     def __init__(
         self,
-        processed_news: Dict[str, Any],
+        processed_news: dict[str, Any],
         config: NRMSConfig | None = None,
         *,
         rngs: nnx.Rngs,
@@ -240,7 +240,7 @@ class NRMS(BaseModel):
 
     def __call__(
         self,
-        inputs: Dict[str, jax.Array],
+        inputs: dict[str, jax.Array],
         *,
         training: bool = False,
     ) -> jax.Array:

@@ -13,7 +13,6 @@ import logging
 from collections import defaultdict
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, Optional, Union
 
 import pandas as pd
 
@@ -37,9 +36,9 @@ NEWS_COLUMNS = [
 
 
 def combine_news_splits(
-    train_path: Union[str, Path],
-    valid_path: Union[str, Path],
-    output_path: Union[str, Path],
+    train_path: str | Path,
+    valid_path: str | Path,
+    output_path: str | Path,
 ) -> pd.DataFrame:
     """Merge train and valid news TSVs, keeping only unique articles.
 
@@ -76,16 +75,16 @@ def combine_news_splits(
 # ---------------------------------------------------------------------------
 
 
-def _parse_timestamp(ts: str) -> Optional[datetime]:
+def _parse_timestamp(ts: str) -> datetime | None:
     try:
         return datetime.strptime(ts, "%m/%d/%Y %I:%M:%S %p")
     except (ValueError, TypeError):
         return None
 
 
-def _process_behaviors_file(path: Union[str, Path]) -> Dict[str, list]:
+def _process_behaviors_file(path: str | Path) -> dict[str, list]:
     """Return {news_id: [timestamps]} from a behaviors TSV."""
-    timestamps: Dict[str, list] = defaultdict(list)
+    timestamps: dict[str, list] = defaultdict(list)
     total = processed = 0
 
     with open(path, encoding="utf-8") as f:
@@ -116,16 +115,16 @@ def _process_behaviors_file(path: Union[str, Path]) -> Dict[str, list]:
 
 
 def infer_publication_dates(
-    train_behaviors_path: Union[str, Path],
-    valid_behaviors_path: Union[str, Path],
-    output_path: Union[str, Path],
-) -> Dict[str, datetime]:
+    train_behaviors_path: str | Path,
+    valid_behaviors_path: str | Path,
+    output_path: str | Path,
+) -> dict[str, datetime]:
     """Infer news publication dates as earliest appearance in behaviors.
 
     Returns:
         Dict mapping news_id to its earliest timestamp.
     """
-    merged: Dict[str, list] = defaultdict(list)
+    merged: dict[str, list] = defaultdict(list)
     for path in (train_behaviors_path, valid_behaviors_path):
         for nid, tss in _process_behaviors_file(path).items():
             merged[nid].extend(tss)
@@ -149,9 +148,9 @@ def infer_publication_dates(
 
 
 def enrich_news_with_dates(
-    news_path: Union[str, Path],
-    dates_path: Union[str, Path],
-    output_path: Union[str, Path],
+    news_path: str | Path,
+    dates_path: str | Path,
+    output_path: str | Path,
 ) -> pd.DataFrame:
     """Left-join news articles with inferred publication dates.
 
@@ -185,11 +184,11 @@ def enrich_news_with_dates(
 
 
 def prepare_mind_data(
-    train_news: Union[str, Path],
-    valid_news: Union[str, Path],
-    train_behaviors: Union[str, Path],
-    valid_behaviors: Union[str, Path],
-    output_dir: Union[str, Path],
+    train_news: str | Path,
+    valid_news: str | Path,
+    train_behaviors: str | Path,
+    valid_behaviors: str | Path,
+    output_dir: str | Path,
 ) -> None:
     """Run the full data preparation pipeline.
 

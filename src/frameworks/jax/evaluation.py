@@ -9,7 +9,6 @@ convenience wrapper.
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
 
 import jax
 import jax.numpy as jnp
@@ -21,7 +20,7 @@ def precompute_news_vectors(
     news_encoder,
     news_dataloader,
     progress: Progress,
-) -> Dict[str, np.ndarray]:
+) -> dict[str, np.ndarray]:
     """Precompute news vectors using a JAX news encoder.
 
     Args:
@@ -33,7 +32,7 @@ def precompute_news_vectors(
     Returns:
         ``{news_id_str: numpy_vector}`` dictionary.
     """
-    news_vecs: Dict[str, np.ndarray] = {}
+    news_vecs: dict[str, np.ndarray] = {}
     task = progress.add_task(
         "Computing news vectors...", total=len(news_dataloader), visible=True
     )
@@ -61,7 +60,7 @@ def precompute_user_vectors(
     user_dataloader,
     progress: Progress,
     process_user_id: bool = False,
-) -> Dict[int, np.ndarray]:
+) -> dict[int, np.ndarray]:
     """Precompute user vectors using a JAX user encoder.
 
     Args:
@@ -75,7 +74,7 @@ def precompute_user_vectors(
     Returns:
         ``{impression_id: numpy_vector}`` dictionary.
     """
-    user_vecs: Dict[int, np.ndarray] = {}
+    user_vecs: dict[int, np.ndarray] = {}
     task = progress.add_task(
         "Computing user vectors...", total=len(user_dataloader), visible=True
     )
@@ -111,8 +110,8 @@ def fast_evaluate(
     metrics_calculator,
     progress: Progress,
     process_user_id: bool = False,
-    int_to_news_id_map: Optional[Dict[int, str]] = None,
-) -> Dict[str, float]:
+    int_to_news_id_map: dict[int, str] | None = None,
+) -> dict[str, float]:
     """Full fast-evaluation pipeline.
 
     1. Precompute news vectors.
@@ -128,8 +127,8 @@ def fast_evaluate(
         user_encoder, user_hist_dataloader, progress, process_user_id
     )
 
-    group_labels: List[np.ndarray] = []
-    group_preds: List[np.ndarray] = []
+    group_labels: list[np.ndarray] = []
+    group_preds: list[np.ndarray] = []
 
     imp_task = progress.add_task(
         "Processing impressions...", total=len(impression_iterator), visible=True
@@ -164,7 +163,7 @@ def fast_evaluate(
     # Aggregate metrics (numpy-side)
     val_loss_total = 0.0
     num_valid = 0
-    metric_agg: Dict[str, list] = {k: [] for k in metrics_calculator.METRIC_NAMES}
+    metric_agg: dict[str, list] = {k: [] for k in metrics_calculator.METRIC_NAMES}
 
     for labels_np, scores_np in zip(group_labels, group_preds):
         if labels_np.size == 0 or scores_np.size == 0:
@@ -187,7 +186,7 @@ def fast_evaluate(
             if name in metric_agg:
                 metric_agg[name].append(float(value))
 
-    final: Dict[str, float] = {
+    final: dict[str, float] = {
         "loss": val_loss_total / num_valid if num_valid > 0 else 0.0,
     }
     for name, vals in metric_agg.items():

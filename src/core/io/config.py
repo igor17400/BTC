@@ -1,7 +1,7 @@
 """Utilities for saving and loading model configurations alongside weights."""
 
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any
 
 import yaml
 from omegaconf import DictConfig, OmegaConf
@@ -34,7 +34,7 @@ def save_model_config(config: DictConfig, model_weights_path: Path) -> Path:
     return config_path
 
 
-def load_model_config(model_weights_path: Path) -> Dict[str, Any]:
+def load_model_config(model_weights_path: Path) -> dict[str, Any]:
     """Load model configuration from alongside model weights.
 
     Args:
@@ -64,7 +64,7 @@ def load_model_config(model_weights_path: Path) -> Dict[str, Any]:
 
 
 def verify_model_compatibility(
-    model_config: Dict[str, Any], weights_path: Path
+    model_config: dict[str, Any], weights_path: Path
 ) -> bool:
     """Verify that model configuration is compatible with saved weights.
 

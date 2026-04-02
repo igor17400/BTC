@@ -1,8 +1,7 @@
 """LSTUR (Long- and Short-term User Representations) -- PyTorch."""
 
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
-import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -47,8 +46,8 @@ class NewsEncoder(nn.Module):
         self,
         config: LSTURConfig,
         embedding_layer: nn.Embedding,
-        category_encoder: Optional[LSTURCategoryEncoder] = None,
-        subcategory_encoder: Optional[LSTURSubcategoryEncoder] = None,
+        category_encoder: LSTURCategoryEncoder | None = None,
+        subcategory_encoder: LSTURSubcategoryEncoder | None = None,
     ):
         super().__init__()
         self.config = config
@@ -167,7 +166,7 @@ class UserEncoder(nn.Module):
 
     def forward(
         self,
-        inputs: Union[torch.Tensor, List[torch.Tensor]],
+        inputs: torch.Tensor | list[torch.Tensor],
         training: bool = True,
     ) -> torch.Tensor:
         """Encode user from history and user id.
@@ -219,9 +218,9 @@ class LSTUR(BaseModel):
 
     def __init__(
         self,
-        processed_news: Dict[str, Any],
+        processed_news: dict[str, Any],
         num_users: int,
-        config: Optional[LSTURConfig] = None,
+        config: LSTURConfig | None = None,
         **kwargs,
     ):
         super().__init__()
@@ -258,7 +257,7 @@ class LSTUR(BaseModel):
 
     def forward(
         self,
-        inputs: Dict[str, torch.Tensor],
+        inputs: dict[str, torch.Tensor],
         training: bool = True,
     ) -> torch.Tensor:
         if training:
@@ -270,7 +269,7 @@ class LSTUR(BaseModel):
 
     # ----- helpers --------------------------------------------------------
 
-    def _maybe_concat_cat(self, tokens: torch.Tensor, inputs: Dict, cat_key: str, subcat_key: str) -> torch.Tensor:
+    def _maybe_concat_cat(self, tokens: torch.Tensor, inputs: dict, cat_key: str, subcat_key: str) -> torch.Tensor:
         """Optionally concatenate category/subcategory to token tensor."""
         parts = [tokens]
         if cat_key in inputs and subcat_key in inputs:
@@ -285,7 +284,7 @@ class LSTUR(BaseModel):
             return torch.cat(parts, dim=-1)
         return tokens
 
-    def _score_training(self, inputs: Dict[str, torch.Tensor], training: bool) -> torch.Tensor:
+    def _score_training(self, inputs: dict[str, torch.Tensor], training: bool) -> torch.Tensor:
         history_tokens = self._maybe_concat_cat(
             inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
         )
@@ -303,7 +302,7 @@ class LSTUR(BaseModel):
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
         return torch.softmax(scores, dim=-1)
 
-    def _score_single(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         history_tokens = self._maybe_concat_cat(
             inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
         )
@@ -316,7 +315,7 @@ class LSTUR(BaseModel):
         score = torch.sum(cand_repr * user_repr, dim=-1, keepdim=True)
         return torch.sigmoid(score)
 
-    def _score_multi(self, inputs: Dict[str, torch.Tensor]) -> torch.Tensor:
+    def _score_multi(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         history_tokens = self._maybe_concat_cat(
             inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
         )

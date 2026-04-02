@@ -1,5 +1,4 @@
 import logging
-from typing import Dict, Tuple, Optional
 import tarfile
 
 import numpy as np
@@ -19,14 +18,14 @@ logger = logging.getLogger("embeddings")
 class EmbeddingsManager:
     def __init__(self, cache_manager: CacheManager):
         self.cache_manager = cache_manager
-        self.glove_embeddings: Optional[Dict[str, np.ndarray]] = None
-        self.embedding_matrix: Optional[np.ndarray] = None
-        self.vocab_size: Optional[int] = None
-        self.embedding_dim: Optional[int] = None
+        self.glove_embeddings: dict[str, np.ndarray] | None = None
+        self.embedding_matrix: np.ndarray | None = None
+        self.vocab_size: int | None = None
+        self.embedding_dim: int | None = None
         self.bert_model = None
         self.bert_tokenizer = None
-        self.category_embeddings: Optional[np.ndarray] = None
-        self.subcategory_embeddings: Optional[np.ndarray] = None
+        self.category_embeddings: np.ndarray | None = None
+        self.subcategory_embeddings: np.ndarray | None = None
         self.float_dtype = "float32"
 
     def load_glove(self, dim: int = 300) -> None:
@@ -152,7 +151,7 @@ class EmbeddingsManager:
 
     def get_glove_raw_data(
         self, dim: int = 300
-    ) -> Tuple[Optional[np.ndarray], Optional[Dict[str, int]]]:
+    ) -> tuple[np.ndarray | None, dict[str, int] | None]:
         """
         Ensures GloVe embeddings are loaded and returns the raw GloVe vectors as a
         NumPy array and a word-to-index map.
@@ -202,7 +201,7 @@ class EmbeddingsManager:
 
     def load_glove_embeddings(
         self, dim: int = 300
-    ) -> Tuple[Optional[np.ndarray], Optional[Dict[str, int]]]:
+    ) -> tuple[np.ndarray | None, dict[str, int] | None]:
         """
         Loads GloVe embeddings and returns them as a NumPy array and a word-to-index map.
 
@@ -254,15 +253,15 @@ class EmbeddingsManager:
         ).astype(np.float32)
         return self.subcategory_embeddings
 
-    def get_category_embeddings(self) -> Optional[np.ndarray]:
+    def get_category_embeddings(self) -> np.ndarray | None:
         """Get category embeddings if they exist."""
         return self.category_embeddings
 
-    def get_subcategory_embeddings(self) -> Optional[np.ndarray]:
+    def get_subcategory_embeddings(self) -> np.ndarray | None:
         """Get subcategory embeddings if they exist."""
         return self.subcategory_embeddings
 
-    def load_bpemb(self, language: str, vocab_size: int = 200000, dim: int = 300) -> Dict[str, np.ndarray]:
+    def load_bpemb(self, language: str, vocab_size: int = 200000, dim: int = 300) -> dict[str, np.ndarray]:
         """Load BPEmb embeddings from pre-trained files.
 
         Args:
@@ -382,7 +381,7 @@ class EmbeddingsManager:
         tar_path.unlink()
         logger.info(f"Successfully downloaded and extracted BPEmb embeddings for {language}")
 
-    def get_bpemb_embeddings(self, language: str, vocab_size: int = 200000, dim: int = 300) -> Dict[str, np.ndarray]:
+    def get_bpemb_embeddings(self, language: str, vocab_size: int = 200000, dim: int = 300) -> dict[str, np.ndarray]:
         """Get BPEmb embeddings, loading them if necessary.
 
         Args:

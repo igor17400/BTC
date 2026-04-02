@@ -4,7 +4,8 @@ Ported from src/datasets/dataloader.py (Keras version).
 Wraps numpy arrays from the core dataset and yields torch tensors.
 """
 
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any
+from collections.abc import Iterator
 
 import numpy as np
 import torch
@@ -23,7 +24,7 @@ class NewsRecommenderDataset(Dataset):
     on the fly.
     """
 
-    def __init__(self, features: Dict[str, np.ndarray], labels: np.ndarray):
+    def __init__(self, features: dict[str, np.ndarray], labels: np.ndarray):
         self.features = features
         self.labels = labels
         self.num_samples = len(labels)
@@ -31,7 +32,7 @@ class NewsRecommenderDataset(Dataset):
     def __len__(self) -> int:
         return self.num_samples
 
-    def __getitem__(self, idx: int) -> Tuple[Dict[str, torch.Tensor], torch.Tensor]:
+    def __getitem__(self, idx: int) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         sample_features = {
             k: torch.tensor(v[idx], dtype=torch.long if v.dtype in (np.int32, np.int64) else torch.float32)
             for k, v in self.features.items()
@@ -41,7 +42,7 @@ class NewsRecommenderDataset(Dataset):
 
 
 def create_train_dataloader(
-    features: Dict[str, np.ndarray],
+    features: dict[str, np.ndarray],
     labels: np.ndarray,
     batch_size: int,
     shuffle: bool = True,
@@ -91,7 +92,7 @@ class NewsBatchDataloader:
         news_category_indices: np.ndarray,
         news_subcategory_indices: np.ndarray,
         batch_size: int = 1024,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
         process_title: bool = True,
         process_abstract: bool = True,
         process_category: bool = True,
@@ -111,12 +112,12 @@ class NewsBatchDataloader:
         self.process_category = process_category
         self.process_subcategory = process_subcategory
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         for i in range(0, self.num_news, self.batch_size):
             end = min(i + self.batch_size, self.num_news)
             batch_ids = self.news_ids[i:end]
 
-            parts: List[np.ndarray] = []
+            parts: list[np.ndarray] = []
             if self.process_title:
                 parts.append(self.news_tokens[i:end])
             if self.process_abstract:
@@ -153,7 +154,7 @@ class UserHistoryBatchDataloader:
         impression_ids: Any,
         user_ids: Any = None,
         batch_size: int = 32,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
         process_title: bool = True,
         process_abstract: bool = True,
         process_category: bool = True,
@@ -174,7 +175,7 @@ class UserHistoryBatchDataloader:
         self.process_category = process_category
         self.process_subcategory = process_subcategory
 
-    def __iter__(self) -> Iterator[Tuple[Any, Optional[torch.Tensor], torch.Tensor]]:
+    def __iter__(self) -> Iterator[tuple[Any, torch.Tensor | None, torch.Tensor]]:
         for i in range(0, self.num_users, self.batch_size):
             end = min(i + self.batch_size, self.num_users)
 
@@ -186,7 +187,7 @@ class UserHistoryBatchDataloader:
                     self.user_ids[i:end], dtype=torch.long, device=self.device
                 )
 
-            parts: List[np.ndarray] = []
+            parts: list[np.ndarray] = []
             if self.process_title:
                 parts.append(self.history_tokens[i:end])
             if self.process_abstract:
@@ -229,7 +230,7 @@ class ImpressionIterator:
         labels: Any,
         impression_ids: Any,
         candidate_ids: Any,
-        device: Optional[torch.device] = None,
+        device: torch.device | None = None,
         process_title: bool = True,
         process_abstract: bool = True,
         process_category: bool = True,
@@ -250,9 +251,9 @@ class ImpressionIterator:
         self.process_category = process_category
         self.process_subcategory = process_subcategory
 
-    def __iter__(self) -> Iterator[Tuple[torch.Tensor, torch.Tensor, int, Any]]:
+    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor, int, Any]]:
         for idx in range(self.num_impressions):
-            parts: List[np.ndarray] = []
+            parts: list[np.ndarray] = []
 
             if self.process_title:
                 parts.append(np.asarray(self.impression_tokens[idx]))

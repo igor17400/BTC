@@ -7,9 +7,8 @@ and tokenizing text into numerical token sequences.
 import collections
 import logging
 import re
-from typing import Callable, Dict, List, Optional
+from collections.abc import Callable
 
-import numpy as np
 from rich.console import Console
 from rich.progress import (
     BarColumn,
@@ -24,7 +23,7 @@ from src.core.data.stats import string_is_number
 logger = logging.getLogger(__name__)
 
 
-def segment_text_into_words(sent: str) -> List[str]:
+def segment_text_into_words(sent: str) -> list[str]:
     """Segment a sentence string into a list of word strings (English default).
 
     Uses a regex pattern to extract words and common punctuation.
@@ -41,12 +40,12 @@ def segment_text_into_words(sent: str) -> List[str]:
 
 def tokenize_text(
     text: str,
-    vocab: Dict[str, int],
+    vocab: dict[str, int],
     max_len: int,
     unk_token_id: int,
     pad_token_id: int,
-    segment_text_fn: Optional[Callable[[str], List[str]]] = None,
-) -> List[int]:
+    segment_text_fn: Callable[[str], list[str]] | None = None,
+) -> list[int]:
     """Convert a raw text string into a fixed-length sequence of numerical token IDs.
 
     Args:
@@ -77,10 +76,10 @@ def tokenize_text(
 
 def build_vocabulary(
     news_df,
-    segment_text_fn: Optional[Callable[[str], List[str]]] = None,
+    segment_text_fn: Callable[[str], list[str]] | None = None,
     word_threshold: int = 3,
-    console: Optional[Console] = None,
-) -> Dict[str, int]:
+    console: Console | None = None,
+) -> dict[str, int]:
     """Build vocabulary from news titles and abstracts.
 
     Words that appear fewer than ``word_threshold`` times are excluded to reduce
@@ -136,7 +135,7 @@ def build_vocabulary(
             progress.advance(task)
 
     # Build vocabulary with special tokens
-    vocab: Dict[str, int] = {"[PAD]": 0, "[UNK]": 1}
+    vocab: dict[str, int] = {"[PAD]": 0, "[UNK]": 1}
     token_id_counter = 2
 
     if "<NUM>" in word_counter and word_counter["<NUM>"] >= word_threshold:

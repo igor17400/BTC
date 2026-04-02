@@ -11,7 +11,7 @@ import shutil
 import urllib.request
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
+from typing import Any
 
 import keras
 import numpy as np
@@ -77,8 +77,8 @@ class NewsDatasetBase(BaseNewsDataset):
         self,
         name: str,
         version: str,
-        data_path: Optional[str] = None,
-        urls: Optional[Dict] = None,
+        data_path: str | None = None,
+        urls: dict | None = None,
         language: str = "english",
         max_title_length: int = 30,
         max_abstract_length: int = 50,
@@ -87,7 +87,7 @@ class NewsDatasetBase(BaseNewsDataset):
         seed: int = 42,
         embedding_type: str = "glove",
         embedding_size: int = 300,
-        sampling: Optional[DictConfig] = None,
+        sampling: DictConfig | None = None,
         data_fraction_train: float = 1.0,
         data_fraction_val: float = 1.0,
         data_fraction_test: float = 1.0,
@@ -96,7 +96,7 @@ class NewsDatasetBase(BaseNewsDataset):
         random_train_samples: bool = False,
         validation_split_strategy: str = "chronological",
         validation_split_percentage: float = 0.05,
-        validation_split_seed: Optional[int] = None,
+        validation_split_seed: int | None = None,
         auto_split_behaviors: bool = False,
         auto_convert_format: bool = False,
         word_threshold: int = 3,
@@ -170,9 +170,9 @@ class NewsDatasetBase(BaseNewsDataset):
 
         self.max_entities = max_entities
         self.max_relations = max_relations
-        self.entity_embeddings: Dict[str, list] = {}
-        self.context_embeddings: Dict[str, list] = {}
-        self.entity_embedding_relation: Dict[str, Set] = collections.defaultdict(set)
+        self.entity_embeddings: dict[str, list] = {}
+        self.context_embeddings: dict[str, list] = {}
+        self.entity_embedding_relation: dict[str, set] = collections.defaultdict(set)
 
         logger.info(f"Initializing {name} dataset ({version} version)")
         logger.info(f"Language: {language}")
@@ -180,17 +180,17 @@ class NewsDatasetBase(BaseNewsDataset):
 
         self.dataset_path.mkdir(parents=True, exist_ok=True)
 
-        self.train_val_news_data: Dict[str, Any] = {}
-        self.train_behaviors_data: Dict[str, Any] = {}
-        self.val_behaviors_data: Dict[str, Any] = {}
-        self.test_news_data: Dict[str, Any] = {}
-        self.test_behaviors_data: Dict[str, Any] = {}
+        self.train_val_news_data: dict[str, Any] = {}
+        self.train_behaviors_data: dict[str, Any] = {}
+        self.val_behaviors_data: dict[str, Any] = {}
+        self.test_news_data: dict[str, Any] = {}
+        self.test_behaviors_data: dict[str, Any] = {}
 
         np.random.seed(seed)
 
         # News ID mappings
-        self._news_id_to_int_map: Dict[str, int] = {}
-        self._int_to_news_id_map: Dict[int, str] = {}
+        self._news_id_to_int_map: dict[str, int] = {}
+        self._int_to_news_id_map: dict[int, str] = {}
         self._next_news_int_id = 0
 
         # Handle format conversion before processing (if needed)
@@ -269,7 +269,7 @@ class NewsDatasetBase(BaseNewsDataset):
                 self._next_news_int_id += 1
             return self._news_id_to_int_map[news_id]
 
-    def get_int_to_news_id_map(self) -> Dict[int, str]:
+    def get_int_to_news_id_map(self) -> dict[int, str]:
         """Get the inverse mapping from integer IDs to string news IDs."""
         return self._int_to_news_id_map
 
@@ -432,7 +432,7 @@ class NewsDatasetBase(BaseNewsDataset):
     # News processing (delegates to processing.news)
     # ------------------------------------------------------------------
 
-    def process_news(self) -> Dict[str, Any]:
+    def process_news(self) -> dict[str, Any]:
         """Process news articles into numerical format.
 
         Delegates vocabulary building, tokenization, and embedding creation
@@ -468,7 +468,7 @@ class NewsDatasetBase(BaseNewsDataset):
             )
 
         # Build fast news-id-to-tokens lookup
-        self.news_id_str_to_tokens: Dict[str, np.ndarray] = {
+        self.news_id_str_to_tokens: dict[str, np.ndarray] = {
             nid_str: processed_news_content["tokens"][
                 self.news_str_id_to_int_idx[nid_str]
             ]
@@ -481,7 +481,7 @@ class NewsDatasetBase(BaseNewsDataset):
     # Embeddings creation (kept on class for access to managers)
     # ------------------------------------------------------------------
 
-    def _create_embeddings(self, vocab: Optional[Dict[str, int]] = None) -> np.ndarray:
+    def _create_embeddings(self, vocab: dict[str, int] | None = None) -> np.ndarray:
         """Create embedding matrix based on language and embedding type."""
         if vocab is not None:
             self.vocab = vocab
@@ -751,8 +751,8 @@ class NewsDatasetBase(BaseNewsDataset):
 
     def get_train_val_data(
         self,
-        sampled_user_set: Optional[Set[str]] = None,
-    ) -> Tuple[Dict[str, Union[np.ndarray, list]], Dict[str, Union[np.ndarray, list]]]:
+        sampled_user_set: set[str] | None = None,
+    ) -> tuple[dict[str, np.ndarray | list], dict[str, np.ndarray | list]]:
         """Load and process training data, splitting into train and validation sets."""
         return get_train_val_data(
             dataset_path=self.dataset_path,
@@ -774,8 +774,8 @@ class NewsDatasetBase(BaseNewsDataset):
 
     def get_test_data(
         self,
-        sampled_user_set: Optional[Set[str]] = None,
-    ) -> Dict[str, Union[np.ndarray, list]]:
+        sampled_user_set: set[str] | None = None,
+    ) -> dict[str, np.ndarray | list]:
         """Load and process test data."""
         return get_test_data(
             dataset_path=self.dataset_path,
@@ -1033,10 +1033,10 @@ class NewsDatasetBase(BaseNewsDataset):
     def _display_statistics(
         self,
         mode: str = "train",
-        processed_news: Optional[Dict[str, Any]] = None,
-        train_behaviors_data: Optional[Dict[str, Any]] = None,
-        val_behaviors_data: Optional[Dict[str, Any]] = None,
-        test_behaviors_data: Optional[Dict[str, Any]] = None,
+        processed_news: dict[str, Any] | None = None,
+        train_behaviors_data: dict[str, Any] | None = None,
+        val_behaviors_data: dict[str, Any] | None = None,
+        test_behaviors_data: dict[str, Any] | None = None,
     ) -> None:
         if mode == "train":
             data_dict = {
@@ -1059,7 +1059,7 @@ class NewsDatasetBase(BaseNewsDataset):
         processed_dir.mkdir(exist_ok=True)
 
         try:
-            summary_data: Dict[str, Any] = {}
+            summary_data: dict[str, Any] = {}
 
             logger.info("Collecting basic dataset info...")
             collect_basic_dataset_info(self, summary_data)
@@ -1147,18 +1147,18 @@ class NewsDatasetBase(BaseNewsDataset):
     # Text segmentation (overridable by subclasses, e.g. Japanese)
     # ------------------------------------------------------------------
 
-    def _segment_text_into_words(self, sent: str) -> List[str]:
+    def _segment_text_into_words(self, sent: str) -> list[str]:
         """Segment a sentence string into a list of word strings."""
         return segment_text_into_words(sent)
 
     def tokenize_text(
         self,
         text: str,
-        vocab: Dict[str, int],
+        vocab: dict[str, int],
         max_len: int,
         unk_token_id: int,
         pad_token_id: int,
-    ) -> List[int]:
+    ) -> list[int]:
         """Convert a raw text string into a fixed-length token ID sequence."""
         from src.core.data.processing.vocabulary import tokenize_text as _tokenize
 

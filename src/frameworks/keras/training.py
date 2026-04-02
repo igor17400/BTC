@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, Any, Optional, Tuple
+from typing import Any
 import time
 import wandb
 
@@ -36,9 +36,9 @@ class FastEvaluationCallback(keras.callbacks.Callback):
             custom_metrics_engine: NewsRecommenderMetrics,
             cfg: DictConfig,
             progress_bar_manager: Progress,
-            predictions_save_dir: Optional[Path] = None,
-            wandb_history: Optional[Dict[str, Any]] = None,
-            timing_metrics: Optional[Dict[str, Any]] = None,
+            predictions_save_dir: Path | None = None,
+            wandb_history: dict[str, Any] | None = None,
+            timing_metrics: dict[str, Any] | None = None,
     ):
         super().__init__()
         self.dataset_provider = dataset_provider
@@ -59,7 +59,7 @@ class FastEvaluationCallback(keras.callbacks.Callback):
         # Validation timing
         self.validation_start_time = None
 
-    def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, float]] = None):
+    def on_epoch_end(self, epoch: int, logs: dict[str, float] | None = None):
         """Run fast evaluation at the end of each epoch."""
         if not self.cfg.eval.fast_evaluation:
             return
@@ -133,7 +133,7 @@ class FastEvaluationCallback(keras.callbacks.Callback):
     def _update_best_epoch_metrics(
             self,
             epoch_idx: int,
-            val_metrics: Dict[str, float],
+            val_metrics: dict[str, float],
             min_improvement: float = 0.01
     ) -> bool:
         """Update best epoch metrics tracking."""
@@ -191,9 +191,9 @@ class SlowEvaluationCallback(keras.callbacks.Callback):
             custom_metrics_engine: NewsRecommenderMetrics,
             cfg: DictConfig,
             progress_bar_manager: Progress,
-            predictions_save_dir: Optional[Path] = None,
-            wandb_history: Optional[Dict[str, Any]] = None,
-            timing_metrics: Optional[Dict[str, Any]] = None,
+            predictions_save_dir: Path | None = None,
+            wandb_history: dict[str, Any] | None = None,
+            timing_metrics: dict[str, Any] | None = None,
     ):
         super().__init__()
         self.dataset_provider = dataset_provider
@@ -214,7 +214,7 @@ class SlowEvaluationCallback(keras.callbacks.Callback):
         # Validation timing
         self.validation_start_time = None
 
-    def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, float]] = None):
+    def on_epoch_end(self, epoch: int, logs: dict[str, float] | None = None):
         """Run slow evaluation at the end of each epoch."""
         if self.cfg.eval.fast_evaluation:
             return
@@ -287,7 +287,7 @@ class SlowEvaluationCallback(keras.callbacks.Callback):
     def _update_best_epoch_metrics(
             self,
             epoch_idx: int,
-            val_metrics: Dict[str, float],
+            val_metrics: dict[str, float],
             min_improvement: float = 0.01
     ) -> bool:
         """Update best epoch metrics tracking."""
@@ -339,17 +339,17 @@ class SlowEvaluationCallback(keras.callbacks.Callback):
 class TrainingMetricsCallback(keras.callbacks.Callback):
     """Callback to track and log training metrics (loss + timing) per epoch."""
 
-    def __init__(self, timing_metrics: Dict[str, Any], wandb_history: Optional[Dict[str, Any]] = None):
+    def __init__(self, timing_metrics: dict[str, Any], wandb_history: dict[str, Any] | None = None):
         super().__init__()
         self.timing_metrics = timing_metrics
         self.wandb_history = wandb_history or {}
         self.epoch_training_start_time = None
 
-    def on_epoch_begin(self, epoch: int, logs: Optional[Dict[str, float]] = None):
+    def on_epoch_begin(self, epoch: int, logs: dict[str, float] | None = None):
         """Record epoch training start time."""
         self.epoch_training_start_time = time.time()
 
-    def on_epoch_end(self, epoch: int, logs: Optional[Dict[str, float]] = None):
+    def on_epoch_end(self, epoch: int, logs: dict[str, float] | None = None):
         """Record and log epoch training metrics."""
         # Calculate epoch training time (excluding validation)
         epoch_training_time = 0
@@ -382,18 +382,18 @@ class TrainingMetricsCallback(keras.callbacks.Callback):
 class ComprehensiveTimingCallback(keras.callbacks.Callback):
     """Callback to track overall experiment timing phases."""
 
-    def __init__(self, timing_metrics: Dict[str, Any], wandb_history: Optional[Dict[str, Any]] = None):
+    def __init__(self, timing_metrics: dict[str, Any], wandb_history: dict[str, Any] | None = None):
         super().__init__()
         self.timing_metrics = timing_metrics
         self.wandb_history = wandb_history or {}
         self.training_phase_start_time = None
 
-    def on_train_begin(self, logs: Optional[Dict[str, float]] = None):
+    def on_train_begin(self, logs: dict[str, float] | None = None):
         """Record training phase start time."""
         self.training_phase_start_time = time.time()
         console.log("[bold blue]🏋️ Training phase started![/bold blue]")
 
-    def on_train_end(self, logs: Optional[Dict[str, float]] = None):
+    def on_train_end(self, logs: dict[str, float] | None = None):
         """Calculate total training time and summary statistics."""
         if self.training_phase_start_time:
             self.timing_metrics["total_training_time"] = time.time() - self.training_phase_start_time
@@ -409,7 +409,7 @@ class ComprehensiveTimingCallback(keras.callbacks.Callback):
 class RichProgressCallback(keras.callbacks.Callback):
     """Keras callback to integrate with Rich progress bars."""
 
-    def __init__(self, progress_manager: Progress, num_epochs: int, steps_per_epoch: Optional[int] = None):
+    def __init__(self, progress_manager: Progress, num_epochs: int, steps_per_epoch: int | None = None):
         super().__init__()
         self.progress_manager = progress_manager
         self.num_epochs = num_epochs
@@ -487,7 +487,7 @@ def _format_time_duration(seconds: float) -> str:
         return f"{secs}s"
 
 
-def _log_comprehensive_timing_summary(timing_metrics: Dict[str, Any], wandb_history: Optional[Dict[str, Any]] = None):
+def _log_comprehensive_timing_summary(timing_metrics: dict[str, Any], wandb_history: dict[str, Any] | None = None):
     """Log comprehensive timing summary to console and WandB."""
     console.log("\n" + "="*70)
     console.log("[bold cyan]📊 COMPREHENSIVE TIMING SUMMARY[/bold cyan]")
@@ -560,7 +560,7 @@ def _log_comprehensive_timing_summary(timing_metrics: Dict[str, Any], wandb_hist
         console.log("[dim]📤 Comprehensive timing metrics logged to WandB[/dim]")
 
 
-def _setup_training_directories(output_directory: Path, model_name: str) -> Tuple[Path, Path, Path]:
+def _setup_training_directories(output_directory: Path, model_name: str) -> tuple[Path, Path, Path]:
     """
     Setup directories for models and predictions.
 
@@ -592,7 +592,7 @@ def training_loop_orchestrator(
         custom_metrics_engine: NewsRecommenderMetrics,
         progress_bar_manager: Progress,
         output_directory: Path,
-) -> Tuple[Dict[str, Any], Optional[Dict[str, float]]]:
+) -> tuple[dict[str, Any], dict[str, float] | None]:
     """Orchestrates training using Keras 3 model.fit() with custom callbacks."""
 
     # Start timing the entire experiment

@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import numpy as np
 from rich.console import Console
@@ -12,8 +12,8 @@ console = Console()
 
 
 def generate_comparison_table(
-    results: List[Dict[str, Any]],
-    output_path: Optional[Path] = None,
+    results: list[dict[str, Any]],
+    output_path: Path | None = None,
 ) -> str:
     """Generate a Markdown comparison table from benchmark results.
 
@@ -69,7 +69,7 @@ def generate_comparison_table(
 
 
 def generate_model_comparison(
-    results: List[Dict[str, Any]],
+    results: list[dict[str, Any]],
 ) -> None:
     """Generate a Rich table comparing frameworks grouped by model.
 
@@ -111,7 +111,7 @@ def generate_model_comparison(
 
 
 def save_results_json(
-    results: List[Dict[str, Any]],
+    results: list[dict[str, Any]],
     output_path: Path,
 ) -> None:
     """Save raw benchmark results as JSON.

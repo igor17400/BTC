@@ -1,6 +1,7 @@
 import keras
 
-from typing import Any, Iterator, Tuple, Dict, Optional
+from typing import Any
+from collections.abc import Iterator
 import numpy as np
 
 
@@ -16,7 +17,7 @@ class TrainingSequence(keras.utils.Sequence):
 
     def __init__(
             self,
-            features: Dict[str, np.ndarray],
+            features: dict[str, np.ndarray],
             labels: np.ndarray,
             batch_size: int,
             model_name: str = "nrms"
@@ -44,7 +45,7 @@ class TrainingSequence(keras.utils.Sequence):
         """Return number of batches per epoch."""
         return int(np.ceil(self.num_samples / self.batch_size))
 
-    def __getitem__(self, index: int) -> Tuple[Dict[str, np.ndarray], np.ndarray]:
+    def __getitem__(self, index: int) -> tuple[dict[str, np.ndarray], np.ndarray]:
         """Get a batch of data.
 
         Args:
@@ -201,7 +202,7 @@ class ImpressionIterator:
         policy = keras.mixed_precision.global_policy()
         self.float_dtype = "float16" if "float16" in str(policy.compute_dtype) else "float32"
 
-    def __iter__(self) -> Iterator[Tuple[keras.KerasTensor, keras.KerasTensor, int, Any]]:
+    def __iter__(self) -> Iterator[tuple[keras.KerasTensor, keras.KerasTensor, int, Any]]:
         """Iterate through impressions."""
         for idx in range(self.num_impressions):
             # Build features based on processing flags
@@ -276,7 +277,7 @@ class NewsBatchDataloader:
         self.process_category = process_category
         self.process_subcategory = process_subcategory
 
-    def __iter__(self) -> Iterator[Dict[str, Any]]:
+    def __iter__(self) -> Iterator[dict[str, Any]]:
         """Iterate through news batches."""
         for i in range(0, self.num_news, self.batch_size):
             end_idx = min(i + self.batch_size, self.num_news)
@@ -346,7 +347,7 @@ class UserHistoryBatchDataloader:
         self.process_category = process_category
         self.process_subcategory = process_subcategory
 
-    def __iter__(self) -> Iterator[Tuple[Any, Optional[keras.KerasTensor], keras.KerasTensor]]:
+    def __iter__(self) -> Iterator[tuple[Any, keras.KerasTensor | None, keras.KerasTensor]]:
         """Iterate through user history batches."""
         for i in range(0, self.num_users, self.batch_size):
             end_idx = min(i + self.batch_size, self.num_users)
