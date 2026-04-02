@@ -66,12 +66,16 @@ class BaseModel(nn.Module):
                     "News Encoder not initialised. Ensure the model is properly built."
                 )
 
+            device = next(self.parameters()).device
+            news_features = news_features.to(device)
             batch_vecs = self.news_encoder(news_features, training=False)
             batch_vecs_np = batch_vecs.cpu().numpy()
 
             for i, news_id in enumerate(news_ids):
                 if isinstance(news_id, (torch.Tensor, np.generic)):
-                    news_id = news_id.item() if hasattr(news_id, "item") else int(news_id)
+                    news_id = (
+                        news_id.item() if hasattr(news_id, "item") else int(news_id)
+                    )
                 news_vecs_dict[news_id] = batch_vecs_np[i]
 
             progress.update(news_progress, advance=len(news_ids))
@@ -107,6 +111,10 @@ class BaseModel(nn.Module):
             )
 
         for impression_ids, user_ids, features in user_dataloader:
+            device = next(self.parameters()).device
+            features = features.to(device)
+            if user_ids is not None:
+                user_ids = user_ids.to(device)
             if self.process_user_id:
                 user_vec = self.user_encoder([features, user_ids], training=False)
             else:
@@ -265,6 +273,8 @@ class BaseModel(nn.Module):
             "loss": (val_loss_total / num_valid) if num_valid > 0 else 0.0
         }
         for metric_name, values_list in metric_values_agg.items():
-            final_metrics[metric_name] = float(np.mean(values_list)) if values_list else 0.0
+            final_metrics[metric_name] = (
+                float(np.mean(values_list)) if values_list else 0.0
+            )
 
         return final_metrics

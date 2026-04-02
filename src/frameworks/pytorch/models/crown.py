@@ -10,6 +10,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.core.models.configs import CROWNConfig
+
 from ..layers import (
     AdditiveAttention,
     GraphAttentionLayer,
@@ -18,7 +19,6 @@ from ..layers import (
     PositionalEncoding,
 )
 from .base import BaseModel
-
 
 # ------------------------------------------------------------------
 # Sub-encoders
@@ -142,9 +142,7 @@ class NewsEncoder(nn.Module):
         return torch.cat(intents, dim=1)  # (N, k, intent_dim)
 
     @staticmethod
-    def similarity_compute(
-        title: torch.Tensor, body: torch.Tensor
-    ) -> torch.Tensor:
+    def similarity_compute(title: torch.Tensor, body: torch.Tensor) -> torch.Tensor:
         """Cosine similarity scaled to [0, 1].
 
         Args:
@@ -161,9 +159,7 @@ class NewsEncoder(nn.Module):
 
     # ----- forward --------------------------------------------------------
 
-    def forward(
-        self, inputs: torch.Tensor, training: bool = True
-    ) -> torch.Tensor:
+    def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         """Encode news from concatenated input.
 
         Args:
@@ -183,12 +179,8 @@ class NewsEncoder(nn.Module):
         abstract_tokens = inputs[
             :, cfg.max_title_length : cfg.max_title_length + cfg.max_abstract_length
         ]
-        category_id = inputs[
-            :, cfg.max_title_length + cfg.max_abstract_length
-        ]
-        subcategory_id = inputs[
-            :, cfg.max_title_length + cfg.max_abstract_length + 1
-        ]
+        category_id = inputs[:, cfg.max_title_length + cfg.max_abstract_length]
+        subcategory_id = inputs[:, cfg.max_title_length + cfg.max_abstract_length + 1]
 
         # Word embeddings + dropout
         title_w = self.dropout(self.embedding_layer(title_tokens))
@@ -207,22 +199,22 @@ class NewsEncoder(nn.Module):
         body_embedding = body_t.mean(dim=1)
 
         # Category embeddings
-        cat_emb = self.category_embedding(category_id)       # (N, cat_dim)
+        cat_emb = self.category_embedding(category_id)  # (N, cat_dim)
         subcat_emb = self.subcategory_embedding(subcategory_id)  # (N, subcat_dim)
 
         # Category-aware representation
         category_concat = torch.cat([cat_emb, subcat_emb], dim=-1)
-        category_repr = self.category_affine(category_concat)    # (N, cat_dim)
+        category_repr = self.category_affine(category_concat)  # (N, cat_dim)
 
         category_aware_title = torch.cat([title_embedding, category_repr], dim=-1)
         category_aware_body = torch.cat([body_embedding, category_repr], dim=-1)
 
         # k-intent disentanglement
-        title_k = self.k_intent_disentangle(category_aware_title)   # (N, k, intent_dim)
+        title_k = self.k_intent_disentangle(category_aware_title)  # (N, k, intent_dim)
         body_k = self.k_intent_disentangle(category_aware_body)
 
         # Attention over intents
-        title_intent = self.title_intent_attention(title_k)   # (N, intent_dim)
+        title_intent = self.title_intent_attention(title_k)  # (N, intent_dim)
         body_intent = self.body_intent_attention(body_k)
 
         # Title-body consistency
@@ -320,13 +312,13 @@ class UserEncoder(nn.Module):
         hist_to_hist = torch.zeros(B, H, H, device=history_mask.device)
 
         # news-to-user / user-to-news: based on mask
-        hist_to_user = history_mask.unsqueeze(-1)       # (B, H, 1)
-        user_to_hist = history_mask.unsqueeze(1)        # (B, 1, H)
+        hist_to_user = history_mask.unsqueeze(-1)  # (B, H, 1)
+        user_to_hist = history_mask.unsqueeze(1)  # (B, 1, H)
         user_to_user = torch.zeros(B, 1, 1, device=history_mask.device)
 
-        top = torch.cat([hist_to_hist, hist_to_user], dim=2)    # (B, H, H+1)
-        bottom = torch.cat([user_to_hist, user_to_user], dim=2) # (B, 1, H+1)
-        return torch.cat([top, bottom], dim=1)                   # (B, H+1, H+1)
+        top = torch.cat([hist_to_hist, hist_to_user], dim=2)  # (B, H, H+1)
+        bottom = torch.cat([user_to_hist, user_to_user], dim=2)  # (B, 1, H+1)
+        return torch.cat([top, bottom], dim=1)  # (B, H+1, H+1)
 
     def gnn_enhanced_user(
         self,
@@ -350,24 +342,20 @@ class UserEncoder(nn.Module):
 
         # Project into graph space
         user_graph = self.user_node_init(user_initial).unsqueeze(1)  # (B, 1, G)
-        news_graph = self.news_graph_projection(news_embeddings)      # (B, H, G)
+        news_graph = self.news_graph_projection(news_embeddings)  # (B, H, G)
 
         # Build adjacency
         adjacency = self.create_bipartite_graph(history_mask)
 
         # GNN forward
-        enhanced_user, enhanced_news = self.gnn_layer(
-            user_graph, news_graph, adjacency
-        )
+        enhanced_user, enhanced_news = self.gnn_layer(user_graph, news_graph, adjacency)
 
         enhanced_user = enhanced_user.squeeze(1)  # (B, G)
         return enhanced_user, enhanced_news
 
     # ----- forward --------------------------------------------------------
 
-    def forward(
-        self, inputs: torch.Tensor, training: bool = True
-    ) -> torch.Tensor:
+    def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         """Encode a user from their browsing history.
 
         Args:
@@ -392,9 +380,7 @@ class UserEncoder(nn.Module):
         )
 
         # Attention-based user representation on GNN-enhanced news
-        attn_user = self.user_attention(
-            enhanced_news, mask=history_mask.bool()
-        )
+        attn_user = self.user_attention(enhanced_news, mask=history_mask.bool())
 
         # Hybrid: concat GNN user + attention user -> projection
         hybrid = torch.cat([enhanced_user_emb, attn_user], dim=-1)

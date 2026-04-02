@@ -15,6 +15,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+import wandb
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -27,11 +28,8 @@ from rich.progress import (
 from torch.utils.data import DataLoader
 
 from .device import setup_device
-import wandb
-
 from .evaluation import run_fast_evaluation
 from .losses import CategoricalCrossEntropyLoss
-
 
 # ------------------------------------------------------------------
 # Helpers

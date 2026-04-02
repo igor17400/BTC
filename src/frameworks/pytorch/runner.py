@@ -42,6 +42,86 @@ def _build_train_features(dataset_provider) -> tuple:
     return features, labels
 
 
+def _build_eval_provider(dataset_provider, cfg, mode="val"):
+    """Build a dict of PyTorch-native eval dataloaders."""
+    from src.frameworks.pytorch.dataloaders import (
+        ImpressionIterator,
+        NewsBatchDataloader,
+        UserHistoryBatchDataloader,
+    )
+
+    pn = dataset_provider.processed_news
+    data = (
+        dataset_provider.val_behaviors_data
+        if mode == "val"
+        else dataset_provider.test_behaviors_data
+    )
+    batch_size = cfg.eval.batch_size
+
+    news_dl = NewsBatchDataloader(
+        news_ids=np.array(pn["news_ids_original_strings"]),
+        news_tokens=pn["tokens"],
+        news_abstract_tokens=pn.get(
+            "abstract_tokens", np.zeros((len(pn["tokens"]), 1))
+        ),
+        news_category_indices=pn.get("category_indices", np.zeros(len(pn["tokens"]))),
+        news_subcategory_indices=pn.get(
+            "subcategory_indices", np.zeros(len(pn["tokens"]))
+        ),
+        batch_size=batch_size,
+        process_title=dataset_provider.process_title,
+        process_abstract=dataset_provider.process_abstract,
+        process_category=dataset_provider.process_category,
+        process_subcategory=dataset_provider.process_subcategory,
+    )
+
+    user_dl = UserHistoryBatchDataloader(
+        history_tokens=data["history_news_tokens"],
+        history_abstract_tokens=data.get(
+            "history_news_abstract_tokens", np.zeros((len(data["labels"]), 1))
+        ),
+        history_category=data.get(
+            "history_news_categories", np.zeros((len(data["labels"]), 1))
+        ),
+        history_subcategory=data.get(
+            "history_news_subcategories", np.zeros((len(data["labels"]), 1))
+        ),
+        impression_ids=data["impression_ids"],
+        user_ids=data.get("user_ids"),
+        batch_size=batch_size,
+        process_title=dataset_provider.process_title,
+        process_abstract=dataset_provider.process_abstract,
+        process_category=dataset_provider.process_category,
+        process_subcategory=dataset_provider.process_subcategory,
+    )
+
+    imp_iter = ImpressionIterator(
+        impression_tokens=data["candidate_news_tokens"],
+        impression_abstract_tokens=data.get(
+            "candidate_news_abstract_tokens", data["candidate_news_tokens"]
+        ),
+        impression_category=data.get(
+            "candidate_news_categories", np.zeros((len(data["labels"]), 1))
+        ),
+        impression_subcategory=data.get(
+            "candidate_news_subcategories", np.zeros((len(data["labels"]), 1))
+        ),
+        labels=data["labels"],
+        impression_ids=data["impression_ids"],
+        candidate_ids=data["candidate_news_ids"],
+        process_title=dataset_provider.process_title,
+        process_abstract=dataset_provider.process_abstract,
+        process_category=dataset_provider.process_category,
+        process_subcategory=dataset_provider.process_subcategory,
+    )
+
+    return {
+        "user_hist_dataloader": user_dl,
+        "news_dataloader": news_dl,
+        "impression_iterator": imp_iter,
+    }
+
+
 def run(cfg: DictConfig):
     """Run training with PyTorch framework."""
     from src.frameworks.pytorch.dataloaders import create_train_dataloader
@@ -76,12 +156,15 @@ def run(cfg: DictConfig):
     output_run_dir = get_output_run_dir(cfg)
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
+    # Build eval provider with PyTorch-native dataloaders (no Keras dependency)
+    val_provider = _build_eval_provider(dataset_provider, cfg, mode="val")
+
     # Train
     training_loop(
         cfg=cfg,
         model=model,
         train_dataloader=train_dataloader,
-        val_dataset_provider=dataset_provider,
+        val_dataset_provider=val_provider,
         metrics_engine=metrics_engine,
         epochs=cfg.train.num_epochs,
         learning_rate=cfg.train.learning_rate,

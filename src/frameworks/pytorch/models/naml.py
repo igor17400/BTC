@@ -7,13 +7,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.core.models.configs import NAMLConfig
+
 from ..layers import AdditiveAttention
 from .base import BaseModel
-
 
 # ------------------------------------------------------------------
 # Sub-encoders
 # ------------------------------------------------------------------
+
 
 class TitleEncoder(nn.Module):
     """Title encoder: Embedding -> Dropout -> Conv1d -> Dropout -> AdditiveAttention."""
@@ -46,16 +47,16 @@ class TitleEncoder(nn.Module):
         Returns:
             (batch, cnn_filter_num) title representation.
         """
-        embedded = self.embedding_layer(inputs)          # (B, T, E)
+        embedded = self.embedding_layer(inputs)  # (B, T, E)
         y = self.dropout1(embedded)
 
         # Conv1d expects (B, C, T), transpose and back
-        y = y.transpose(1, 2)                            # (B, E, T)
-        y = F.relu(self.cnn(y))                          # (B, F, T)
-        y = y.transpose(1, 2)                            # (B, T, F)
+        y = y.transpose(1, 2)  # (B, E, T)
+        y = F.relu(self.cnn(y))  # (B, F, T)
+        y = y.transpose(1, 2)  # (B, T, F)
         y = self.dropout2(y)
 
-        padding_mask = (inputs != 0)                     # (B, T)
+        padding_mask = inputs != 0  # (B, T)
         return self.additive_attention(y, mask=padding_mask)
 
 
@@ -89,7 +90,7 @@ class AbstractEncoder(nn.Module):
         y = y.transpose(1, 2)
         y = self.dropout2(y)
 
-        padding_mask = (inputs != 0)
+        padding_mask = inputs != 0
         return self.additive_attention(y, mask=padding_mask)
 
 
@@ -99,7 +100,9 @@ class CategoryEncoder(nn.Module):
     def __init__(self, config: NAMLConfig, num_categories: int):
         super().__init__()
         self.embedding = nn.Embedding(num_categories + 1, config.category_embedding_dim)
-        self.projection = nn.Linear(config.category_embedding_dim, config.cnn_filter_num)
+        self.projection = nn.Linear(
+            config.category_embedding_dim, config.cnn_filter_num
+        )
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         """Encode category ids.
@@ -110,9 +113,9 @@ class CategoryEncoder(nn.Module):
         Returns:
             (batch, cnn_filter_num) category representation.
         """
-        embedded = self.embedding(inputs)                # (B, 1, cat_dim)
-        projected = F.relu(self.projection(embedded))    # (B, 1, cnn_filter_num)
-        return projected.squeeze(1)                      # (B, cnn_filter_num)
+        embedded = self.embedding(inputs)  # (B, 1, cat_dim)
+        projected = F.relu(self.projection(embedded))  # (B, 1, cnn_filter_num)
+        return projected.squeeze(1)  # (B, cnn_filter_num)
 
 
 class SubcategoryEncoder(nn.Module):
@@ -120,8 +123,12 @@ class SubcategoryEncoder(nn.Module):
 
     def __init__(self, config: NAMLConfig, num_subcategories: int):
         super().__init__()
-        self.embedding = nn.Embedding(num_subcategories + 1, config.subcategory_embedding_dim)
-        self.projection = nn.Linear(config.subcategory_embedding_dim, config.cnn_filter_num)
+        self.embedding = nn.Embedding(
+            num_subcategories + 1, config.subcategory_embedding_dim
+        )
+        self.projection = nn.Linear(
+            config.subcategory_embedding_dim, config.cnn_filter_num
+        )
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         embedded = self.embedding(inputs)
@@ -164,10 +171,17 @@ class NewsEncoder(nn.Module):
             (batch, cnn_filter_num) news representation.
         """
         cfg = self.config
-        title_tokens = inputs[:, :cfg.max_title_length]
-        abstract_tokens = inputs[:, cfg.max_title_length:cfg.max_title_length + cfg.max_abstract_length]
-        category_id = inputs[:, cfg.max_title_length + cfg.max_abstract_length:cfg.max_title_length + cfg.max_abstract_length + 1]
-        subcategory_id = inputs[:, cfg.max_title_length + cfg.max_abstract_length + 1:]
+        title_tokens = inputs[:, : cfg.max_title_length]
+        abstract_tokens = inputs[
+            :, cfg.max_title_length : cfg.max_title_length + cfg.max_abstract_length
+        ]
+        category_id = inputs[
+            :,
+            cfg.max_title_length + cfg.max_abstract_length : cfg.max_title_length
+            + cfg.max_abstract_length
+            + 1,
+        ]
+        subcategory_id = inputs[:, cfg.max_title_length + cfg.max_abstract_length + 1 :]
 
         title_vec = self.title_encoder(title_tokens, training=training)
         abstract_vec = self.abstract_encoder(abstract_tokens, training=training)
@@ -175,7 +189,9 @@ class NewsEncoder(nn.Module):
         subcategory_vec = self.subcategory_encoder(subcategory_id, training=training)
 
         # Stack views: (batch, 4, cnn_filter_num)
-        views = torch.stack([title_vec, abstract_vec, category_vec, subcategory_vec], dim=1)
+        views = torch.stack(
+            [title_vec, abstract_vec, category_vec, subcategory_vec], dim=1
+        )
         return self.view_attention(views)
 
 
@@ -208,7 +224,7 @@ class UserEncoder(nn.Module):
         news_vecs = news_vecs.reshape(batch_size, hist_len, -1)
 
         # Mask: valid if title portion has any nonzero token
-        title_tokens = inputs[:, :, :self.config.max_title_length]
+        title_tokens = inputs[:, :, : self.config.max_title_length]
         history_mask = title_tokens.any(dim=-1)  # (B, H)
 
         return self.user_attention(news_vecs, mask=history_mask)
@@ -217,6 +233,7 @@ class UserEncoder(nn.Module):
 # ------------------------------------------------------------------
 # Full model
 # ------------------------------------------------------------------
+
 
 class NAML(BaseModel):
     """Neural News Recommendation with Attentive Multi-View Learning."""
@@ -245,8 +262,12 @@ class NAML(BaseModel):
         # View encoders
         self.title_encoder = TitleEncoder(config, self.embedding_layer)
         self.abstract_encoder = AbstractEncoder(config, self.embedding_layer)
-        self.category_encoder = CategoryEncoder(config, processed_news["num_categories"])
-        self.subcategory_encoder = SubcategoryEncoder(config, processed_news["num_subcategories"])
+        self.category_encoder = CategoryEncoder(
+            config, processed_news["num_categories"]
+        )
+        self.subcategory_encoder = SubcategoryEncoder(
+            config, processed_news["num_subcategories"]
+        )
 
         # Composite encoders
         self.news_encoder = NewsEncoder(
@@ -270,7 +291,9 @@ class NAML(BaseModel):
 
     # ----- helpers --------------------------------------------------------
 
-    def _concat_features(self, inputs: dict[str, torch.Tensor], prefix: str) -> torch.Tensor:
+    def _concat_features(
+        self, inputs: dict[str, torch.Tensor], prefix: str
+    ) -> torch.Tensor:
         """Concatenate title, abstract, category, subcategory along last dim."""
         parts = [inputs[f"{prefix}_tokens"]]
 

@@ -47,17 +47,20 @@ def run_fast_evaluation(
     """
     model.eval()
 
+    eval_mode = "val" if mode == "validate" else mode
+    batch_size = getattr(cfg.eval, "batch_size", 64)
+
     with torch.no_grad():
-        # The dataset_provider is expected to expose these three iterables.
-        # If it is a dict, unpack; otherwise assume attribute access.
         if isinstance(dataset_provider, dict):
             user_hist_dl = dataset_provider["user_hist_dataloader"]
             news_dl = dataset_provider["news_dataloader"]
             impression_iter = dataset_provider["impression_iterator"]
         else:
-            user_hist_dl = dataset_provider.user_hist_dataloader
-            news_dl = dataset_provider.news_dataloader
-            impression_iter = dataset_provider.impression_iterator
+            user_hist_dl = dataset_provider.user_history_dataloader(
+                mode=eval_mode, batch_size=batch_size
+            )
+            news_dl = dataset_provider.news_dataloader(batch_size=batch_size)
+            impression_iter = dataset_provider.impression_dataloader(mode=eval_mode)
 
         metrics = model.fast_evaluate(
             user_hist_dataloader=user_hist_dl,

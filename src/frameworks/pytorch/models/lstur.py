@@ -7,13 +7,14 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from src.core.models.configs import LSTURConfig
+
 from ..layers import AdditiveAttention, ComputeMasking, OverwriteMasking
 from .base import BaseModel
-
 
 # ------------------------------------------------------------------
 # Sub-encoders
 # ------------------------------------------------------------------
+
 
 class LSTURCategoryEncoder(nn.Module):
     """Simple embedding for category IDs (LSTUR-style, no projection)."""
@@ -23,8 +24,8 @@ class LSTURCategoryEncoder(nn.Module):
         self.embedding = nn.Embedding(num_categories + 1, config.category_embedding_dim)
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
-        embedded = self.embedding(inputs)          # (B, 1, dim)
-        return embedded.squeeze(1)                 # (B, dim)
+        embedded = self.embedding(inputs)  # (B, 1, dim)
+        return embedded.squeeze(1)  # (B, dim)
 
 
 class LSTURSubcategoryEncoder(nn.Module):
@@ -32,7 +33,9 @@ class LSTURSubcategoryEncoder(nn.Module):
 
     def __init__(self, config: LSTURConfig, num_subcategories: int):
         super().__init__()
-        self.embedding = nn.Embedding(num_subcategories + 1, config.subcategory_embedding_dim)
+        self.embedding = nn.Embedding(
+            num_subcategories + 1, config.subcategory_embedding_dim
+        )
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         embedded = self.embedding(inputs)
@@ -82,8 +85,10 @@ class NewsEncoder(nn.Module):
             dim += self.config.subcategory_embedding_dim
         return dim
 
-    def _process_title(self, title_tokens: torch.Tensor, training: bool) -> torch.Tensor:
-        embedded = self.embedding_layer(title_tokens)       # (B, T, E)
+    def _process_title(
+        self, title_tokens: torch.Tensor, training: bool
+    ) -> torch.Tensor:
+        embedded = self.embedding_layer(title_tokens)  # (B, T, E)
         y = self.dropout1(embedded)
 
         # Conv1d: (B, E, T) -> (B, F, T) -> (B, T, F)
@@ -93,10 +98,10 @@ class NewsEncoder(nn.Module):
         y = self.dropout2(y)
 
         # Masking
-        mask = self.compute_masking(title_tokens)            # (B, T) float
+        mask = self.compute_masking(title_tokens)  # (B, T) float
         y = self.overwrite_masking(y, mask)
 
-        padding_mask = (title_tokens != 0)                   # (B, T) bool
+        padding_mask = title_tokens != 0  # (B, T) bool
         return self.additive_attention(y, mask=padding_mask)
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
@@ -111,25 +116,33 @@ class NewsEncoder(nn.Module):
         input_len = inputs.shape[-1]
         has_cat = input_len > self.config.max_title_length
 
-        if has_cat and (self.category_encoder is not None or self.subcategory_encoder is not None):
-            title_tokens = inputs[:, :self.config.max_title_length]
-            category_id = inputs[:, self.config.max_title_length:self.config.max_title_length + 1]
-            subcategory_id = inputs[:, self.config.max_title_length + 1:]
+        if has_cat and (
+            self.category_encoder is not None or self.subcategory_encoder is not None
+        ):
+            title_tokens = inputs[:, : self.config.max_title_length]
+            category_id = inputs[
+                :, self.config.max_title_length : self.config.max_title_length + 1
+            ]
+            subcategory_id = inputs[:, self.config.max_title_length + 1 :]
 
             title_vec = self._process_title(title_tokens, training)
             representations = [title_vec]
 
             if self.category_encoder is not None:
-                representations.append(self.category_encoder(category_id, training=training))
+                representations.append(
+                    self.category_encoder(category_id, training=training)
+                )
             if self.subcategory_encoder is not None:
-                representations.append(self.subcategory_encoder(subcategory_id, training=training))
+                representations.append(
+                    self.subcategory_encoder(subcategory_id, training=training)
+                )
 
             if len(representations) > 1:
                 return torch.cat(representations, dim=-1)
             return title_vec
         else:
             if has_cat:
-                title_tokens = inputs[:, :self.config.max_title_length]
+                title_tokens = inputs[:, : self.config.max_title_length]
             else:
                 title_tokens = inputs
             return self._process_title(title_tokens, training)
@@ -195,9 +208,9 @@ class UserEncoder(nn.Module):
 
         if self.config.type == "ini":
             # Use user embedding as initial hidden state
-            h0 = long_u_emb.unsqueeze(0)                     # (1, B, gru_unit)
+            h0 = long_u_emb.unsqueeze(0)  # (1, B, gru_unit)
             output, _ = self.gru(click_title_presents, h0)
-            user_present = output[:, -1, :]                   # last hidden state
+            user_present = output[:, -1, :]  # last hidden state
         elif self.config.type == "con":
             output, _ = self.gru(click_title_presents)
             short_uemb = output[:, -1, :]
@@ -212,6 +225,7 @@ class UserEncoder(nn.Module):
 # ------------------------------------------------------------------
 # Full model
 # ------------------------------------------------------------------
+
 
 class LSTUR(BaseModel):
     """LSTUR: Long- and Short-term User Representations for news recommendation."""
@@ -243,13 +257,18 @@ class LSTUR(BaseModel):
         category_encoder = None
         subcategory_encoder = None
         if config.use_category:
-            category_encoder = LSTURCategoryEncoder(config, processed_news["num_categories"])
+            category_encoder = LSTURCategoryEncoder(
+                config, processed_news["num_categories"]
+            )
         if config.use_subcategory:
-            subcategory_encoder = LSTURSubcategoryEncoder(config, processed_news["num_subcategories"])
+            subcategory_encoder = LSTURSubcategoryEncoder(
+                config, processed_news["num_subcategories"]
+            )
 
         # Encoders
         self.news_encoder = NewsEncoder(
-            config, self.embedding_layer,
+            config,
+            self.embedding_layer,
             category_encoder=category_encoder,
             subcategory_encoder=subcategory_encoder,
         )
@@ -269,7 +288,9 @@ class LSTUR(BaseModel):
 
     # ----- helpers --------------------------------------------------------
 
-    def _maybe_concat_cat(self, tokens: torch.Tensor, inputs: dict, cat_key: str, subcat_key: str) -> torch.Tensor:
+    def _maybe_concat_cat(
+        self, tokens: torch.Tensor, inputs: dict, cat_key: str, subcat_key: str
+    ) -> torch.Tensor:
         """Optionally concatenate category/subcategory to token tensor."""
         parts = [tokens]
         if cat_key in inputs and subcat_key in inputs:
@@ -284,7 +305,9 @@ class LSTUR(BaseModel):
             return torch.cat(parts, dim=-1)
         return tokens
 
-    def _score_training(self, inputs: dict[str, torch.Tensor], training: bool) -> torch.Tensor:
+    def _score_training(
+        self, inputs: dict[str, torch.Tensor], training: bool
+    ) -> torch.Tensor:
         history_tokens = self._maybe_concat_cat(
             inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
         )

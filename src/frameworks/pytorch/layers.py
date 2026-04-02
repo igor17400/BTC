@@ -42,7 +42,9 @@ class AdditiveAttention(nn.Module):
         attention_hidden = torch.tanh(torch.matmul(inputs, self.W) + self.b)
 
         # 2. Project to scalar per timestep
-        attention_scores = torch.matmul(attention_hidden, self.q).squeeze(-1)  # (batch, seq_len)
+        attention_scores = torch.matmul(attention_hidden, self.q).squeeze(
+            -1
+        )  # (batch, seq_len)
 
         # 3. Exponentiate and optionally mask
         attention = torch.exp(attention_scores)
@@ -53,7 +55,9 @@ class AdditiveAttention(nn.Module):
         attention_weights = attention / (attention.sum(dim=-1, keepdim=True) + 1e-7)
 
         # 5. Weighted sum
-        attention_weights_expanded = attention_weights.unsqueeze(-1)  # (batch, seq_len, 1)
+        attention_weights_expanded = attention_weights.unsqueeze(
+            -1
+        )  # (batch, seq_len, 1)
         weighted_input = inputs * attention_weights_expanded
         return weighted_input.sum(dim=1)  # (batch, features)
 
@@ -247,7 +251,9 @@ class GraphSAGELayer(nn.Module):
 
         self.dropout = nn.Dropout(dropout_rate)
 
-    def _aggregate(self, adjacency_weights: torch.Tensor, neighbor_features: torch.Tensor) -> torch.Tensor:
+    def _aggregate(
+        self, adjacency_weights: torch.Tensor, neighbor_features: torch.Tensor
+    ) -> torch.Tensor:
         """Aggregate neighbor features according to the chosen strategy."""
         if self.aggregator == "mean":
             neighbor_sum = torch.matmul(adjacency_weights, neighbor_features)
@@ -257,8 +263,8 @@ class GraphSAGELayer(nn.Module):
             return torch.matmul(adjacency_weights, neighbor_features)
         elif self.aggregator == "max":
             # Expand for element-wise masking
-            expanded_adj = adjacency_weights.unsqueeze(-1)        # (B, N, K, 1)
-            expanded_neigh = neighbor_features.unsqueeze(1)       # (B, 1, K, D)
+            expanded_adj = adjacency_weights.unsqueeze(-1)  # (B, N, K, 1)
+            expanded_neigh = neighbor_features.unsqueeze(1)  # (B, 1, K, D)
             masked = expanded_neigh * expanded_adj
             mask = expanded_adj > 0
             masked = torch.where(mask, masked, torch.tensor(-1e9, device=masked.device))
@@ -343,7 +349,9 @@ class GraphAttentionLayer(nn.Module):
         self.concat_heads = concat_heads
 
         if concat_heads:
-            assert units % num_heads == 0, "units must be divisible by num_heads when concat_heads=True"
+            assert units % num_heads == 0, (
+                "units must be divisible by num_heads when concat_heads=True"
+            )
             self.head_dim = units // num_heads
         else:
             self.head_dim = units
@@ -379,7 +387,9 @@ class GraphAttentionLayer(nn.Module):
         k_exp = keys.unsqueeze(2).expand(-1, -1, Nq, -1, -1)
         concat_qk = torch.cat([q_exp, k_exp], dim=-1)  # (B, H, Nq, Nk, 2D)
 
-        scores = torch.matmul(concat_qk, a_weights.unsqueeze(0)).squeeze(-1)  # (B, H, Nq, Nk)
+        scores = torch.matmul(concat_qk, a_weights.unsqueeze(0)).squeeze(
+            -1
+        )  # (B, H, Nq, Nk)
         scores = F.leaky_relu(scores, negative_slope=self.alpha)
 
         adj_exp = adj_mask.unsqueeze(1)  # (B, 1, Nq, Nk)
@@ -423,8 +433,16 @@ class GraphAttentionLayer(nn.Module):
         news_updates = torch.einsum("bhnu,bhuk->bhnk", nu_attn, user_t)
 
         if self.concat_heads:
-            updated_users = user_updates.permute(0, 2, 1, 3).contiguous().view(B, num_users, self.units)
-            updated_news = news_updates.permute(0, 2, 1, 3).contiguous().view(B, num_news, self.units)
+            updated_users = (
+                user_updates.permute(0, 2, 1, 3)
+                .contiguous()
+                .view(B, num_users, self.units)
+            )
+            updated_news = (
+                news_updates.permute(0, 2, 1, 3)
+                .contiguous()
+                .view(B, num_news, self.units)
+            )
         else:
             updated_users = user_updates.mean(dim=1)
             updated_news = news_updates.mean(dim=1)

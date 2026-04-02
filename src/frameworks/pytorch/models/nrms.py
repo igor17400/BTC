@@ -6,6 +6,7 @@ import torch
 import torch.nn as nn
 
 from src.core.models.configs import NRMSConfig
+
 from ..layers import AdditiveAttention
 from .base import BaseModel
 
@@ -18,16 +19,18 @@ class NewsEncoder(nn.Module):
         self.config = config
         self.embedding_layer = embedding_layer
 
+        self.qkv_dim = config.multiheads * config.head_dim
+        self.input_proj = nn.Linear(config.embedding_size, self.qkv_dim)
         self.dropout1 = nn.Dropout(config.dropout_rate)
         self.multi_head_attention = nn.MultiheadAttention(
-            embed_dim=config.embedding_size,
+            embed_dim=self.qkv_dim,
             num_heads=config.multiheads,
             dropout=config.dropout_rate,
             batch_first=True,
         )
         self.dropout2 = nn.Dropout(config.dropout_rate)
         self.additive_attention = AdditiveAttention(
-            input_dim=config.embedding_size,
+            input_dim=self.qkv_dim,
             query_vec_dim=config.attention_hidden_dim,
         )
 
@@ -46,12 +49,13 @@ class NewsEncoder(nn.Module):
         else:
             self.train()
 
-        # Word embedding + dropout
-        embedded = self.embedding_layer(inputs)       # (B, T, E)
-        y = self.dropout1(embedded)
+        # Word embedding + project to qkv_dim + dropout
+        embedded = self.embedding_layer(inputs)  # (B, T, E)
+        y = self.input_proj(embedded)  # (B, T, qkv_dim)
+        y = self.dropout1(y)
 
         # Padding mask: True where padded (PyTorch convention for MHA key_padding_mask)
-        key_padding_mask = (inputs == 0)               # (B, T)
+        key_padding_mask = inputs == 0  # (B, T)
 
         # Multi-head self-attention
         y, _ = self.multi_head_attention(y, y, y, key_padding_mask=key_padding_mask)
@@ -59,7 +63,7 @@ class NewsEncoder(nn.Module):
 
         # Additive attention to get single vector
         # Mask for additive attention: True means *keep* (our convention)
-        att_mask = ~key_padding_mask                   # (B, T) True = valid
+        att_mask = ~key_padding_mask  # (B, T) True = valid
         news_repr = self.additive_attention(y, mask=att_mask)
         return news_repr
 
@@ -71,15 +75,16 @@ class UserEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.news_encoder = news_encoder
+        self.qkv_dim = config.multiheads * config.head_dim
 
         self.browsed_news_attention = nn.MultiheadAttention(
-            embed_dim=config.embedding_size,
+            embed_dim=self.qkv_dim,
             num_heads=config.multiheads,
             dropout=config.dropout_rate,
             batch_first=True,
         )
         self.user_additive_attention = AdditiveAttention(
-            input_dim=config.embedding_size,
+            input_dim=self.qkv_dim,
             query_vec_dim=config.attention_hidden_dim,
         )
 
@@ -97,16 +102,18 @@ class UserEncoder(nn.Module):
 
         # TimeDistributed: reshape -> encode -> reshape back
         flat = inputs.reshape(batch_size * hist_len, title_len)
-        news_vecs = self.news_encoder(flat, training=training)          # (B*H, E)
+        news_vecs = self.news_encoder(flat, training=training)  # (B*H, E)
         click_title_presents = news_vecs.reshape(batch_size, hist_len, -1)  # (B, H, E)
 
         # History mask: True where at least one token is nonzero
-        history_mask_valid = inputs.any(dim=-1)              # (B, H) True = valid
-        key_padding_mask = ~history_mask_valid                # True = padded
+        history_mask_valid = inputs.any(dim=-1)  # (B, H) True = valid
+        key_padding_mask = ~history_mask_valid  # True = padded
 
         # Self-attention over browsed news
         y, _ = self.browsed_news_attention(
-            click_title_presents, click_title_presents, click_title_presents,
+            click_title_presents,
+            click_title_presents,
+            click_title_presents,
             key_padding_mask=key_padding_mask,
         )
 
@@ -185,8 +192,8 @@ class NRMS(BaseModel):
         # TimeDistributed over candidates
         B, C, T = candidate_tokens.shape
         flat_cand = candidate_tokens.reshape(B * C, T)
-        cand_repr = self.news_encoder(flat_cand, training=True)        # (B*C, E)
-        cand_repr = cand_repr.reshape(B, C, -1)                       # (B, C, E)
+        cand_repr = self.news_encoder(flat_cand, training=True)  # (B*C, E)
+        cand_repr = cand_repr.reshape(B, C, -1)  # (B, C, E)
 
         # Dot-product scores + softmax
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)  # (B, C)
