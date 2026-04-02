@@ -49,8 +49,8 @@ checkpoints/
 logs/
 .hydra/
 
-# Do not keep dataset files
-data/
+# Do not keep dataset files (root-level only, not src/core/data/)
+/data/
 
 # Jupyter
 .ipynb_checkpoints

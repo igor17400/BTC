@@ -1,4 +1,4 @@
-_target_: src.core.data.synthetic.SyntheticDataset
+_target_: src.core.data.datasets.synthetic.SyntheticDataset
 
 # Tiny in-memory dataset for smoke-testing the full pipeline.
 # No downloads, no files — runs in seconds.

@@ -1,4 +1,4 @@
-_target_: src.core.data.japanese.JapaneseDataset
+_target_: src.core.data.datasets.japanese.JapaneseDataset
 
 # Inherit from base configuration
 defaults:

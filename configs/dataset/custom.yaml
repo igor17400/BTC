@@ -1,4 +1,4 @@
-_target_: src.core.data.custom.CustomDataset
+_target_: src.core.data.datasets.custom.CustomDataset
 
 # Inherit from base configuration
 defaults:
