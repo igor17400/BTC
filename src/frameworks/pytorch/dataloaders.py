@@ -4,17 +4,17 @@ Ported from src/datasets/dataloader.py (Keras version).
 Wraps numpy arrays from the core dataset and yields torch tensors.
 """
 
-from typing import Any
 from collections.abc import Iterator
+from typing import Any
 
 import numpy as np
 import torch
-from torch.utils.data import Dataset, DataLoader
-
+from torch.utils.data import DataLoader, Dataset
 
 # ------------------------------------------------------------------
 # Training dataset / dataloader
 # ------------------------------------------------------------------
+
 
 class NewsRecommenderDataset(Dataset):
     """Wraps numpy feature arrays as a torch Dataset.
@@ -34,7 +34,10 @@ class NewsRecommenderDataset(Dataset):
 
     def __getitem__(self, idx: int) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
         sample_features = {
-            k: torch.tensor(v[idx], dtype=torch.long if v.dtype in (np.int32, np.int64) else torch.float32)
+            k: torch.tensor(
+                v[idx],
+                dtype=torch.long if v.dtype in (np.int32, np.int64) else torch.float32,
+            )
             for k, v in self.features.items()
         }
         label = torch.tensor(self.labels[idx], dtype=torch.float32)
@@ -76,6 +79,7 @@ def create_train_dataloader(
 # ------------------------------------------------------------------
 # Inference iterators (same interface as Keras, but yield torch tensors)
 # ------------------------------------------------------------------
+
 
 class NewsBatchDataloader:
     """Batch dataloader for precomputing news embeddings.
@@ -134,7 +138,9 @@ class NewsBatchDataloader:
                 parts.append(subcat)
 
             features_np = np.concatenate(parts, axis=1)
-            features_tensor = torch.tensor(features_np, dtype=torch.long, device=self.device)
+            features_tensor = torch.tensor(
+                features_np, dtype=torch.long, device=self.device
+            )
 
             yield {"news_id": batch_ids, "news_features": features_tensor}
 

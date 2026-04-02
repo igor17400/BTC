@@ -4,8 +4,11 @@ Provides ``run(cfg)`` as the single entry point for PyTorch training,
 keeping train.py as a thin dispatcher.
 """
 
+import random
+
 import hydra
 import numpy as np
+import torch
 from omegaconf import DictConfig
 
 from src.core.io.logging import console
@@ -128,6 +131,13 @@ def run(cfg: DictConfig):
     from src.frameworks.pytorch.training import training_loop
 
     console.log("[bold]Initializing PyTorch training...[/bold]")
+
+    # Seed everything for reproducibility
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
+    torch.manual_seed(cfg.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(cfg.seed)
 
     # Dataset
     dataset_provider = hydra.utils.instantiate(cfg.dataset, mode="train")

@@ -4,6 +4,8 @@ Provides ``run(cfg)`` as the single entry point for JAX training,
 keeping train.py as a thin dispatcher.
 """
 
+import random
+
 import hydra
 import numpy as np
 from flax import nnx
@@ -110,6 +112,10 @@ def run(cfg: DictConfig):
     from src.frameworks.jax.training import training_loop
 
     console.log("[bold]Initializing JAX/Flax NNX training...[/bold]")
+
+    # Seed everything for reproducibility
+    random.seed(cfg.seed)
+    np.random.seed(cfg.seed)
 
     # Dataset
     dataset_provider = hydra.utils.instantiate(cfg.dataset, mode="train")

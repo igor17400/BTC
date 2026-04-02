@@ -13,10 +13,19 @@ console = Console()
 def get_output_run_dir(cfg):
     """
     Returns the output directory for the current run.
-    Uses Hydra's working directory to avoid duplicate folder structures.
+    Uses Hydra's working directory when available, otherwise builds from config.
     """
-    # Get Hydra's current working directory
-    output_run_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+    try:
+        output_run_dir = Path(hydra.core.hydra_config.HydraConfig.get().runtime.output_dir)
+    except ValueError:
+        # Running outside @hydra.main (e.g., smoke tests with hydra.compose)
+        import datetime
+
+        base = getattr(cfg, "output_base_dir", "outputs")
+        name = getattr(cfg, "name", "run")
+        timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+        output_run_dir = Path(base) / name / timestamp
+
     output_run_dir.mkdir(parents=True, exist_ok=True)
     return output_run_dir
 
