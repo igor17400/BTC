@@ -42,7 +42,9 @@ jax = [
 ]
 jax-cuda = ["newsrex[jax]", "jax-cuda12-plugin>=0.6.2"]
 pytorch = ["keras>=3.10.0", "torch>=2.6.0"]
+pytorch-cu126 = ["keras>=3.10.0", "torch>=2.6.0"]
 all = ["newsrex[jax]", "newsrex[pytorch]"]
+all-cu126 = ["newsrex[jax-cuda]", "newsrex[pytorch-cu126]"]
 # Development
 dev = [
   "newsrex[all]",
@@ -86,6 +88,16 @@ ignore = [
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]
+
+[tool.uv]
+# Pin torch to cu126 index so `uv sync` doesn't pull the wrong CUDA version
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu126", marker = "extra == 'pytorch-cu126' or extra == 'all-cu126'" }
 
 [tool.mypy]
 python_version = "3.11"
