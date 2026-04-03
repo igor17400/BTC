@@ -57,14 +57,23 @@ def setup_wandb_session(cfg: DictConfig) -> None:
             cfg.logging.experiment_name
             or f"{cfg.get('model_name', 'model')}_run_{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
         )
+        group = cfg.logging.get("wandb_group", None)
+        tags = [
+            cfg.get("framework", "unknown"),
+            cfg.get("dataset", {}).get("name", "unknown"),
+            cfg.get("model_name", "unknown"),
+        ]
         try:
             wandb.init(
                 project=cfg.logging.project_name,
                 config=OmegaConf.to_container(cfg, resolve=True, throw_on_missing=True),
                 name=run_name,
+                group=group,
+                tags=tags,
             )
             console.log(
-                f"Wandb initialized for project '{cfg.logging.project_name}', run '{run_name}'"
+                f"Wandb initialized for project '{cfg.logging.project_name}', "
+                f"group '{group}', run '{run_name}'"
             )
         except Exception as e:
             console.log(f"[red]Failed to initialize Wandb: {e}[/red]")

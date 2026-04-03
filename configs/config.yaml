@@ -48,8 +48,9 @@ eval:
 # Default logging configuration
 logging:
   project_name: NewsReX
-  enable_wandb: false
+  enable_wandb: true
   experiment_name: ${name}
+  wandb_group: ${framework}/${dataset.name}/${model_name}
 
 # Metrics configuration
 metrics:

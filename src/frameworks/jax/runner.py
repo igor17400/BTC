@@ -13,7 +13,7 @@ from flax import nnx
 from omegaconf import DictConfig
 from rich.progress import Progress
 
-from src.core.io.logging import console, log_test_results, log_training_complete
+from src.core.io.logging import console, log_test_results, log_training_complete, setup_wandb_session
 from src.core.io.saving import get_output_run_dir
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
@@ -114,6 +114,7 @@ def run(cfg: DictConfig):
 
     start_time = time.time()
     console.log("[bold]Initializing JAX/Flax NNX training...[/bold]")
+    setup_wandb_session(cfg)
 
     # Seed everything for reproducibility
     random.seed(cfg.seed)

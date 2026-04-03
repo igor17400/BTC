@@ -48,8 +48,6 @@ sampling:
     replace: false
 
 logging:
-  enable_wandb: true
-  project_name: NewsReX
   experiment_name: ${name}
 
 device:
