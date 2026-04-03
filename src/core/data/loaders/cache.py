@@ -19,7 +19,7 @@ class CacheManager:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Create subdirectories
-        self.dataset_dir = self.project_root / "data"  # Datasets in project root/data
+        self.dataset_dir = self.project_root.parent / ".data"  # Datasets outside source tree
         self.embeddings_dir = self.cache_dir / "embeddings"  # Embeddings in .cache
 
         self.dataset_dir.mkdir(exist_ok=True)

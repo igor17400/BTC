@@ -1,15 +1,19 @@
-"""Slim orchestrator dataset class for news recommendation.
+"""Orchestrator dataset class for news recommendation.
 
-Replaces the monolithic ``src.datasets.base_news.NewsDatasetBase`` by delegating
-heavy processing to standalone functions in ``src.core.data.processing``.
+Delegates heavy processing to standalone modules:
+- Download: ``src.core.data.download``
+- News processing: ``src.core.data.processing.news``
+- Behavior processing: ``src.core.data.processing.behaviors``
+- Embedding creation: ``src.core.data.processing.embeddings``
+- Sampling: ``src.core.data.processing.sampling``
 """
+
+from __future__ import annotations
 
 import collections
 import logging
 import pickle
 import shutil
-import urllib.request
-import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -17,19 +21,14 @@ import numpy as np
 import pandas as pd
 from omegaconf import DictConfig
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
 
 from src.core.data.datasets.base import BaseNewsDataset
+from src.core.data.download import download_dataset
 from src.core.data.encoders.bpemb import BPEmbManager
 from src.core.data.encoders.embeddings import EmbeddingsManager
 from src.core.data.loaders.cache import CacheManager
 from src.core.data.processing.behaviors import get_test_data, get_train_val_data
+from src.core.data.processing.embeddings import create_embeddings
 from src.core.data.processing.knowledge_graph import KnowledgeGraphProcessor
 from src.core.data.processing.news import process_news as _process_news_pipeline
 from src.core.data.processing.news import read_all_news
@@ -63,7 +62,7 @@ class NewsDatasetBase(BaseNewsDataset):
     3. Auto-conversion of custom formats to MIND format (auto_convert_format=True)
 
     Heavy lifting is delegated to standalone processing functions in
-    ``src.core.data.processing``.
+    ``src.core.data.processing`` and ``src.core.data.download``.
     """
 
     def __init__(
@@ -211,27 +210,21 @@ class NewsDatasetBase(BaseNewsDataset):
 
     @property
     def train_size(self) -> int:
-        return (
-            len(self.train_behaviors_data["impression_ids"])
-            if "impression_ids" in self.train_behaviors_data
-            else 0
-        )
+        if self.train_behaviors_data and "labels" in self.train_behaviors_data:
+            return len(self.train_behaviors_data["labels"])
+        return 0
 
     @property
     def val_size(self) -> int:
-        return (
-            len(self.val_behaviors_data["impression_ids"])
-            if "impression_ids" in self.val_behaviors_data
-            else 0
-        )
+        if self.val_behaviors_data and "labels" in self.val_behaviors_data:
+            return len(self.val_behaviors_data["labels"])
+        return 0
 
     @property
     def test_size(self) -> int:
-        return (
-            len(self.test_behaviors_data["impression_ids"])
-            if "impression_ids" in self.test_behaviors_data
-            else 0
-        )
+        if self.test_behaviors_data and "labels" in self.test_behaviors_data:
+            return len(self.test_behaviors_data["labels"])
+        return 0
 
     # ------------------------------------------------------------------
     # ID parsing
@@ -414,7 +407,7 @@ class NewsDatasetBase(BaseNewsDataset):
         )
 
     # ------------------------------------------------------------------
-    # News processing (delegates to processing.news)
+    # News processing
     # ------------------------------------------------------------------
 
     def process_news(self) -> dict[str, Any]:
@@ -423,10 +416,18 @@ class NewsDatasetBase(BaseNewsDataset):
         Delegates vocabulary building, tokenization, and embedding creation
         to standalone functions and wires up the results.
         """
-        # Handle knowledge graph before main processing
         if self.use_knowledge_graph:
             all_news_df = read_all_news(self.dataset_path)
             self._process_knowledge_graph(all_news_df)
+
+        def _create_embeddings_fn(vocab=None):
+            return create_embeddings(
+                vocab=vocab if vocab is not None else self.vocab,
+                embedding_size=self.embedding_size,
+                embedding_type=self.embedding_type,
+                language=self.language,
+                embeddings_manager=self.embeddings_manager,
+            )
 
         processed_news_content, self.vocab, self.news_str_id_to_int_idx = (
             _process_news_pipeline(
@@ -440,18 +441,16 @@ class NewsDatasetBase(BaseNewsDataset):
                 download_if_missing=self.download_if_missing,
                 download_fn=self.download_dataset,
                 segment_text_fn=self._segment_text_into_words,
-                create_embeddings_fn=self._create_embeddings,
+                create_embeddings_fn=_create_embeddings_fn,
                 console=console,
             )
         )
 
-        # Cast embeddings to target dtype
         if "embeddings" in processed_news_content:
             processed_news_content["embeddings"] = np.asarray(
                 processed_news_content["embeddings"], dtype=self.float_dtype
             )
 
-        # Build fast news-id-to-tokens lookup
         self.news_id_str_to_tokens: dict[str, np.ndarray] = {
             nid_str: processed_news_content["tokens"][
                 self.news_str_id_to_int_idx[nid_str]
@@ -462,183 +461,29 @@ class NewsDatasetBase(BaseNewsDataset):
         return processed_news_content
 
     # ------------------------------------------------------------------
-    # Embeddings creation (kept on class for access to managers)
+    # Download (delegates to src.core.data.download)
     # ------------------------------------------------------------------
 
-    def _create_embeddings(self, vocab: dict[str, int] | None = None) -> np.ndarray:
-        """Create embedding matrix based on language and embedding type."""
-        if vocab is not None:
-            self.vocab = vocab
-
-        logger.info(
-            f"Creating embeddings for language: {self.language}, "
-            f"type: {self.embedding_type}..."
+    def download_dataset(self) -> None:
+        """Download and extract dataset if not already present."""
+        download_dataset(
+            dataset_path=self.dataset_path,
+            urls=self.urls,
+            use_knowledge_graph=self.use_knowledge_graph,
         )
-
-        if self.embedding_type == "glove" and self.language == "english":
-            return self._create_glove_embeddings()
-        elif self.embedding_type == "bpemb":
-            return self._create_bpemb_embeddings()
-        else:
-            return self._create_random_embeddings()
-
-    def _create_glove_embeddings(self) -> np.ndarray:
-        """Create embedding matrix using GloVe embeddings."""
-        glove_tensor_tf, glove_vocab_map = (
-            self.embeddings_manager.load_glove_embeddings_tf_and_vocab_map(
-                self.embedding_size
-            )
+        self.cache_manager.add_to_cache(
+            self.name.lower().replace(" ", "_"),
+            self.version,
+            "dataset",
+            metadata={
+                "splits": list(self.urls.keys()) if self.urls else [],
+                "max_title_length": self.max_title_length,
+                "max_history_length": self.max_history_length,
+                "version": self.version,
+                "use_knowledge_graph": self.use_knowledge_graph,
+                "language": self.language,
+            },
         )
-        if glove_tensor_tf is None or glove_vocab_map is None:
-            raise ValueError("GloVe embeddings or vocab map could not be loaded.")
-
-        glove_array = np.asarray(glove_tensor_tf)
-        glove_mean_np = np.mean(glove_array, axis=0)
-        glove_std_np = np.std(glove_array, axis=0)
-
-        embedding_matrix = np.zeros(
-            (len(self.vocab), self.embedding_size), dtype=np.float32
-        )
-        embedding_matrix[self.vocab["[PAD]"]] = np.zeros(
-            self.embedding_size, dtype=np.float32
-        )
-        embedding_matrix[self.vocab["[UNK]"]] = np.random.normal(
-            loc=glove_mean_np, scale=glove_std_np, size=self.embedding_size
-        ).astype(np.float32)
-
-        if "<NUM>" in self.vocab:
-            num_token_id = self.vocab["<NUM>"]
-            glove_num_idx = glove_vocab_map.get("<NUM>")
-            if glove_num_idx is not None:
-                embedding_matrix[num_token_id] = glove_array[glove_num_idx]
-            else:
-                glove_number_idx = glove_vocab_map.get("number")
-                if glove_number_idx is not None:
-                    embedding_matrix[num_token_id] = glove_array[glove_number_idx]
-                else:
-                    embedding_matrix[num_token_id] = np.random.normal(
-                        loc=glove_mean_np,
-                        scale=glove_std_np,
-                        size=self.embedding_size,
-                    ).astype(np.float32)
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            task = progress.add_task(
-                "Populating embedding matrix...", total=len(self.vocab)
-            )
-            for word, idx in self.vocab.items():
-                if word in ("[PAD]", "[UNK]", "<NUM>"):
-                    progress.advance(task)
-                    continue
-                glove_word_idx = glove_vocab_map.get(word)
-                if glove_word_idx is not None:
-                    embedding_matrix[idx] = glove_array[glove_word_idx]
-                else:
-                    embedding_matrix[idx] = np.random.normal(
-                        loc=glove_mean_np,
-                        scale=glove_std_np,
-                        size=self.embedding_size,
-                    ).astype(np.float32)
-                progress.advance(task)
-
-        return embedding_matrix
-
-    def _create_bpemb_embeddings(self) -> np.ndarray:
-        """Create embedding matrix using BPEmb pre-trained embeddings."""
-        logger.info(f"Creating BPEmb embeddings for language: {self.language}")
-
-        lang_map = {
-            "japanese": "ja",
-            "german": "de",
-            "french": "fr",
-            "spanish": "es",
-            "italian": "it",
-            "portuguese": "pt",
-            "russian": "ru",
-            "korean": "ko",
-            "chinese": "zh",
-            "arabic": "ar",
-            "hindi": "hi",
-            "turkish": "tr",
-            "polish": "pl",
-            "dutch": "nl",
-            "english": "en",
-        }
-        lang_code = lang_map.get(self.language.lower(), self.language.lower())
-
-        try:
-            logger.info(f"Loading BPEmb embeddings for language: {lang_code}")
-            bpemb_embeddings = self.embeddings_manager.get_bpemb_embeddings(
-                language=lang_code, vocab_size=200000, dim=self.embedding_size
-            )
-
-            if not bpemb_embeddings:
-                logger.warning(f"No BPEmb embeddings loaded for {lang_code}")
-                return self._create_random_embeddings()
-
-            logger.info(
-                f"Creating embedding matrix from {len(bpemb_embeddings):,} BPE tokens"
-            )
-            embedding_matrix = (
-                np.random.randn(len(self.vocab), self.embedding_size).astype(np.float32)
-                * 0.1
-            )
-            embedding_matrix[self.vocab["[PAD]"]] = np.zeros(
-                self.embedding_size, dtype=np.float32
-            )
-
-            matched_words = 0
-            for word, idx in self.vocab.items():
-                if word in ("[PAD]", "[UNK]", "<NUM>"):
-                    continue
-                if word in bpemb_embeddings:
-                    embedding_matrix[idx] = bpemb_embeddings[word]
-                    matched_words += 1
-                elif word.lower() in bpemb_embeddings:
-                    embedding_matrix[idx] = bpemb_embeddings[word.lower()]
-                    matched_words += 1
-                else:
-                    subword_embeddings = [
-                        bpemb_embeddings[bt]
-                        for bt in bpemb_embeddings
-                        if bt in word and len(bt) > 1
-                    ]
-                    if subword_embeddings:
-                        embedding_matrix[idx] = np.mean(subword_embeddings, axis=0)
-                        matched_words += 1
-
-            match_pct = (matched_words / len(self.vocab)) * 100
-            logger.info(
-                f"Successfully created BPEmb embedding matrix: {embedding_matrix.shape}"
-            )
-            logger.info(
-                f"Matched {matched_words}/{len(self.vocab)} words ({match_pct:.1f}%)"
-            )
-            return embedding_matrix
-
-        except Exception as e:
-            logger.error(f"Failed to load BPEmb embeddings for {lang_code}: {e}")
-            logger.warning("Falling back to random embeddings")
-            return self._create_random_embeddings()
-
-    def _create_random_embeddings(self) -> np.ndarray:
-        """Create random embedding matrix as fallback."""
-        logger.info(f"Creating random embeddings for language: {self.language}")
-        embedding_matrix = (
-            np.random.randn(len(self.vocab), self.embedding_size).astype(np.float32)
-            * 0.1
-        )
-        embedding_matrix[self.vocab["[PAD]"]] = np.zeros(
-            self.embedding_size, dtype=np.float32
-        )
-        return embedding_matrix
 
     # ------------------------------------------------------------------
     # Data loading and processing (delegates to processing.behaviors)
@@ -785,230 +630,6 @@ class NewsDatasetBase(BaseNewsDataset):
         )
 
     # ------------------------------------------------------------------
-    # Download
-    # ------------------------------------------------------------------
-
-    def download_dataset(self) -> None:
-        """Download and extract dataset if not already present."""
-        if self.dataset_path.exists() and any(self.dataset_path.iterdir()):
-            logger.info(f"Found existing dataset at {self.dataset_path}")
-            return
-
-        if not self.urls:
-            logger.warning(
-                f"No URLs provided for downloading dataset. "
-                f"Assuming data exists at {self.dataset_path}"
-            )
-            return
-
-        self.dataset_path.mkdir(parents=True, exist_ok=True)
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(),
-            TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-            TimeRemainingColumn(),
-            console=console,
-        ) as progress:
-            for split, url in self.urls.items():
-                zip_path = self.dataset_path / f"{split}.zip"
-                extract_path = self.dataset_path / split
-
-                if not extract_path.exists():
-                    download_task = progress.add_task(
-                        f"Downloading {split} set...", total=None
-                    )
-
-                    logger.info(f"Downloading {split} set from {url}")
-                    urllib.request.urlretrieve(
-                        url,
-                        zip_path,
-                        reporthook=lambda count,
-                        block_size,
-                        total_size: progress.update(
-                            download_task,
-                            total=(
-                                total_size // block_size if total_size > 0 else None
-                            ),
-                            completed=count,
-                        ),
-                    )
-                    progress.update(download_task, completed=True)
-                    progress.add_task(f"Extracting {split} set...", total=100)
-
-                    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                        zip_ref.extractall(extract_path)
-
-                    zip_path.unlink()
-                    logger.info(f"Successfully processed {split} set")
-                else:
-                    logger.info(f"Found existing {split} set at {extract_path}")
-
-        if self.use_knowledge_graph:
-            self._download_knowledge_graph()
-
-        self.cache_manager.add_to_cache(
-            self.name.lower().replace(" ", "_"),
-            self.version,
-            "dataset",
-            metadata={
-                "splits": list(self.urls.keys()) if self.urls else [],
-                "max_title_length": self.max_title_length,
-                "max_history_length": self.max_history_length,
-                "version": self.version,
-                "use_knowledge_graph": self.use_knowledge_graph,
-                "language": self.language,
-            },
-        )
-
-    def _download_knowledge_graph(self) -> None:
-        """Download and extract knowledge graph data."""
-        graph_extract_path = self.dataset_path / "download" / "wikidata-graph"
-
-        if not graph_extract_path.exists():
-            graph_url = (
-                "https://mind201910.blob.core.windows.net/"
-                "knowledge-graph/wikidata-graph.zip"
-            )
-            graph_zip_path = self.dataset_path / "download" / "wikidata-graph.zip"
-            self._download_and_unzip_file(
-                graph_url, graph_zip_path, graph_extract_path, "knowledge graph"
-            )
-        else:
-            logger.info("Found existing knowledge graph data")
-
-    def _download_and_unzip_file(
-        self, url: str, zip_path: Path, extract_path: Path, description: str
-    ) -> None:
-        """Download a file from a URL and unzip it."""
-        logger.info(f"Downloading {description} data from {url} to {zip_path}...")
-        zip_path.parent.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(url, zip_path)
-
-        logger.info(f"Extracting {description} to {extract_path}...")
-        with zipfile.ZipFile(zip_path, "r") as zip_ref:
-            zip_ref.extractall(extract_path)
-
-        zip_path.unlink()
-        logger.info(f"Successfully downloaded and extracted {description} data.")
-
-    # ------------------------------------------------------------------
-    # Dataloader factory methods
-    # ------------------------------------------------------------------
-
-    def train_dataloader(self, batch_size: int, model_name: str = "nrms"):
-        """Create training dataset with token-based inputs."""
-        from src.frameworks.keras.dataloaders import NewsDataLoader
-
-        return NewsDataLoader.create_train_dataset(
-            history_news_tokens=self.train_behaviors_data["history_news_tokens"],
-            history_news_abstract_tokens=self.train_behaviors_data[
-                "history_news_abstract_tokens"
-            ],
-            history_news_category=self.train_behaviors_data["history_news_categories"],
-            history_news_subcategory=self.train_behaviors_data[
-                "history_news_subcategories"
-            ],
-            candidate_news_tokens=self.train_behaviors_data["candidate_news_tokens"],
-            candidate_news_abstract_tokens=self.train_behaviors_data[
-                "candidate_news_abstract_tokens"
-            ],
-            candidate_news_category=self.train_behaviors_data[
-                "candidate_news_categories"
-            ],
-            candidate_news_subcategory=self.train_behaviors_data[
-                "candidate_news_subcategories"
-            ],
-            labels=self.train_behaviors_data["labels"],
-            user_ids=self.train_behaviors_data["user_ids"],
-            batch_size=batch_size,
-            process_title=self.process_title,
-            process_abstract=self.process_abstract,
-            process_category=self.process_category,
-            process_subcategory=self.process_subcategory,
-            process_user_id=self.process_user_id,
-            model_name=model_name,
-        )
-
-    def user_history_dataloader(self, mode: str, batch_size: int):
-        """Create dataloader for user history validation/testing."""
-        from src.frameworks.keras.dataloaders import UserHistoryBatchDataloader
-
-        if mode == "val":
-            data = self.val_behaviors_data
-        elif mode == "test":
-            data = self.test_behaviors_data
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
-
-        return UserHistoryBatchDataloader(
-            history_tokens=data["history_news_tokens"],
-            history_abstract_tokens=data["history_news_abstract_tokens"],
-            history_category=data["history_news_categories"],
-            history_subcategory=data["history_news_subcategories"],
-            impression_ids=data["impression_ids"],
-            user_ids=data["user_ids"],
-            batch_size=batch_size,
-            process_title=self.process_title,
-            process_abstract=self.process_abstract,
-            process_category=self.process_category,
-            process_subcategory=self.process_subcategory,
-        )
-
-    def impression_dataloader(self, mode: str):
-        """Create dataloader for impressions validation/testing."""
-        from src.frameworks.keras.dataloaders import ImpressionIterator
-
-        if mode == "val":
-            data = self.val_behaviors_data
-        elif mode == "test":
-            data = self.test_behaviors_data
-        else:
-            raise ValueError(f"Unknown mode: {mode}")
-
-        return ImpressionIterator(
-            impression_tokens=data["candidate_news_tokens"],
-            impression_abstract_tokens=data["candidate_news_abstract_tokens"],
-            impression_category=data["candidate_news_categories"],
-            impression_subcategory=data["candidate_news_subcategories"],
-            labels=data["labels"],
-            impression_ids=data["impression_ids"],
-            candidate_ids=data["candidate_news_ids"],
-            process_title=self.process_title,
-            process_abstract=self.process_abstract,
-            process_category=self.process_category,
-            process_subcategory=self.process_subcategory,
-        )
-
-    def news_dataloader(self, batch_size: int) -> NewsBatchDataloader:
-        """Create dataloader for processed news validation/testing."""
-        news_ids = self.processed_news.get("news_ids_original_strings", np.array([]))
-        news_tokens = self.processed_news.get("tokens", np.array([]))
-        news_abstract_tokens = self.processed_news.get("abstract_tokens", np.array([]))
-        news_category_indices = self.processed_news.get(
-            "category_indices", np.array([])
-        )
-        news_subcategory_indices = self.processed_news.get(
-            "subcategory_indices", np.array([])
-        )
-
-        from src.frameworks.keras.dataloaders import NewsBatchDataloader
-
-        return NewsBatchDataloader(
-            news_ids=news_ids,
-            news_tokens=np.asarray(news_tokens),
-            news_abstract_tokens=np.asarray(news_abstract_tokens),
-            news_category_indices=np.asarray(news_category_indices),
-            news_subcategory_indices=np.asarray(news_subcategory_indices),
-            batch_size=batch_size,
-            process_title=self.process_title,
-            process_abstract=self.process_abstract,
-            process_category=self.process_category,
-            process_subcategory=self.process_subcategory,
-        )
-
-    # ------------------------------------------------------------------
     # Statistics
     # ------------------------------------------------------------------
 
@@ -1043,41 +664,27 @@ class NewsDatasetBase(BaseNewsDataset):
         try:
             summary_data: dict[str, Any] = {}
 
-            logger.info("Collecting basic dataset info...")
             collect_basic_dataset_info(self, summary_data)
-
-            logger.info("Collecting news statistics...")
             collect_news_statistics(self, summary_data)
-
-            logger.info("Collecting behavior statistics...")
             collect_behavior_statistics(self, summary_data)
-
-            logger.info("Collecting overall statistics...")
             collect_overall_statistics(self, summary_data)
-
-            logger.info("Collecting quality metrics...")
             collect_quality_metrics(summary_data)
 
-            logger.info("Creating DataFrame and saving to CSV...")
             summary_df = pd.DataFrame([summary_data])
             summary_df = reorder_summary_columns(summary_df)
 
             summary_file_path = processed_dir / "datasets_summary.csv"
             summary_df.to_csv(summary_file_path, index=False)
 
-            logger.info("Saving unique user IDs to CSV...")
             save_unique_users_to_csv(self)
 
             logger.info(f"Dataset summary saved to: {summary_file_path}")
-            logger.info(f"Summary contains {len(summary_data)} statistics")
-
             log_key_statistics(summary_data)
 
             return summary_file_path
 
         except Exception as e:
             logger.error(f"Error generating dataset summary: {e}")
-            logger.error("Continuing without summary generation...")
             return None
 
     # ------------------------------------------------------------------
@@ -1095,9 +702,9 @@ class NewsDatasetBase(BaseNewsDataset):
             max_relations=self.max_relations,
         )
         kg_processor.process(all_news_df["title"])
-        self._load_embeddings()
+        self._load_kg_embeddings()
 
-    def _load_embeddings(self) -> None:
+    def _load_kg_embeddings(self) -> None:
         """Load entity and context embeddings from files."""
         logger.info("Loading entity and context embeddings...")
 
@@ -1105,25 +712,17 @@ class NewsDatasetBase(BaseNewsDataset):
             entity_file = self.dataset_path / mode / "entity_embedding.vec"
             context_file = self.dataset_path / mode / "context_embedding.vec"
 
-            if entity_file.exists():
-                with open(entity_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if len(line.strip()) > 0:
-                            terms = line.strip().split("\t")
-                            if len(terms) == 101:
-                                self.entity_embeddings[terms[0]] = list(
-                                    map(float, terms[1:])
-                                )
-
-            if context_file.exists():
-                with open(context_file, "r", encoding="utf-8") as f:
-                    for line in f:
-                        if len(line.strip()) > 0:
-                            terms = line.strip().split("\t")
-                            if len(terms) == 101:
-                                self.context_embeddings[terms[0]] = list(
-                                    map(float, terms[1:])
-                                )
+            for filepath, target_dict in (
+                (entity_file, self.entity_embeddings),
+                (context_file, self.context_embeddings),
+            ):
+                if filepath.exists():
+                    with open(filepath, "r", encoding="utf-8") as f:
+                        for line in f:
+                            if len(line.strip()) > 0:
+                                terms = line.strip().split("\t")
+                                if len(terms) == 101:
+                                    target_dict[terms[0]] = list(map(float, terms[1:]))
 
     # ------------------------------------------------------------------
     # Text segmentation (overridable by subclasses, e.g. Japanese)
@@ -1134,21 +733,19 @@ class NewsDatasetBase(BaseNewsDataset):
         return segment_text_into_words(sent)
 
     def tokenize_text(
-        self,
-        text: str,
-        vocab: dict[str, int],
-        max_len: int,
-        unk_token_id: int,
-        pad_token_id: int,
+        self, text: str, max_length: int, vocab: dict[str, int] | None = None
     ) -> list[int]:
-        """Convert a raw text string into a fixed-length token ID sequence."""
-        from src.core.data.processing.vocabulary import tokenize_text as _tokenize
+        """Convert text to token ID sequence with padding/truncation."""
+        if vocab is None:
+            vocab = self.vocab
 
-        return _tokenize(
-            text,
-            vocab,
-            max_len,
-            unk_token_id,
-            pad_token_id,
-            segment_text_fn=self._segment_text_into_words,
-        )
+        words = self._segment_text_into_words(text)
+        token_ids = [
+            vocab.get(word, vocab.get("[UNK]", 1)) for word in words[:max_length]
+        ]
+
+        # Pad to max_length
+        pad_id = vocab.get("[PAD]", 0)
+        token_ids.extend([pad_id] * (max_length - len(token_ids)))
+
+        return token_ids

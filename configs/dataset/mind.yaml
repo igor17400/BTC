@@ -25,15 +25,15 @@ mode: "train"
 # Word threshold for vocabulary
 word_threshold: 5
 
-# Dataset URLs
+# Dataset URLs (HuggingFace mirror — original Microsoft URLs are dead)
 urls:
   small:
-    train: "https://recodatasets.z20.web.core.windows.net/newsrec/MINDsmall_train.zip"
-    valid: "https://recodatasets.z20.web.core.windows.net/newsrec/MINDsmall_dev.zip"
+    train: "https://huggingface.co/datasets/yjw1029/MIND/resolve/main/MINDsmall_train.zip"
+    valid: "https://huggingface.co/datasets/yjw1029/MIND/resolve/main/MINDsmall_dev.zip"
   large:
-    train: "https://recodatasets.z20.web.core.windows.net/newsrec/MINDlarge_train.zip"
-    valid: "https://recodatasets.z20.web.core.windows.net/newsrec/MINDlarge_dev.zip"
-    test: "https://recodatasets.z20.web.core.windows.net/newsrec/MINDlarge_test.zip"
+    train: "https://huggingface.co/datasets/yjw1029/MIND/resolve/main/MINDlarge_train.zip"
+    valid: "https://huggingface.co/datasets/yjw1029/MIND/resolve/main/MINDlarge_dev.zip"
+    test: "https://huggingface.co/datasets/yjw1029/MIND/resolve/main/MINDlarge_test.zip"
 
 # Preprocessing parameters
 max_title_length: 30

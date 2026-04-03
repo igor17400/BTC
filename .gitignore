@@ -83,3 +83,4 @@ site/
 .env
 .env.*
 .claude
+.data/
