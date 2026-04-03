@@ -48,7 +48,6 @@ sampling:
 
 logging:
   enable_wandb: false
-  experiment_name: ${name}
 
 metrics:
   params: {}

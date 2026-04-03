@@ -5,7 +5,7 @@ defaults:
   - base
 
 # Dataset configuration
-name: "MIND"
+name: "MIND-${dataset.version}"
 version: "small" # Options: small, large
 embedding_type: "glove" # Options: glove, bert
 embedding_size: 300 # Size of the embeddings

@@ -49,7 +49,7 @@ eval:
 logging:
   project_name: NewsReX
   enable_wandb: true
-  experiment_name: ${name}
+  experiment_name: ${framework}/${dataset.name}/${model_name}
   wandb_group: ${framework}/${dataset.name}/${model_name}
 
 # Metrics configuration

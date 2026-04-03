@@ -46,9 +46,6 @@ sampling:
   random:
     replace: false
 
-logging:
-  experiment_name: ${name}
-
 device:
   gpu_ids: [0]
   precision: float32
