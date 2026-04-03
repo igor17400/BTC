@@ -49,4 +49,4 @@ training:
 evaluation:
   mode: fast
   metrics: [auc, mrr, ndcg@5, ndcg@10]
-  batch_size: 4096
+  batch_size: 256

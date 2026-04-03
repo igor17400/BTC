@@ -53,6 +53,14 @@ class NewsEncoder(nn.Module):
 
         # Padding mask: True where padded (PyTorch convention for MHA key_padding_mask)
         key_padding_mask = inputs == 0  # (B, T)
+        fully_padded = key_padding_mask.all(dim=-1)  # (B,) True = empty title
+
+        # Temporarily unmask one position for fully-padded rows to prevent
+        # MHA softmax over all -inf → NaN. The output for these rows will
+        # be zeroed out below.
+        if fully_padded.any():
+            key_padding_mask = key_padding_mask.clone()
+            key_padding_mask[fully_padded, 0] = False
 
         # Multi-head self-attention
         y, _ = self.multi_head_attention(y, y, y, key_padding_mask=key_padding_mask)
@@ -60,8 +68,13 @@ class NewsEncoder(nn.Module):
 
         # Additive attention to get single vector
         # Mask for additive attention: True means *keep* (our convention)
-        att_mask = ~key_padding_mask  # (B, T) True = valid
+        att_mask = ~(inputs == 0)  # recompute from original inputs
         news_repr = self.additive_attention(y, mask=att_mask)
+
+        # Zero out representations for fully-padded inputs
+        if fully_padded.any():
+            news_repr = news_repr.masked_fill(fully_padded.unsqueeze(-1), 0.0)
+
         return news_repr
 
 
@@ -103,6 +116,13 @@ class UserEncoder(nn.Module):
         # History mask: True where at least one token is nonzero
         history_mask_valid = inputs.any(dim=-1)  # (B, H) True = valid
         key_padding_mask = ~history_mask_valid  # True = padded
+        fully_empty = ~history_mask_valid.any(dim=-1)  # (B,) users with no history
+
+        # Temporarily unmask one position for users with no history
+        # to prevent MHA softmax over all -inf → NaN
+        if fully_empty.any():
+            key_padding_mask = key_padding_mask.clone()
+            key_padding_mask[fully_empty, 0] = False
 
         # Self-attention over browsed news
         y, _ = self.browsed_news_attention(
@@ -114,6 +134,11 @@ class UserEncoder(nn.Module):
 
         # Additive attention
         user_repr = self.user_additive_attention(y, mask=history_mask_valid)
+
+        # Zero out representations for users with no history
+        if fully_empty.any():
+            user_repr = user_repr.masked_fill(fully_empty.unsqueeze(-1), 0.0)
+
         return user_repr
 
 
@@ -195,9 +220,9 @@ class NRMS(BaseModel):
         cand_repr = self.news_encoder(flat_cand, training=True)  # (B*C, E)
         cand_repr = cand_repr.reshape(B, C, -1)  # (B, C, E) — grouped by user
 
-        # Dot-product scores + softmax
+        # Dot-product scores (raw logits — loss function handles softmax)
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)  # (B, C)
-        return torch.softmax(scores, dim=-1)
+        return scores
 
     def score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         """Score a single candidate with sigmoid."""

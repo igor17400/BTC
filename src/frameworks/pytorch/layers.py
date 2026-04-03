@@ -61,13 +61,12 @@ class AdditiveAttention(nn.Module):
             -1
         )  # (batch, seq_len)
 
-        # 3. Exponentiate and optionally mask
-        attention = torch.exp(attention_scores)
+        # 3. Masked softmax (numerically stable)
         if mask is not None:
-            attention = attention * mask.float()
-
-        # 4. Normalise
-        attention_weights = attention / (attention.sum(dim=-1, keepdim=True) + 1e-7)
+            attention_scores = attention_scores.masked_fill(~mask.bool(), float("-inf"))
+        attention_weights = torch.softmax(attention_scores, dim=-1)
+        # Replace NaN from all-masked rows (softmax over all -inf) with zeros
+        attention_weights = attention_weights.nan_to_num(0.0)
 
         # 5. Weighted sum
         attention_weights_expanded = attention_weights.unsqueeze(

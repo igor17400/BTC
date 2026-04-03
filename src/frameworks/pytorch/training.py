@@ -149,6 +149,10 @@ def training_loop(
                 predictions = model(batch_features, training=True)
                 loss = loss_fn(predictions, batch_labels)
                 loss.backward()
+                if cfg and hasattr(cfg, "train") and hasattr(cfg.train, "gradient_clip_val"):
+                    torch.nn.utils.clip_grad_norm_(
+                        model.parameters(), cfg.train.gradient_clip_val
+                    )
                 optimizer.step()
 
                 running_loss += loss.item()

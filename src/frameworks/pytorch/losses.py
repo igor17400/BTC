@@ -11,8 +11,8 @@ class CategoricalCrossEntropyLoss(nn.Module):
 
     Expects model output to be raw logits of shape (batch, num_candidates).
     The target is a one-hot label vector of the same shape indicating the
-    positive candidate.  We convert to class indices and delegate to
-    nn.CrossEntropyLoss which applies log-softmax internally.
+    positive candidate. Uses nn.CrossEntropyLoss which applies log-softmax
+    internally via the numerically stable log-sum-exp trick.
     """
 
     def __init__(self, label_smoothing: float = 0.0, **kwargs: Any):
