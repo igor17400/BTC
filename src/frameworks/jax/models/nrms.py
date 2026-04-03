@@ -14,13 +14,14 @@ import numpy as np
 from flax import nnx
 
 from src.core.models.configs import NRMSConfig
+
 from ..layers import AdditiveAttention
 from .base import BaseModel
-
 
 # ---------------------------------------------------------------------------
 # News encoder
 # ---------------------------------------------------------------------------
+
 
 class NewsEncoder(nnx.Module):
     """Encode a news article from its title token sequence.
@@ -84,6 +85,7 @@ class NewsEncoder(nnx.Module):
 # ---------------------------------------------------------------------------
 # User encoder
 # ---------------------------------------------------------------------------
+
 
 class UserEncoder(nnx.Module):
     """Encode a user from browsing history.
@@ -152,6 +154,7 @@ class UserEncoder(nnx.Module):
 # Full NRMS model
 # ---------------------------------------------------------------------------
 
+
 class NRMS(BaseModel):
     """Neural News Recommendation with Multi-Head Self-Attention.
 
@@ -208,26 +211,56 @@ class NRMS(BaseModel):
         """
         user_repr = self.user_encoder(hist_tokens, training=training)  # (B, E)
 
+        # TimeDistributed trick: the news encoder expects 2D input (batch, title_len),
+        # but we have 3D (batch, candidates, title_len). Flatten users x candidates
+        # into one big batch, encode all articles at once, then reshape back.
+        #   B = batch size (number of users)
+        #   C = candidates (number of candidate news per user)
+        #   T = title length (tokens per article)
         B, C, T = cand_tokens.shape
-        flat_cands = cand_tokens.reshape(B * C, T)
-        flat_vecs = self.news_encoder(flat_cands, training=training)
-        cand_repr = flat_vecs.reshape(B, C, -1)  # (B, C, E)
+        flat_cands = cand_tokens.reshape(B * C, T)  # (B*C, T) — all articles flat
+        flat_vecs = self.news_encoder(flat_cands, training=training)  # (B*C, E)
+        cand_repr = flat_vecs.reshape(B, C, -1)  # (B, C, E) — grouped by user
 
         scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)  # (B, C)
         return jax.nn.softmax(scores, axis=-1)
 
-    def score_multiple_candidates(
+    def score_single(
         self,
         hist_tokens: jax.Array,
         cand_tokens: jax.Array,
     ) -> jax.Array:
-        """Score multiple candidates at inference time (sigmoid).
+        """Score a single candidate with sigmoid.
+
+        Args:
+            hist_tokens: ``(B, H, T)`` user history.
+            cand_tokens: ``(B, T)`` single candidate news.
+
+        Returns:
+            ``(B, 1)`` sigmoid score.
+        """
+        user_repr = self.user_encoder(hist_tokens, training=False)
+        cand_repr = self.news_encoder(cand_tokens, training=False)
+        score = jnp.sum(cand_repr * user_repr, axis=-1, keepdims=True)
+        return jax.nn.sigmoid(score)
+
+    def score_candidates(
+        self,
+        hist_tokens: jax.Array,
+        cand_tokens: jax.Array,
+    ) -> jax.Array:
+        """Score multiple candidates with sigmoid (evaluation).
+
+        Args:
+            hist_tokens: ``(B, H, T)`` user history.
+            cand_tokens: ``(B, C, T)`` candidate news.
 
         Returns:
             ``(B, C)`` sigmoid scores.
         """
         user_repr = self.user_encoder(hist_tokens, training=False)
 
+        # Same TimeDistributed reshape trick (see score_training_batch)
         B, C, T = cand_tokens.shape
         flat_cands = cand_tokens.reshape(B * C, T)
         flat_vecs = self.news_encoder(flat_cands, training=False)
@@ -255,4 +288,4 @@ class NRMS(BaseModel):
         if training:
             return self.score_training_batch(hist, cand, training=True)
         else:
-            return self.score_multiple_candidates(hist, cand)
+            return self.score_candidates(hist, cand)

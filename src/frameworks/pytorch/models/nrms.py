@@ -169,45 +169,51 @@ class NRMS(BaseModel):
             Scores tensor.
         """
         if training:
-            return self._score_training(inputs)
+            return self.score_training_batch(inputs)
         elif "single_candidate_tokens" in inputs:
-            return self._score_single(inputs)
+            return self.score_single(inputs)
         else:
-            return self._score_multi(inputs)
+            return self.score_candidates(inputs)
 
     # ----- scoring helpers ------------------------------------------------
 
-    def _score_training(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Softmax scores for training batch."""
+    def score_training_batch(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Score a training batch with softmax over candidates."""
         history_tokens = inputs["hist_tokens"]
         candidate_tokens = inputs["cand_tokens"]
 
         user_repr = self.user_encoder(history_tokens, training=True)  # (B, E)
 
-        # TimeDistributed over candidates
+        # TimeDistributed trick: the news encoder expects 2D input (batch, title_len),
+        # but we have 3D (batch, candidates, title_len). Flatten users x candidates
+        # into one big batch, encode all articles at once, then reshape back.
+        #   B = batch size (number of users)
+        #   C = candidates (number of candidate news per user)
+        #   T = title length (tokens per article)
         B, C, T = candidate_tokens.shape
-        flat_cand = candidate_tokens.reshape(B * C, T)
+        flat_cand = candidate_tokens.reshape(B * C, T)  # (B*C, T) — all articles flat
         cand_repr = self.news_encoder(flat_cand, training=True)  # (B*C, E)
-        cand_repr = cand_repr.reshape(B, C, -1)  # (B, C, E)
+        cand_repr = cand_repr.reshape(B, C, -1)  # (B, C, E) — grouped by user
 
         # Dot-product scores + softmax
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)  # (B, C)
         return torch.softmax(scores, dim=-1)
 
-    def _score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Sigmoid score for a single candidate."""
+    def score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Score a single candidate with sigmoid."""
         user_repr = self.user_encoder(inputs["history_tokens"], training=False)
         cand_repr = self.news_encoder(inputs["single_candidate_tokens"], training=False)
         score = torch.sum(cand_repr * user_repr, dim=-1, keepdim=True)
         return torch.sigmoid(score)
 
-    def _score_multi(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Raw dot-product scores for multiple candidates (evaluation)."""
+    def score_candidates(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+        """Score multiple candidates with sigmoid (evaluation)."""
         history_tokens = inputs["hist_tokens"]
         candidate_tokens = inputs["cand_tokens"]
 
         user_repr = self.user_encoder(history_tokens, training=False)
 
+        # Same TimeDistributed reshape trick (see _score_training)
         B, C, T = candidate_tokens.shape
         flat_cand = candidate_tokens.reshape(B * C, T)
         cand_repr = self.news_encoder(flat_cand, training=False)

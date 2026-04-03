@@ -24,9 +24,9 @@ class BaseModel(nn.Module):
     def __init__(self):
         super().__init__()
 
-        # Subclasses must set these
-        self.news_encoder: nn.Module | None = None
-        self.user_encoder: nn.Module | None = None
+        # Subclasses must set these in their __init__
+        self.news_encoder: nn.Module
+        self.user_encoder: nn.Module
         self.process_user_id: bool = False
         self.float_dtype: str = "float32"
 

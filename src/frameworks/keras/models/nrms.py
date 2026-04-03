@@ -15,13 +15,20 @@ class NewsEncoder(keras.Model):
     and additive attention to produce news representations.
     """
 
-    def __init__(self, config: NRMSConfig, embedding_layer: layers.Embedding, name: str = "news_encoder"):
+    def __init__(
+        self,
+        config: NRMSConfig,
+        embedding_layer: layers.Embedding,
+        name: str = "news_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.embedding_layer = embedding_layer
 
         # Create layers as instance attributes so they're tracked
-        self.dropout1 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="embedding_dropout")
+        self.dropout1 = layers.Dropout(
+            self.config.dropout_rate, seed=self.config.seed, name="embedding_dropout"
+        )
         self.multi_head_attention = layers.MultiHeadAttention(
             num_heads=self.config.multiheads,
             key_dim=self.config.head_dim,
@@ -29,7 +36,9 @@ class NewsEncoder(keras.Model):
             kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
             name="title_word_self_attention",
         )
-        self.dropout2 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="attention_dropout")
+        self.dropout2 = layers.Dropout(
+            self.config.dropout_rate, seed=self.config.seed, name="attention_dropout"
+        )
         self.additive_attention = AdditiveAttention(
             query_vec_dim=self.config.attention_hidden_dim,
             seed=self.config.seed,
@@ -72,10 +81,7 @@ class NewsEncoder(keras.Model):
         # Multi-Head Self-Attention over words
         # Note: For self-attention, we only need the key/value mask, not attention_mask
         y = self.multi_head_attention(
-            y, y, y,
-            key_mask=padding_mask,
-            value_mask=padding_mask,
-            training=training
+            y, y, y, key_mask=padding_mask, value_mask=padding_mask, training=training
         )
 
         # Apply dropout after self-attention
@@ -94,7 +100,9 @@ class UserEncoder(keras.Model):
     and additive attention to produce user representations.
     """
 
-    def __init__(self, config: NRMSConfig, news_encoder: NewsEncoder, name: str = "user_encoder"):
+    def __init__(
+        self, config: NRMSConfig, news_encoder: NewsEncoder, name: str = "user_encoder"
+    ):
         super().__init__(name=name)
         self.config = config
         self.news_encoder = news_encoder
@@ -149,10 +157,12 @@ class UserEncoder(keras.Model):
         # Self-Attention over browsed news
         # Note: For self-attention, we only need the key/value mask, not attention_mask
         y = self.browsed_news_attention(
-            click_title_presents, click_title_presents, click_title_presents,
+            click_title_presents,
+            click_title_presents,
+            click_title_presents,
             key_mask=history_mask,
             value_mask=history_mask,
-            training=training
+            training=training,
         )
 
         # Additive Attention to get single user vector
@@ -168,8 +178,13 @@ class NRMSScorer(keras.Model):
     single candidate scoring (with sigmoid), and multiple candidate scoring (raw scores).
     """
 
-    def __init__(self, config: NRMSConfig, news_encoder: NewsEncoder, user_encoder: UserEncoder,
-                 name: str = "nrms_scorer"):
+    def __init__(
+        self,
+        config: NRMSConfig,
+        news_encoder: NewsEncoder,
+        user_encoder: UserEncoder,
+        name: str = "nrms_scorer",
+    ):
         super().__init__(name=name)
         self.config = config
         self.news_encoder = news_encoder
@@ -187,55 +202,56 @@ class NRMSScorer(keras.Model):
         super().build(input_shape)
 
     def score_training_batch(self, history_tokens, candidate_tokens, training=None):
-        """Score training batch with softmax output."""
+        """Score a training batch with softmax over candidates."""
         user_repr = self.user_encoder(history_tokens, training=training)
 
         # Process candidates using stored TimeDistributed layer
-        candidate_repr = self.candidate_encoder_train(candidate_tokens, training=training)
+        candidate_repr = self.candidate_encoder_train(
+            candidate_tokens, training=training
+        )
 
         # Calculate scores using dot product
-        scores = layers.Dot(axes=-1, name="dot_product_train")([candidate_repr, user_repr])
+        scores = layers.Dot(axes=-1, name="dot_product_train")(
+            [candidate_repr, user_repr]
+        )
 
         # Apply softmax for training
         return layers.Activation("softmax", name="softmax_activation")(scores)
 
-    def score_single_candidate(self, history_tokens, candidate_tokens, training=None):
-        """Score single candidate with sigmoid output."""
+    def score_single(self, history_tokens, candidate_tokens, training=None):
+        """Score a single candidate with sigmoid."""
         user_repr = self.user_encoder(history_tokens, training=training)
         candidate_repr = self.news_encoder(candidate_tokens, training=training)
 
         # Calculate score using dot product
-        score = layers.Dot(axes=-1, name="dot_product_single")([candidate_repr, user_repr])
+        score = layers.Dot(axes=-1, name="dot_product_single")(
+            [candidate_repr, user_repr]
+        )
 
         # Apply sigmoid for probability
         return layers.Activation("sigmoid", name="sigmoid_activation")(score)
 
-    def score_multiple_candidates(self, history_tokens, candidate_tokens, training=False):
-        """Score multiple candidates using vectorized operations.
-
-        This method efficiently processes all candidates using vectorized operations
-        and applies sigmoid activation to maintain consistency with single candidate scoring.
-
-        Args:
-            history_tokens: User history tokens, shape (batch_size, history_len, title_len)
-            candidate_tokens: Candidate tokens, shape (batch_size, num_candidates, title_len)
-            training: Whether in training mode
-
-        Returns:
-            Scores with sigmoid activation applied, shape (batch_size, num_candidates)
-        """
+    def score_candidates(self, history_tokens, candidate_tokens, training=False):
+        """Score multiple candidates with sigmoid (evaluation)."""
         # Get user representations for all items in batch
-        user_repr = self.user_encoder(history_tokens, training=training)  # (batch_size, embedding_dim)
+        user_repr = self.user_encoder(
+            history_tokens, training=training
+        )  # (batch_size, embedding_dim)
 
         # Process all candidates using TimeDistributed layer
-        candidate_repr = self.candidate_encoder_eval(candidate_tokens,
-                                                     training=training)  # (batch_size, num_candidates, embedding_dim)
+        candidate_repr = self.candidate_encoder_eval(
+            candidate_tokens, training=training
+        )  # (batch_size, num_candidates, embedding_dim)
 
         # Vectorized dot product: expand user_repr to match candidate dimensions
-        user_repr_expanded = ops.expand_dims(user_repr, axis=1)  # (batch_size, 1, embedding_dim)
+        user_repr_expanded = ops.expand_dims(
+            user_repr, axis=1
+        )  # (batch_size, 1, embedding_dim)
 
         # Calculate scores using vectorized dot product
-        scores = ops.sum(candidate_repr * user_repr_expanded, axis=-1)  # (batch_size, num_candidates)
+        scores = ops.sum(
+            candidate_repr * user_repr_expanded, axis=-1
+        )  # (batch_size, num_candidates)
 
         # Apply sigmoid activation for consistency with single candidate scoring
         return ops.sigmoid(scores)
@@ -249,20 +265,20 @@ class NRMS(BaseModel):
     """
 
     def __init__(
-            self,
-            processed_news: dict[str, Any],
-            embedding_size: int = 300,
-            multiheads: int = 16,
-            head_dim: int = 16,
-            attention_hidden_dim: int = 200,
-            dropout_rate: float = 0.2,
-            seed: int = 42,
-            max_title_length: int = 50,
-            max_history_length: int = 50,
-            max_impressions_length: int = 5,
-            process_user_id: bool = False,
-            name: str = "nrms",
-            **kwargs,
+        self,
+        processed_news: dict[str, Any],
+        embedding_size: int = 300,
+        multiheads: int = 16,
+        head_dim: int = 16,
+        attention_hidden_dim: int = 200,
+        dropout_rate: float = 0.2,
+        seed: int = 42,
+        max_title_length: int = 50,
+        max_history_length: int = 50,
+        max_impressions_length: int = 5,
+        process_user_id: bool = False,
+        name: str = "nrms",
+        **kwargs,
     ):
         super().__init__(name=name, **kwargs)
 
@@ -298,7 +314,7 @@ class NRMS(BaseModel):
         # Build the model immediately with dummy input shape
         dummy_input_shape = {
             "hist_tokens": (None, max_history_length, max_title_length),
-            "cand_tokens": (None, max_impressions_length, max_title_length)
+            "cand_tokens": (None, max_impressions_length, max_title_length),
         }
         self.build(dummy_input_shape)
 
@@ -308,7 +324,9 @@ class NRMS(BaseModel):
         self.embedding_layer = layers.Embedding(
             input_dim=self.processed_news["vocab_size"],
             output_dim=self.config.embedding_size,
-            embeddings_initializer=keras.initializers.Constant(self.processed_news["embeddings"]),
+            embeddings_initializer=keras.initializers.Constant(
+                self.processed_news["embeddings"]
+            ),
             trainable=True,
             name="word_embedding",
         )
@@ -328,35 +346,43 @@ class NRMS(BaseModel):
         # ----- Training model -----
         history_input = keras.Input(
             shape=(self.config.max_history_length, self.config.max_title_length),
-            dtype="int32", name="hist_tokens"
+            dtype="int32",
+            name="hist_tokens",
         )
         candidates_input = keras.Input(
             shape=(self.config.max_impressions_length, self.config.max_title_length),
-            dtype="int32", name="cand_tokens"
+            dtype="int32",
+            name="cand_tokens",
         )
 
-        training_output = self.scorer.score_training_batch(history_input, candidates_input)
+        training_output = self.scorer.score_training_batch(
+            history_input, candidates_input
+        )
         training_model = keras.Model(
             inputs=[history_input, candidates_input],
             outputs=training_output,
-            name="nrms_training_model"
+            name="nrms_training_model",
         )
 
         # ----- Scorer model -----
         history_input_score = keras.Input(
             shape=(self.config.max_history_length, self.config.max_title_length),
-            dtype="int32", name="history_tokens_score"
+            dtype="int32",
+            name="history_tokens_score",
         )
         single_candidate_input = keras.Input(
             shape=(self.config.max_title_length,),
-            dtype="int32", name="single_candidate_tokens_score"
+            dtype="int32",
+            name="single_candidate_tokens_score",
         )
 
-        scorer_output = self.scorer.score_single_candidate(history_input_score, single_candidate_input)
+        scorer_output = self.scorer.score_single(
+            history_input_score, single_candidate_input
+        )
         scorer_model = keras.Model(
             inputs=[history_input_score, single_candidate_input],
             outputs=scorer_output,
-            name="nrms_scorer_model"
+            name="nrms_scorer_model",
         )
 
         return training_model, scorer_model
@@ -392,79 +418,76 @@ class NRMS(BaseModel):
             # Inference mode can have different formats
             valid_combinations = [
                 {"hist_tokens", "cand_tokens"},  # Training format for validation
-                {"history_tokens", "single_candidate_tokens"},  # Single candidate scoring
+                {
+                    "history_tokens",
+                    "single_candidate_tokens",
+                },  # Single candidate scoring
             ]
 
-            if not any(combination.issubset(input_keys) for combination in valid_combinations):
+            if not any(
+                combination.issubset(input_keys) for combination in valid_combinations
+            ):
                 raise ValueError(
                     f"Inference mode expects one of: {valid_combinations}, "
                     f"but got keys: {list(input_keys)}"
                 )
 
     def call(self, inputs, training=None):
-        """Main forward pass of the NRMS model.
-
-        Routes to appropriate methods based on training mode and input format.
+        """Main forward pass — dispatches to scoring methods.
 
         Args:
-            inputs: Dictionary with input tensors
-            training: Whether in training mode
+            inputs: Dictionary with input tensors.
+                Training:  ``hist_tokens``, ``cand_tokens``
+                Inference: ``hist_tokens``, ``cand_tokens`` (multi) or
+                           ``history_tokens``, ``single_candidate_tokens`` (single)
+            training: Whether in training mode.
 
         Returns:
-            Model predictions based on mode and input format
+            Scores tensor.
         """
-        self._validate_inputs(inputs, training)
-
         if training:
-            # Training mode: always use training format
-            return self._handle_training(inputs, training)
+            return self.score_training_batch(inputs)
+        elif "single_candidate_tokens" in inputs:
+            return self.score_single(inputs)
         else:
-            # Inference mode: route based on input format
-            if "single_candidate_tokens" in inputs:
-                return self._handle_single_candidate(inputs)
-            elif "hist_tokens" in inputs and "cand_tokens" in inputs:
-                return self._handle_multiple_candidates(inputs)
-            else:
-                raise ValueError("Invalid input format for inference mode")
+            return self.score_candidates(inputs)
 
-    def _handle_training(self, inputs, training=None):
-        """Handle training batch scoring with softmax output."""
-        # Extract the correct keys based on input format
-        history_key = "hist_tokens"
-        candidates_key = "cand_tokens"
+    # ----- scoring helpers (delegate to scorer) ---------------------------
 
+    def score_training_batch(self, inputs, training=None):
+        """Score a training batch with softmax over candidates."""
         return self.scorer.score_training_batch(
-            inputs[history_key], inputs[candidates_key], training=training
+            inputs["hist_tokens"], inputs["cand_tokens"], training=training
         )
 
-    def _handle_single_candidate(self, inputs, training=None):
-        """Handle single candidate scoring with sigmoid output."""
-        return self.scorer.score_single_candidate(
-            inputs["history_tokens"], inputs["single_candidate_tokens"], training=training
+    def score_single(self, inputs, training=None):
+        """Score a single candidate with sigmoid."""
+        return self.scorer.score_single(
+            inputs["history_tokens"], inputs["single_candidate_tokens"],
+            training=training,
         )
 
-    def _handle_multiple_candidates(self, inputs):
-        """Handle multiple candidate scoring with sigmoid scores."""
-        candidates_key = "cand_tokens"
-        history_key = "hist_tokens"
-
-        return self.scorer.score_multiple_candidates(
-            inputs[history_key], inputs[candidates_key], training=False
+    def score_candidates(self, inputs, training=False):
+        """Score multiple candidates with sigmoid (evaluation)."""
+        return self.scorer.score_candidates(
+            inputs["hist_tokens"], inputs["cand_tokens"], training=training
         )
 
     def get_config(self):
         """Returns the configuration of the NRMS model for serialization."""
         base_config = super().get_config()
-        base_config.update({
-            "embedding_size": self.config.embedding_size,
-            "multiheads": self.config.multiheads,
-            "head_dim": self.config.head_dim,
-            "attention_hidden_dim": self.config.attention_hidden_dim,
-            "dropout_rate": self.config.dropout_rate,
-            "seed": self.config.seed,
-            "max_title_length": self.config.max_title_length,
-            "max_history_length": self.config.max_history_length,
-            "max_impressions_length": self.config.max_impressions_length,
-            "process_user_id": self.config.process_user_id,
-        })
+        base_config.update(
+            {
+                "embedding_size": self.config.embedding_size,
+                "multiheads": self.config.multiheads,
+                "head_dim": self.config.head_dim,
+                "attention_hidden_dim": self.config.attention_hidden_dim,
+                "dropout_rate": self.config.dropout_rate,
+                "seed": self.config.seed,
+                "max_title_length": self.config.max_title_length,
+                "max_history_length": self.config.max_history_length,
+                "max_impressions_length": self.config.max_impressions_length,
+                "process_user_id": self.config.process_user_id,
+            }
+        )
         return base_config
