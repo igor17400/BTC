@@ -9,7 +9,7 @@ model:
       attention_hidden_dim: 200
     user_encoder:
       type: gru
-      gru_unit: 400
+      gru_unit: 600  # Must match news encoder output: filter_num(400) + cat(100) + subcat(100)
       variant: ini  # "ini" (initial state) or "con" (concatenation)
     click_predictor:
       type: dot_product

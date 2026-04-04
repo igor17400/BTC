@@ -155,7 +155,11 @@ def run(cfg: DictConfig):
 
     # Model
     spec = cfg.spec
-    model = build_model_from_spec(spec, "pytorch", processed_news)
+    # LSTUR needs num_users for user ID embeddings
+    extra_kwargs = {}
+    if spec.model.name.lower() == "lstur":
+        extra_kwargs["num_users"] = spec.model.get("num_users", int(np.max(dataset_provider.train_behaviors_data["user_ids"])) + 1)
+    model = build_model_from_spec(spec, "pytorch", processed_news, **extra_kwargs)
     console.log(f"Model {spec.model.name} instantiated for PyTorch.")
 
     # Train dataloader
