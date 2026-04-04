@@ -224,9 +224,6 @@ def training_loop(
             progress.update(epoch_task, advance=1)
 
     # ---- Final ----
-    if wandb_run is not None:
-        wandb.finish()
-
     timing["total_training_time"] = time.time() - experiment_start
     best_metrics["timing"] = timing
 

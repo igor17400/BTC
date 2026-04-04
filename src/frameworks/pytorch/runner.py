@@ -10,6 +10,7 @@ import time
 import hydra
 import numpy as np
 import torch
+import wandb
 from omegaconf import DictConfig
 from rich.progress import Progress
 
@@ -236,4 +237,8 @@ def run(cfg: DictConfig):
             log_test_results(test_metrics)
 
     log_training_complete(cfg.model_name, "pytorch", time.time() - start_time)
+
+    if wandb.run:
+        wandb.finish()
+
     return test_metrics or best_metrics

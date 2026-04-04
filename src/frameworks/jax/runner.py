@@ -9,6 +9,7 @@ import time
 
 import hydra
 import numpy as np
+import wandb
 from flax import nnx
 from omegaconf import DictConfig
 from rich.progress import Progress
@@ -203,4 +204,8 @@ def run(cfg: DictConfig):
         log_test_results(test_metrics)
 
     log_training_complete(cfg.model_name, "jax", time.time() - start_time)
+
+    if wandb.run:
+        wandb.finish()
+
     return test_metrics or best_metrics
