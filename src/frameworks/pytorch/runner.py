@@ -218,6 +218,10 @@ def run(cfg: DictConfig):
         if ckpt_path.exists():
             model.load_state_dict(torch.load(ckpt_path, weights_only=True))
 
+        # Load test data (not loaded during mode="train" init)
+        if not dataset_provider.test_behaviors_data:
+            dataset_provider._load_data("test")
+
         test_provider = _build_eval_dataloaders(dataset_provider, cfg, mode="test")
         test_metrics = fast_evaluate(
             model=model,

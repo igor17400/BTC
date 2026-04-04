@@ -182,6 +182,9 @@ def run(cfg: DictConfig):
     test_metrics = None
     if cfg.eval.run_test_after_training:
         console.log("[bold]Running test evaluation...[/bold]")
+        # Load test data (not loaded during mode="train" init)
+        if not dataset_provider.test_behaviors_data:
+            dataset_provider._load_data("test")
         news_dl, user_dl, imp_iter = _build_eval_dataloaders(
             dataset_provider, cfg, mode="test"
         )

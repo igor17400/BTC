@@ -239,6 +239,9 @@ def run(cfg: DictConfig):
             model.load_weights(best_model_path)
         else:
             console.log("[yellow]Best weights not found, using current weights.[/yellow]")
+        # Load test data (not loaded during mode="train" init)
+        if not dataset_provider.test_behaviors_data:
+            dataset_provider._load_data("test")
         return eval_fn(model, mode="test")
 
     # Train
