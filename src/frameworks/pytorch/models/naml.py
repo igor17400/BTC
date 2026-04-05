@@ -325,7 +325,7 @@ class NAML(BaseModel):
         cand_repr = self.news_encoder(flat_cand, training=True).reshape(B, C, -1)
 
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
-        return torch.softmax(scores, dim=-1)
+        return scores  # raw logits; loss applies log-softmax internally
 
     def _score_multi(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         hist_concat = self._concat_features(inputs, "hist")

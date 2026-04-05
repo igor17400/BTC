@@ -292,6 +292,9 @@ class UserEncoder(keras.Model):
             name="user_embedding",
         )
 
+        # Bernoulli masking on user embeddings during training (paper §3.2)
+        self.user_embedding_dropout = layers.Dropout(0.5, name="user_emb_dropout")
+
         # TimeDistributed layer for processing history
         self.time_distributed = layers.TimeDistributed(
             self.news_encoder, name="td_news_encoder_user"
@@ -354,6 +357,8 @@ class UserEncoder(keras.Model):
 
         long_u_emb = self.user_embedding(user_indices)
         long_u_emb = ops.squeeze(long_u_emb, axis=1)  # (batch_size, gru_unit)
+        # Bernoulli masking of long-term user repr during training (paper §3.2)
+        long_u_emb = self.user_embedding_dropout(long_u_emb, training=training)
 
         # Process all history items using TimeDistributed layer
         click_title_presents = self.time_distributed(history_tokens, training=training)

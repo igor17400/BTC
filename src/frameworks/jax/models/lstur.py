@@ -202,6 +202,9 @@ class UserEncoder(nnx.Module):
             self.user_embedding.embedding.value
         )
 
+        # Bernoulli masking on user embeddings during training (paper §3.2)
+        self.user_embedding_dropout = nnx.Dropout(rate=0.5, rngs=rngs)
+
         # Compute news encoder output dim for GRU input size
         news_out_dim = config.cnn_filter_num
         if config.use_category:
@@ -248,6 +251,10 @@ class UserEncoder(nnx.Module):
             user_indices = jnp.expand_dims(user_indices, axis=-1)
         long_u_emb = self.user_embedding(user_indices)  # (B, 1, gru_unit)
         long_u_emb = jnp.squeeze(long_u_emb, axis=1)  # (B, gru_unit)
+        # Bernoulli masking of long-term user repr during training (paper §3.2)
+        long_u_emb = self.user_embedding_dropout(
+            long_u_emb, deterministic=not training
+        )
 
         # TimeDistributed news encoding
         B, H, T = history_tokens.shape
