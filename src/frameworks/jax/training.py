@@ -63,7 +63,7 @@ def train_step(
         return categorical_cross_entropy(batch_labels, preds)
 
     loss, grads = nnx.value_and_grad(loss_fn)(model)
-    optimizer.update(model, grads)
+    optimizer.update(grads)
     return loss
 
 

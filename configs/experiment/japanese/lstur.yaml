@@ -27,11 +27,6 @@ dataset:
   process_subcategory: ${spec.inputs.process_subcategory}
   process_user_id: ${spec.inputs.process_user_id}
 
-# LSTUR-specific: override num_users for Japanese dataset
-spec:
-  model:
-    num_users: 66562
-
 # Training: from spec
 train:
   batch_size: ${spec.training.batch_size}

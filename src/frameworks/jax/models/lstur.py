@@ -213,7 +213,7 @@ class UserEncoder(nnx.Module):
         self.gru = nnx.RNN(
             nnx.GRUCell(
                 in_features=news_out_dim,
-                hidden_size=config.gru_unit,
+                hidden_features=config.gru_unit,
                 rngs=rngs,
             ),
         )

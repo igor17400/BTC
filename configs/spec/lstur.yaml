@@ -20,7 +20,6 @@ model:
   subcategory_embedding_dim: 100
   dropout_rate: 0.2
   seed: 42
-  num_users: 94057
 
 inputs:
   title: { max_length: 32 }

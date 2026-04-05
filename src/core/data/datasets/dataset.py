@@ -203,6 +203,7 @@ class NewsDatasetBase(BaseNewsDataset):
 
         self.processed_news = self.process_news()
         self._load_data(mode)
+        self._compute_num_users()
 
     # ------------------------------------------------------------------
     # Properties
@@ -554,6 +555,38 @@ class NewsDatasetBase(BaseNewsDataset):
         except Exception as e:
             logger.warning(f"Failed to load tensors: {str(e)}")
             return False
+
+    def _compute_num_users(self) -> None:
+        """Compute total number of unique users across ALL splits from behaviors.tsv files.
+
+        Scans user IDs directly from the raw behaviors files (train, valid, test)
+        so the embedding table covers every user the model will encounter,
+        matching standard MIND benchmark practice.
+        """
+        all_user_ids = set()
+
+        # Scan raw behaviors.tsv files for user IDs across all splits
+        for split_dir in ["train", "valid", "test"]:
+            behaviors_path = self.dataset_path / split_dir / "behaviors.tsv"
+            if behaviors_path.exists():
+                df = pd.read_csv(
+                    behaviors_path,
+                    sep="\t",
+                    header=None,
+                    usecols=[1],  # user_id column
+                    names=["user_id"],
+                )
+                for uid in df["user_id"].unique():
+                    all_user_ids.add(self.parse_user_id(str(uid)))
+
+        if all_user_ids:
+            # Use max user ID + 1 as the embedding size to handle sparse ID spaces
+            num_users = max(all_user_ids) + 1
+            self.processed_news["num_users"] = num_users
+            logger.info(
+                f"Computed num_users: {num_users} "
+                f"(max user ID + 1 from {len(all_user_ids)} unique users across all splits)"
+            )
 
     def _process_data(self) -> None:
         """Process train/val/test data and save to disk."""

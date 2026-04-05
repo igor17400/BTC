@@ -127,10 +127,11 @@ def run(cfg: DictConfig):
 
     # Model
     spec = cfg.spec
-    # LSTUR needs num_users for user ID embeddings
+    # LSTUR needs num_users for user ID embeddings (auto-computed by dataset)
     extra_kwargs = {"rngs": nnx.Rngs(cfg.seed)}
     if spec.model.name.lower() == "lstur":
-        extra_kwargs["num_users"] = spec.model.get("num_users", int(np.max(dataset_provider.train_behaviors_data["user_ids"])) + 1)
+        extra_kwargs["num_users"] = processed_news["num_users"]
+        console.log(f"Auto-detected num_users: {processed_news['num_users']}")
     model = build_model_from_spec(spec, "jax", processed_news, **extra_kwargs)
     console.log(f"Model {spec.model.name} instantiated for JAX.")
 
