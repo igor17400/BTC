@@ -168,6 +168,9 @@ class UserEncoder(nn.Module):
         self.user_embedding = nn.Embedding(num_users, config.gru_unit, padding_idx=None)
         nn.init.zeros_(self.user_embedding.weight)
 
+        # Bernoulli masking on user embeddings during training (paper §3.2)
+        self.user_embedding_dropout = nn.Dropout(p=0.5)
+
         self.gru = nn.GRU(
             input_size=gru_input_size,
             hidden_size=config.gru_unit,
@@ -199,6 +202,8 @@ class UserEncoder(nn.Module):
             user_indices = user_indices.unsqueeze(-1)
 
         long_u_emb = self.user_embedding(user_indices).squeeze(1)  # (B, gru_unit)
+        # Bernoulli masking of long-term user repr during training (paper §3.2)
+        long_u_emb = self.user_embedding_dropout(long_u_emb)
 
         # TimeDistributed news encoder
         B, H, T = history_tokens.shape
@@ -323,7 +328,7 @@ class LSTUR(BaseModel):
         cand_repr = self.news_encoder(flat_cand, training=training).reshape(B, C, -1)
 
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
-        return torch.softmax(scores, dim=-1)
+        return scores  # raw logits; loss applies log-softmax internally
 
     def _score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         history_tokens = self._maybe_concat_cat(
