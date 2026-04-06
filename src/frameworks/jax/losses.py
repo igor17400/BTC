@@ -1,7 +1,7 @@
 """Pure JAX loss functions for news recommendation training."""
 
-from typing import Any
 from functools import partial
+from typing import Any
 
 import jax.numpy as jnp
 
@@ -94,8 +94,8 @@ def get_loss(loss_name: str, **kwargs: Any):
     base_fn = losses[loss_name]
     if kwargs:
         # Filter to only params the function accepts
-        return partial(base_fn, **{
-            k: v for k, v in kwargs.items()
-            if k in ("label_smoothing", "epsilon")
-        })
+        return partial(
+            base_fn,
+            **{k: v for k, v in kwargs.items() if k in ("label_smoothing", "epsilon")},
+        )
     return base_fn

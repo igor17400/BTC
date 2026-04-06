@@ -5,10 +5,9 @@ MultiHeadAttentionBlock, GraphSAGELayer, GraphAttentionLayer, and masking
 utilities as pure JAX functions.
 """
 
-import numpy as np
-
 import jax
 import jax.numpy as jnp
+import numpy as np
 from flax import nnx
 
 
@@ -75,6 +74,7 @@ class AdditiveAttention(nnx.Module):
 # Pure JAX masking utilities
 # ---------------------------------------------------------------------------
 
+
 def compute_mask(inputs: jax.Array) -> jax.Array:
     """Compute a boolean mask where non-zero positions are ``True``.
 
@@ -103,6 +103,7 @@ def overwrite_mask(values: jax.Array, mask: jax.Array) -> jax.Array:
 # ---------------------------------------------------------------------------
 # Positional Encoding
 # ---------------------------------------------------------------------------
+
 
 class PositionalEncoding(nnx.Module):
     """Sinusoidal positional encoding (Flax NNX).
@@ -156,6 +157,7 @@ class PositionalEncoding(nnx.Module):
 # ---------------------------------------------------------------------------
 # Multi-Head Attention Block (MAB)
 # ---------------------------------------------------------------------------
+
 
 class MultiHeadAttentionBlock(nnx.Module):
     """Multi-head attention block with residual connections and layer norm.
@@ -217,9 +219,15 @@ class MultiHeadAttentionBlock(nnx.Module):
         head_dim = self.dim_out // self.num_heads
 
         # Reshape to (B, H, S, D)
-        Q = Q.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(0, 2, 1, 3)
-        K = K.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(0, 2, 1, 3)
-        V = V.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(0, 2, 1, 3)
+        Q = Q.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(
+            0, 2, 1, 3
+        )
+        K = K.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(
+            0, 2, 1, 3
+        )
+        V = V.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(
+            0, 2, 1, 3
+        )
 
         scores = jnp.matmul(Q, K.transpose(0, 1, 3, 2)) / jnp.sqrt(
             jnp.float32(head_dim)
@@ -228,7 +236,9 @@ class MultiHeadAttentionBlock(nnx.Module):
         attn_weights = self.dropout(attn_weights, deterministic=det)
 
         attn_out = jnp.matmul(attn_weights, V)  # (B, H, S, D)
-        attn_out = attn_out.transpose(0, 2, 1, 3).reshape(batch_size, seq_len, self.dim_out)
+        attn_out = attn_out.transpose(0, 2, 1, 3).reshape(
+            batch_size, seq_len, self.dim_out
+        )
 
         O = self.fc_o(attn_out)
         O = self.dropout(O, deterministic=det)
@@ -248,6 +258,7 @@ class MultiHeadAttentionBlock(nnx.Module):
 # ---------------------------------------------------------------------------
 # GraphSAGE layer
 # ---------------------------------------------------------------------------
+
 
 class GraphSAGELayer(nnx.Module):
     """GraphSAGE layer for the bipartite user-news graph in CROWN.
@@ -361,7 +372,9 @@ class GraphSAGELayer(nnx.Module):
         updated_news = self.dropout(updated_news, deterministic=det)
 
         if self.normalize:
-            u_norm = jnp.sqrt(jnp.sum(jnp.square(updated_users), axis=-1, keepdims=True))
+            u_norm = jnp.sqrt(
+                jnp.sum(jnp.square(updated_users), axis=-1, keepdims=True)
+            )
             updated_users = updated_users / (u_norm + 1e-7)
             n_norm = jnp.sqrt(jnp.sum(jnp.square(updated_news), axis=-1, keepdims=True))
             updated_news = updated_news / (n_norm + 1e-7)
@@ -372,6 +385,7 @@ class GraphSAGELayer(nnx.Module):
 # ---------------------------------------------------------------------------
 # Graph Attention (GAT) layer
 # ---------------------------------------------------------------------------
+
 
 class GraphAttentionLayer(nnx.Module):
     """Graph Attention Network layer for CROWN's bipartite user-news graph.

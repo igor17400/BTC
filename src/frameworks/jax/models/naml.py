@@ -14,13 +14,14 @@ import numpy as np
 from flax import nnx
 
 from src.core.models.configs import NAMLConfig
+
 from ..layers import AdditiveAttention
 from .base import BaseModel
-
 
 # ---------------------------------------------------------------------------
 # View encoders
 # ---------------------------------------------------------------------------
+
 
 def _apply_activation(x: jax.Array, activation: str) -> jax.Array:
     """Apply activation function by name."""
@@ -137,9 +138,7 @@ class CategoryEncoder(nnx.Module):
     def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
         """Args: inputs (B, 1) int32.  Returns: (B, cnn_filter_num)."""
         embedded = self.embedding(inputs)  # (B, 1, cat_dim)
-        projected = _apply_activation(
-            self.projection(embedded), self.config.activation
-        )
+        projected = _apply_activation(self.projection(embedded), self.config.activation)
         return jnp.squeeze(projected, axis=1)  # (B, cnn_filter_num)
 
 
@@ -168,15 +167,14 @@ class SubcategoryEncoder(nnx.Module):
     def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
         """Args: inputs (B, 1) int32.  Returns: (B, cnn_filter_num)."""
         embedded = self.embedding(inputs)
-        projected = _apply_activation(
-            self.projection(embedded), self.config.activation
-        )
+        projected = _apply_activation(self.projection(embedded), self.config.activation)
         return jnp.squeeze(projected, axis=1)
 
 
 # ---------------------------------------------------------------------------
 # Multi-view news encoder
 # ---------------------------------------------------------------------------
+
 
 class NewsEncoder(nnx.Module):
     """Combine title, abstract, category, subcategory views with attention.
@@ -219,8 +217,7 @@ class NewsEncoder(nnx.Module):
         ]
         category_id = inputs[
             :,
-            cfg.max_title_length
-            + cfg.max_abstract_length : cfg.max_title_length
+            cfg.max_title_length + cfg.max_abstract_length : cfg.max_title_length
             + cfg.max_abstract_length
             + 1,
         ]
@@ -241,6 +238,7 @@ class NewsEncoder(nnx.Module):
 # ---------------------------------------------------------------------------
 # User encoder
 # ---------------------------------------------------------------------------
+
 
 class UserEncoder(nnx.Module):
     """Encode a user from browsing history via TimeDistributed + AdditiveAttention."""
@@ -280,6 +278,7 @@ class UserEncoder(nnx.Module):
 # ---------------------------------------------------------------------------
 # Full NAML model
 # ---------------------------------------------------------------------------
+
 
 class NAML(BaseModel):
     """Neural News Recommendation with Attentive Multi-View Learning."""

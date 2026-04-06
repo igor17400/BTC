@@ -14,13 +14,14 @@ import numpy as np
 from flax import nnx
 
 from src.core.models.configs import LSTURConfig
+
 from ..layers import AdditiveAttention, compute_mask, overwrite_mask
 from .base import BaseModel
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _apply_activation(x: jax.Array, activation: str) -> jax.Array:
     if activation == "relu":
@@ -35,6 +36,7 @@ def _apply_activation(x: jax.Array, activation: str) -> jax.Array:
 # ---------------------------------------------------------------------------
 # Optional category / subcategory encoders (simple embedding)
 # ---------------------------------------------------------------------------
+
 
 class CategoryEncoder(nnx.Module):
     """Simple embedding for category IDs (LSTUR variant -- no projection)."""
@@ -69,6 +71,7 @@ class SubcategoryEncoder(nnx.Module):
 # ---------------------------------------------------------------------------
 # News encoder
 # ---------------------------------------------------------------------------
+
 
 class NewsEncoder(nnx.Module):
     """CNN-based news encoder with optional category/subcategory concatenation.
@@ -148,9 +151,7 @@ class NewsEncoder(nnx.Module):
             parts = [title_vec]
 
             if self.category_encoder is not None:
-                parts.append(
-                    self.category_encoder(category_id, training=training)
-                )
+                parts.append(self.category_encoder(category_id, training=training))
             if self.subcategory_encoder is not None:
                 parts.append(
                     self.subcategory_encoder(subcategory_id, training=training)
@@ -170,6 +171,7 @@ class NewsEncoder(nnx.Module):
 # ---------------------------------------------------------------------------
 # User encoder
 # ---------------------------------------------------------------------------
+
 
 class UserEncoder(nnx.Module):
     """GRU-based user encoder with long-term user embeddings.
@@ -252,9 +254,7 @@ class UserEncoder(nnx.Module):
         long_u_emb = self.user_embedding(user_indices)  # (B, 1, gru_unit)
         long_u_emb = jnp.squeeze(long_u_emb, axis=1)  # (B, gru_unit)
         # Bernoulli masking of long-term user repr during training (paper §3.2)
-        long_u_emb = self.user_embedding_dropout(
-            long_u_emb, deterministic=not training
-        )
+        long_u_emb = self.user_embedding_dropout(long_u_emb, deterministic=not training)
 
         # TimeDistributed news encoding
         B, H, T = history_tokens.shape
@@ -281,6 +281,7 @@ class UserEncoder(nnx.Module):
 # ---------------------------------------------------------------------------
 # Full LSTUR model
 # ---------------------------------------------------------------------------
+
 
 class LSTUR(BaseModel):
     """Neural News Recommendation with Long- and Short-term User Representations."""
@@ -332,9 +333,7 @@ class LSTUR(BaseModel):
         )
 
         # User encoder
-        self.user_encoder = UserEncoder(
-            config, self.news_encoder, num_users, rngs=rngs
-        )
+        self.user_encoder = UserEncoder(config, self.news_encoder, num_users, rngs=rngs)
 
     # ---- Scoring helpers ------------------------------------------------
 

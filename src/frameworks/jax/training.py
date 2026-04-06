@@ -25,7 +25,6 @@ from rich.progress import Progress
 from src.core.io.logging import (
     log_early_stopping,
     log_epoch_end,
-    log_training_start,
 )
 
 from .losses import categorical_cross_entropy
