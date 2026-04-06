@@ -165,8 +165,9 @@ def run(cfg: DictConfig):
 
     from src.frameworks.keras.dataloaders import create_train_dataloader
     from src.frameworks.keras.evaluation import fast_evaluate
-    from src.frameworks.keras.losses import get_loss
     from src.frameworks.keras.training import training_loop
+
+    from src.core.losses import get_loss
     from src.frameworks.keras.utils import LightweightNewsMetrics, create_news_metrics
 
     setup_wandb_session(cfg)
@@ -189,7 +190,8 @@ def run(cfg: DictConfig):
     optimizer = keras.optimizers.Adam(learning_rate=cfg.train.learning_rate)
     loss_fn = get_loss(
         loss_name=spec.training.loss.name,
-        from_logits=spec.training.loss.get("from_logits", False),
+        framework="keras",
+        from_logits=spec.training.loss.get("from_logits", True),
         reduction=spec.training.loss.get("reduction", "sum_over_batch_size"),
         label_smoothing=spec.training.loss.get("label_smoothing", 0.0),
     )

@@ -27,8 +27,6 @@ from src.core.io.logging import (
     log_epoch_end,
 )
 
-from .losses import categorical_cross_entropy
-
 logger = logging.getLogger(__name__)
 console = Console()
 
@@ -38,32 +36,34 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 
-@nnx.jit
-def train_step(
-    model: nnx.Module,
-    optimizer: nnx.Optimizer,
-    batch_features: dict[str, jnp.ndarray],
-    batch_labels: jnp.ndarray,
-) -> jnp.ndarray:
-    """Single JIT-compiled training step.
+def make_train_step(loss_fn):
+    """Create a JIT-compiled training step that uses the given loss function.
 
     Args:
-        model: Flax NNX model (mutable state is updated in-place).
-        optimizer: ``nnx.Optimizer`` wrapping an ``optax`` optimiser.
-        batch_features: Dictionary of input JAX arrays.
-        batch_labels: Ground-truth labels ``(B, C)``.
+        loss_fn: Callable ``(y_true, y_pred) -> scalar`` loss function.
 
     Returns:
-        Scalar loss value for this step.
+        A JIT-compiled ``train_step(model, optimizer, features, labels)`` function.
     """
 
-    def loss_fn(model):
-        preds = model(batch_features, training=True)
-        return categorical_cross_entropy(batch_labels, preds)
+    @nnx.jit
+    def train_step(
+        model: nnx.Module,
+        optimizer: nnx.Optimizer,
+        batch_features: dict[str, jnp.ndarray],
+        batch_labels: jnp.ndarray,
+    ) -> jnp.ndarray:
+        """Single JIT-compiled training step."""
 
-    loss, grads = nnx.value_and_grad(loss_fn)(model)
-    optimizer.update(grads)
-    return loss
+        def _loss(model):
+            preds = model(batch_features, training=True)
+            return loss_fn(batch_labels, preds)
+
+        loss, grads = nnx.value_and_grad(_loss)(model)
+        optimizer.update(grads)
+        return loss
+
+    return train_step
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +74,7 @@ def train_step(
 def warmup_jit(
     model: nnx.Module,
     optimizer: nnx.Optimizer,
+    train_step,
     sample_batch: tuple[dict[str, jnp.ndarray], jnp.ndarray],
 ) -> None:
     """Run a single forward + backward pass to trigger XLA compilation.
@@ -131,6 +132,7 @@ def training_loop(
     learning_rate: float = 1e-4,
     weight_decay: float = 0.0,
     early_stopping_patience: int = 5,
+    loss_fn=None,
     # Optional evaluation hooks
     eval_fn=None,
     eval_kwargs: dict[str, Any] | None = None,
@@ -151,6 +153,8 @@ def training_loop(
         weight_decay: L2 weight-decay coefficient (0 disables).
         early_stopping_patience: Number of epochs without improvement
             before stopping.
+        loss_fn: Loss callable ``(y_true, y_pred) -> scalar``. Defaults to
+            ``categorical_cross_entropy(from_logits=True)``.
         eval_fn: Optional callable ``(model, **eval_kwargs) -> metrics_dict``
             to run at the end of each epoch.
         eval_kwargs: Keyword arguments forwarded to *eval_fn*.
@@ -161,6 +165,13 @@ def training_loop(
     Returns:
         Dictionary with ``"best_epoch_metrics"`` and timing information.
     """
+    # ---- Loss function ---------------------------------------------------
+    if loss_fn is None:
+        from .losses import categorical_cross_entropy
+        loss_fn = categorical_cross_entropy
+
+    train_step = make_train_step(loss_fn)
+
     # ---- Optimiser -------------------------------------------------------
     if weight_decay > 0:
         tx = optax.adamw(learning_rate, weight_decay=weight_decay)
@@ -173,7 +184,7 @@ def training_loop(
     try:
         first_batch = next(iter(train_dataloader), None)
         if first_batch is not None:
-            warmup_jit(model, optimizer, first_batch)
+            warmup_jit(model, optimizer, train_step, first_batch)
     except Exception as exc:
         logger.warning("JIT warmup skipped: %s", exc)
 

@@ -32,7 +32,7 @@ inputs:
 training:
   loss:
     name: categorical_crossentropy
-    from_logits: false
+    from_logits: true
     reduction: sum_over_batch_size
     label_smoothing: 0.0
   optimizer: adam

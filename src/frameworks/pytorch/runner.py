@@ -22,6 +22,7 @@ from src.core.io.logging import (
 )
 from src.core.io.saving import get_output_run_dir
 from src.core.metrics.functions import NewsRecommenderMetrics
+from src.core.losses import get_loss
 from src.core.models.spec import build_model_from_spec
 
 
@@ -202,6 +203,14 @@ def run(cfg: DictConfig):
             int_to_news_id_map=int_to_news_id_map,
         )
 
+    # Loss function from config
+    loss_fn = get_loss(
+        loss_name=spec.training.loss.name,
+        framework="pytorch",
+        from_logits=spec.training.loss.get("from_logits", True),
+        label_smoothing=spec.training.loss.get("label_smoothing", 0.0),
+    )
+
     # Train
     best_metrics = training_loop(
         model=model,
@@ -214,6 +223,7 @@ def run(cfg: DictConfig):
         enable_wandb=cfg.logging.enable_wandb,
         save_dir=str(output_run_dir / "models"),
         gpu_ids=cfg.device.gpu_ids if hasattr(cfg.device, "gpu_ids") else None,
+        loss_fn=loss_fn,
     )
 
     # Test evaluation

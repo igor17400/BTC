@@ -36,7 +36,7 @@ class CategoricalCrossEntropyLoss(NewsRecommenderLoss):
     def __init__(
         self,
         name: str = "categorical_crossentropy",
-        from_logits: bool = False,
+        from_logits: bool = True,
         reduction: str = "sum_over_batch_size",
         label_smoothing: float = 0.0,
         **kwargs: Any,
@@ -52,7 +52,7 @@ class CategoricalCrossEntropyLoss(NewsRecommenderLoss):
 
         Args:
             y_true: True labels (one-hot encoded)
-            y_pred: Predicted scores (probabilities after softmax)
+            y_pred: Predicted scores (raw logits or probabilities)
 
         Returns:
             Loss value

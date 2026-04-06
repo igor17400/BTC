@@ -79,10 +79,9 @@ def test_lstur_components(lstur_model, batch_size=2):
     print(f"   ✓ Training batch scores shape: {training_scores.shape}")
     assert training_scores.shape == (batch_size, 5), f"Expected shape (batch_size, 5), got {training_scores.shape}"
     
-    # Verify softmax output (should sum to 1)
-    score_sums = np.sum(training_scores, axis=-1)
-    assert np.allclose(score_sums, 1.0, rtol=1e-5), f"Softmax scores don't sum to 1: {score_sums}"
-    print(f"   ✓ Softmax scores sum to 1.0: {score_sums}")
+    # Verify logit output
+    assert np.all(np.isfinite(training_scores)), "Training scores contain NaN or inf"
+    print(f"   ✓ Training scores are finite (raw logits)")
     
     # Test single candidate scoring
     single_scores = lstur_model.scorer.score_single_candidate(
@@ -131,11 +130,10 @@ def test_lstur_call_method(lstur_model, batch_size=2):
     print(f"   ✓ Training output shape: {training_output.shape}")
     assert training_output.shape == (batch_size, 5), f"Expected shape (batch_size, 5), got {training_output.shape}"
     
-    # Verify softmax output
-    score_sums = np.sum(training_output, axis=-1)
-    assert np.allclose(score_sums, 1.0, rtol=1e-5), f"Softmax scores don't sum to 1: {score_sums}"
-    print(f"   ✓ Training outputs are valid softmax scores")
-    
+    # Verify logit output
+    assert np.all(np.isfinite(training_output)), "Training scores contain NaN or inf"
+    print(f"   ✓ Training outputs are valid logits")
+
     # Test 2: Inference mode with single candidate
     print("\n2. Testing inference mode with single candidate...")
     single_cand_inputs = {
@@ -189,10 +187,9 @@ def test_lstur_compatibility_models(lstur_model, batch_size=2):
     print(f"   ✓ Training model output shape: {training_output.shape}")
     assert training_output.shape == (batch_size, 5), f"Expected shape (batch_size, 5), got {training_output.shape}"
     
-    # Verify softmax output
-    score_sums = np.sum(training_output, axis=-1)
-    assert np.allclose(score_sums, 1.0, rtol=1e-5), f"Softmax scores don't sum to 1: {score_sums}"
-    print(f"   ✓ Training model outputs are valid softmax scores")
+    # Verify logit output
+    assert np.all(np.isfinite(training_output)), "Training scores contain NaN or inf"
+    print(f"   ✓ Training model outputs are valid logits")
     
     # Test scorer_model
     print("\n2. Testing scorer_model...")
@@ -278,7 +275,7 @@ def test_lstur_compilation(lstur_model, batch_size=2):
     print("\n1. Compiling model...")
     lstur_model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=1e-4),
-        loss=keras.losses.CategoricalCrossentropy(from_logits=False),
+        loss=keras.losses.CategoricalCrossentropy(from_logits=True),
         metrics=[keras.metrics.CategoricalAccuracy()],
     )
     print("   ✓ Model compiled successfully")

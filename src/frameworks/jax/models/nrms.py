@@ -199,7 +199,7 @@ class NRMS(BaseModel):
         *,
         training: bool = True,
     ) -> jax.Array:
-        """Score a training batch (softmax over candidates).
+        """Score a training batch (raw logits — loss handles softmax).
 
         Args:
             hist_tokens: ``(B, H, T)`` user history.
@@ -207,7 +207,7 @@ class NRMS(BaseModel):
             training: Enable dropout.
 
         Returns:
-            ``(B, C)`` softmax probabilities.
+            ``(B, C)`` raw logit scores.
         """
         user_repr = self.user_encoder(hist_tokens, training=training)  # (B, E)
 
@@ -223,7 +223,7 @@ class NRMS(BaseModel):
         cand_repr = flat_vecs.reshape(B, C, -1)  # (B, C, E) — grouped by user
 
         scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)  # (B, C)
-        return jax.nn.softmax(scores, axis=-1)
+        return scores  # raw logits; loss handles softmax
 
     def score_single(
         self,

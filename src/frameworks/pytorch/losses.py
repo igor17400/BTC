@@ -13,9 +13,12 @@ class CategoricalCrossEntropyLoss(nn.Module):
     The target is a one-hot label vector of the same shape indicating the
     positive candidate. Uses nn.CrossEntropyLoss which applies log-softmax
     internally via the numerically stable log-sum-exp trick.
+
+    Note: ``from_logits`` is accepted for interface consistency with Keras/JAX
+    but is always True — PyTorch CrossEntropyLoss always expects logits.
     """
 
-    def __init__(self, label_smoothing: float = 0.0, **kwargs: Any):
+    def __init__(self, label_smoothing: float = 0.0, from_logits: bool = True, **kwargs: Any):
         super().__init__()
         self.ce = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 

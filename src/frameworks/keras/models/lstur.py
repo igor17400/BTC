@@ -407,7 +407,7 @@ class LSTURScorer(keras.Model):
         super().build(input_shape)
 
     def score_training_batch(self, history_inputs, user_indices, candidate_inputs, training=None):
-        """Score training batch with softmax output.
+        """Score training batch (raw logits — loss handles softmax).
 
         Args:
             history_inputs: History tensor (batch_size, history_length, title_length)
@@ -416,7 +416,7 @@ class LSTURScorer(keras.Model):
             training: Whether in training mode
 
         Returns:
-            Softmax scores (batch_size, num_candidates)
+            Raw logit scores (batch_size, num_candidates)
         """
         # Get user representation
         user_repr = self.user_encoder([history_inputs, user_indices], training=training)
@@ -425,11 +425,10 @@ class LSTURScorer(keras.Model):
         candidate_reprs = self.candidate_encoder_train(candidate_inputs, training=training)
         # Result: (batch_size, num_candidates, cnn_filter_num)
 
-        # Calculate scores using dot product
+        # Calculate scores using dot product (raw logits)
         scores = layers.Dot(axes=-1, name="dot_product_train")([candidate_reprs, user_repr])
 
-        # Apply softmax for training
-        return layers.Activation("softmax", name="softmax_activation")(scores)
+        return scores
 
     def score_single_candidate(self, history_inputs, user_indices, candidate_inputs, training=None):
         """Score single candidate with sigmoid output.
@@ -726,7 +725,7 @@ class LSTUR(BaseModel):
                 raise ValueError("Invalid input format for inference mode")
 
     def _handle_training(self, inputs, training=None):
-        """Handle training batch scoring with softmax output."""
+        """Handle training batch scoring (raw logits)."""
         # Extract the inputs - note that dataloader uses "user_ids" not "user_indices"
         history_tokens = inputs["hist_tokens"]
         user_ids = inputs.get("user_ids", inputs.get("user_indices"))  # Handle both keys

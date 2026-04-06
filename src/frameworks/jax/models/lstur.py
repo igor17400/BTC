@@ -345,9 +345,9 @@ class LSTUR(BaseModel):
         *,
         training: bool = True,
     ) -> jax.Array:
-        """Score a training batch (softmax over candidates).
+        """Score a training batch (raw logits — loss handles softmax).
 
-        Returns: ``(B, C)`` softmax probabilities.
+        Returns: ``(B, C)`` raw logit scores.
         """
         user_repr = self.user_encoder(
             hist_tokens, user_ids, training=training
@@ -359,7 +359,7 @@ class LSTUR(BaseModel):
         cand_repr = flat_vecs.reshape(B, C, -1)
 
         scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)
-        return jax.nn.softmax(scores, axis=-1)
+        return scores  # raw logits; loss handles softmax
 
     def score_multiple_candidates(
         self,

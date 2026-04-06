@@ -338,14 +338,14 @@ class NAML(BaseModel):
         *,
         training: bool = True,
     ) -> jax.Array:
-        """Score training batch with softmax.
+        """Score training batch (raw logits — loss handles softmax).
 
         Args:
             hist_concat: ``(B, H, F)`` concatenated user history features.
             cand_concat: ``(B, C, F)`` concatenated candidate features.
 
         Returns:
-            ``(B, C)`` softmax probabilities.
+            ``(B, C)`` raw logit scores.
         """
         user_repr = self.user_encoder(hist_concat, training=training)  # (B, D)
 
@@ -355,7 +355,7 @@ class NAML(BaseModel):
         cand_repr = flat_vecs.reshape(B, C, -1)  # (B, C, D)
 
         scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)
-        return jax.nn.softmax(scores, axis=-1)
+        return scores  # raw logits; loss handles softmax
 
     def score_multiple_candidates(
         self,

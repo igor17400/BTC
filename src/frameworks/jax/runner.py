@@ -21,6 +21,7 @@ from src.core.io.logging import (
     setup_wandb_session,
 )
 from src.core.io.saving import get_output_run_dir
+from src.core.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
 
@@ -177,6 +178,14 @@ def run(cfg: DictConfig):
                 int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
             )
 
+    # Loss function from config
+    loss_fn = get_loss(
+        loss_name=spec.training.loss.name,
+        framework="jax",
+        from_logits=spec.training.loss.get("from_logits", True),
+        label_smoothing=spec.training.loss.get("label_smoothing", 0.0),
+    )
+
     # Train
     best_metrics = training_loop(
         model=model,
@@ -184,6 +193,7 @@ def run(cfg: DictConfig):
         num_epochs=cfg.train.num_epochs,
         learning_rate=cfg.train.learning_rate,
         early_stopping_patience=cfg.train.early_stopping.patience,
+        loss_fn=loss_fn,
         eval_fn=eval_fn if cfg.eval.fast_evaluation else None,
         enable_wandb=cfg.logging.enable_wandb,
         save_dir=str(output_run_dir / "models"),

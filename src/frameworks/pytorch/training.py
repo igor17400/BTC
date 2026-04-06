@@ -29,7 +29,6 @@ from torch.utils.data import DataLoader
 from src.core.io.logging import log_early_stopping, log_epoch_end
 
 from .device import setup_device
-from .losses import CategoricalCrossEntropyLoss
 
 # ------------------------------------------------------------------
 # Helpers
@@ -107,6 +106,7 @@ def training_loop(
 
     # ---- Loss / Optimiser ----
     if loss_fn is None:
+        from .losses import CategoricalCrossEntropyLoss
         loss_fn = CategoricalCrossEntropyLoss()
     loss_fn = loss_fn.to(device)
 

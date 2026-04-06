@@ -132,10 +132,9 @@ def test_naml_components(naml_model, batch_size=2):
     print(f"   ✓ Training batch scores shape: {training_scores.shape}")
     assert training_scores.shape == (batch_size, 5), f"Expected shape (batch_size, 5), got {training_scores.shape}"
     
-    # Verify softmax output
-    score_sums = np.sum(training_scores, axis=-1)
-    assert np.allclose(score_sums, 1.0, rtol=1e-5), f"Softmax scores don't sum to 1: {score_sums}"
-    print(f"   ✓ Softmax scores sum to 1.0: {score_sums}")
+    # Verify logit output
+    assert np.all(np.isfinite(training_scores)), "Training scores contain NaN or inf"
+    print(f"   ✓ Training scores are finite (raw logits)")
     
     # Test single candidate scoring
     single_cand = np.random.randint(0, 1000, (batch_size, 132), dtype=np.int32)
@@ -175,11 +174,10 @@ def test_naml_call_method(naml_model, batch_size=2):
     print(f"   ✓ Training output shape: {training_output.shape}")
     assert training_output.shape == (batch_size, 5), f"Expected shape (batch_size, 5), got {training_output.shape}"
     
-    # Verify softmax output
-    score_sums = np.sum(training_output, axis=-1)
-    assert np.allclose(score_sums, 1.0, rtol=1e-5), f"Softmax scores don't sum to 1: {score_sums}"
-    print(f"   ✓ Training outputs are valid softmax scores")
-    
+    # Verify logit output
+    assert np.all(np.isfinite(training_output)), "Training scores contain NaN or inf"
+    print(f"   ✓ Training outputs are valid logits")
+
     # Test 2: Using the compatibility training_model with concatenated inputs
     print("\n2. Testing compatibility training_model...")
     dummy_data = create_dummy_data(batch_size)
@@ -192,10 +190,9 @@ def test_naml_call_method(naml_model, batch_size=2):
     print(f"   ✓ Training model output shape: {training_output.shape}")
     assert training_output.shape == (batch_size, 5), f"Expected shape (batch_size, 5), got {training_output.shape}"
     
-    # Verify softmax output
-    score_sums = np.sum(training_output, axis=-1)
-    assert np.allclose(score_sums, 1.0, rtol=1e-5), f"Softmax scores don't sum to 1: {score_sums}"
-    print(f"   ✓ Training model outputs are valid softmax scores")
+    # Verify logit output
+    assert np.all(np.isfinite(training_output)), "Training scores contain NaN or inf"
+    print(f"   ✓ Training model outputs are valid logits")
     
     # Test 3: Using the scorer_model for single candidate
     print("\n3. Testing scorer_model for single candidate...")
@@ -246,7 +243,7 @@ def test_naml_compilation(naml_model, batch_size=2):
     print("\n1. Compiling model...")
     naml_model.compile(
         optimizer=keras.optimizers.Adam(learning_rate=1e-4),
-        loss=keras.losses.CategoricalCrossentropy(from_logits=False),
+        loss=keras.losses.CategoricalCrossentropy(from_logits=True),
         metrics=[keras.metrics.CategoricalAccuracy()],
     )
     print("   ✓ Model compiled successfully")

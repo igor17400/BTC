@@ -202,7 +202,7 @@ class NRMSScorer(keras.Model):
         super().build(input_shape)
 
     def score_training_batch(self, history_tokens, candidate_tokens, training=None):
-        """Score a training batch with softmax over candidates."""
+        """Score a training batch (raw logits — loss handles softmax)."""
         user_repr = self.user_encoder(history_tokens, training=training)
 
         # Process candidates using stored TimeDistributed layer
@@ -210,13 +210,12 @@ class NRMSScorer(keras.Model):
             candidate_tokens, training=training
         )
 
-        # Calculate scores using dot product
+        # Calculate scores using dot product (raw logits)
         scores = layers.Dot(axes=-1, name="dot_product_train")(
             [candidate_repr, user_repr]
         )
 
-        # Apply softmax for training
-        return layers.Activation("softmax", name="softmax_activation")(scores)
+        return scores
 
     def score_single(self, history_tokens, candidate_tokens, training=None):
         """Score a single candidate with sigmoid."""

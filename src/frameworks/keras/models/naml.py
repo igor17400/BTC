@@ -443,7 +443,7 @@ class NAMLScorer(keras.Model):
         super().build(input_shape)
 
     def score_training_batch(self, history_inputs, candidate_inputs, training=None):
-        """Score training batch with softmax output.
+        """Score training batch (raw logits — loss handles softmax).
 
         Args:
             history_inputs: Concatenated history tensor (batch_size, history_length, feature_size)
@@ -451,7 +451,7 @@ class NAMLScorer(keras.Model):
             training: Whether in training mode
 
         Returns:
-            Softmax scores (batch_size, num_candidates)
+            Raw logit scores (batch_size, num_candidates)
         """
         # Get user representation from concatenated history
         # Always use training=True for training batch
@@ -464,12 +464,10 @@ class NAMLScorer(keras.Model):
         # Expand user representation for broadcasting
         user_repr_expanded = ops.expand_dims(user_repr, axis=1)  # (batch_size, 1, cnn_filter_num)
 
-        # Calculate scores using dot product
+        # Calculate scores using dot product (raw logits)
         scores = ops.sum(candidate_reprs * user_repr_expanded, axis=-1)  # (batch_size, num_candidates)
 
-        # Apply softmax for training
-        output = ops.softmax(scores, axis=-1)
-        return output
+        return scores
 
     def score_single_candidate(self, history_inputs, candidate_inputs, training=None):
         """Score single candidate with sigmoid output.
@@ -759,7 +757,7 @@ class NAML(BaseModel):
                 raise ValueError("Invalid input format for inference mode")
 
     def _handle_training(self, inputs):
-        """Handle training batch scoring with softmax output."""
+        """Handle training batch scoring (raw logits)."""
         # Concatenate history inputs
         history_concat = ops.concatenate([
             inputs["hist_tokens"],
