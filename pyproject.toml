@@ -45,9 +45,12 @@ pytorch = ["keras>=3.10.0", "torch>=2.6.0"]
 pytorch-cu126 = ["keras>=3.10.0", "torch>=2.6.0"]
 all = ["newsrex[jax]", "newsrex[pytorch]"]
 all-cu126 = ["newsrex[jax-cuda]", "newsrex[pytorch-cu126]"]
+# Hyperparameter search
+search = ["optuna>=3.6.0", "optuna-dashboard>=0.15.0"]
 # Development
 dev = [
   "newsrex[all]",
+  "newsrex[search]",
   "pytest>=7.4.0",
   "ruff>=0.8.0",
   "mypy>=1.4.0",
