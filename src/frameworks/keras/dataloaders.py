@@ -223,6 +223,7 @@ class NewsBatchDataloader:
         process_abstract: bool = True,
         process_category: bool = True,
         process_subcategory: bool = True,
+        news_entity_indices: np.ndarray | None = None,
     ):
         """Initialize the news batch dataloader."""
         self.news_ids = news_ids  # Keep as numpy for string IDs
@@ -230,6 +231,7 @@ class NewsBatchDataloader:
         self.news_abstract_tokens = news_abstract_tokens
         self.news_category_indices = news_category_indices
         self.news_subcategory_indices = news_subcategory_indices
+        self.news_entity_indices = news_entity_indices
         self.batch_size = batch_size
         self.num_news = len(news_ids)
 
@@ -252,6 +254,9 @@ class NewsBatchDataloader:
                 batch_features.append(self.news_tokens[i:end_idx])
             if self.process_abstract:
                 batch_features.append(self.news_abstract_tokens[i:end_idx])
+            # Entity indices (between title/abstract and category, matching model input order)
+            if self.news_entity_indices is not None:
+                batch_features.append(self.news_entity_indices[i:end_idx])
             if self.process_category:
                 category = self.news_category_indices[i:end_idx]
                 if len(keras.ops.shape(category)) == 1:
@@ -292,6 +297,8 @@ class UserHistoryBatchDataloader:
         process_abstract: bool = True,
         process_category: bool = True,
         process_subcategory: bool = True,
+        history_entity_indices: Any = None,
+        history_ctr: Any = None,
     ):
         """Initialize the user history dataloader."""
         self.history_tokens = history_tokens
@@ -300,6 +307,8 @@ class UserHistoryBatchDataloader:
         self.history_subcategory = history_subcategory
         self.impression_ids = impression_ids
         self.user_ids = user_ids
+        self.history_entity_indices = history_entity_indices
+        self.history_ctr = history_ctr
         self.batch_size = batch_size
         self.num_users = len(impression_ids)
 
@@ -334,6 +343,11 @@ class UserHistoryBatchDataloader:
             if self.process_abstract:
                 batch_features.append(
                     keras.ops.convert_to_tensor(self.history_abstract_tokens[i:end_idx])
+                )
+            # Entity indices (between title/abstract and category)
+            if self.history_entity_indices is not None:
+                batch_features.append(
+                    keras.ops.convert_to_tensor(self.history_entity_indices[i:end_idx])
                 )
             if self.process_category:
                 category = keras.ops.convert_to_tensor(self.history_category[i:end_idx])

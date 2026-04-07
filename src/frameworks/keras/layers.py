@@ -113,6 +113,89 @@ class AdditiveAttention(layers.Layer):
         return input_shape[0], input_shape[-1]
 
 
+class AttentivePoolingQKY(layers.Layer):
+    """Attentive pooling where attention keys differ from values.
+
+    Computes attention weights from ``key_input`` (e.g. concatenated
+    content + popularity embeddings) but returns a weighted sum of
+    ``value_input`` (e.g. content embeddings only).
+
+    Used in PP-Rec's Content-Popularity Joint Attention (CPJA).
+
+    Args:
+        query_vec_dim: Hidden dimension for the attention MLP.
+        seed: Random seed for reproducibility.
+    """
+
+    def __init__(self, query_vec_dim=200, seed=0, **kwargs):
+        super().__init__(**kwargs)
+        self.dim = query_vec_dim
+        self.seed = seed
+
+    def build(self, input_shape):
+        if not isinstance(input_shape, (list, tuple)) or len(input_shape) != 2:
+            raise ValueError(
+                "AttentivePoolingQKY expects two inputs: [key_input, value_input]."
+            )
+        key_shape = input_shape[0]
+
+        self.W = self.add_weight(
+            name="W",
+            shape=(key_shape[-1], self.dim),
+            initializer=keras.initializers.GlorotUniform(seed=self.seed),
+            trainable=True,
+        )
+        self.b = self.add_weight(
+            name="b",
+            shape=(self.dim,),
+            initializer=keras.initializers.Zeros(),
+            trainable=True,
+        )
+        self.q = self.add_weight(
+            name="q",
+            shape=(self.dim, 1),
+            initializer=keras.initializers.GlorotUniform(seed=self.seed),
+            trainable=True,
+        )
+        super().build(input_shape)
+
+    def call(self, inputs, mask=None):
+        """Forward pass.
+
+        Args:
+            inputs: List of [key_input, value_input].
+                key_input: (batch, seq_len, key_dim) — used for attention weights.
+                value_input: (batch, seq_len, val_dim) — aggregated by attention.
+            mask: Optional boolean mask (batch, seq_len).
+
+        Returns:
+            Weighted sum of value_input: (batch, val_dim).
+        """
+        key_input, value_input = inputs
+
+        attention_hidden = ops.tanh(ops.matmul(key_input, self.W) + self.b)
+        attention_scores = ops.squeeze(ops.matmul(attention_hidden, self.q), axis=-1)
+
+        if mask is None:
+            attention = ops.exp(attention_scores)
+        else:
+            attention = ops.exp(attention_scores) * ops.cast(
+                mask, dtype=self.compute_dtype
+            )
+
+        attention_weights = attention / (
+            ops.sum(attention, axis=-1, keepdims=True) + keras.backend.epsilon()
+        )
+
+        attention_weights_expanded = ops.expand_dims(attention_weights, axis=-1)
+        weighted_input = value_input * attention_weights_expanded
+        return ops.sum(weighted_input, axis=1)
+
+    def compute_output_shape(self, input_shape):
+        _, value_shape = input_shape
+        return (value_shape[0], value_shape[-1])
+
+
 class ComputeMasking(layers.Layer):
     """Compute if inputs contains zero value.
 

@@ -138,30 +138,35 @@ def process_behaviors(
 
     # Build fast lookup dicts from processed news
     news_ids_str = processed_news["news_ids_original_strings"]
+    news_int_ids = [parse_news_id(nid) for nid in news_ids_str]
     news_tokens: dict[int, np.ndarray] = dict(
-        zip(
-            [parse_news_id(nid) for nid in news_ids_str],
-            processed_news["tokens"],
-        )
+        zip(news_int_ids, processed_news["tokens"])
     )
     news_abstract_tokens: dict[int, np.ndarray] = dict(
-        zip(
-            [parse_news_id(nid) for nid in news_ids_str],
-            processed_news["abstract_tokens"],
-        )
+        zip(news_int_ids, processed_news["abstract_tokens"])
     )
     news_categories: dict[int, int] = dict(
-        zip(
-            [parse_news_id(nid) for nid in news_ids_str],
-            processed_news["category_indices"],
-        )
+        zip(news_int_ids, processed_news["category_indices"])
     )
     news_subcategories: dict[int, int] = dict(
-        zip(
-            [parse_news_id(nid) for nid in news_ids_str],
-            processed_news["subcategory_indices"],
-        )
+        zip(news_int_ids, processed_news["subcategory_indices"])
     )
+
+    # Entity indices (optional, for PP-Rec)
+    has_entities = "entity_indices" in processed_news
+    news_entity_indices: dict[int, np.ndarray] = {}
+    if has_entities:
+        news_entity_indices = dict(
+            zip(news_int_ids, processed_news["entity_indices"])
+        )
+
+    # CTR data (optional, for PP-Rec)
+    has_ctr = "news_ctr" in processed_news
+    news_ctr_values: dict[int, float] = {}
+    if has_ctr:
+        news_ctr_values = dict(
+            zip(news_int_ids, processed_news["news_ctr"])
+        )
 
     # Accumulator lists
     histories_news_ids: list[list] = []
@@ -169,11 +174,15 @@ def process_behaviors(
     history_news_abstract_tokens: list[list] = []
     history_news_categories: list[list] = []
     history_news_subcategories: list[list] = []
+    history_news_entities: list[list] = []
+    history_news_ctr: list[list] = []
     candidate_news_ids: list[list] = []
     candidate_news_tokens: list[list] = []
     candidate_news_abstract_tokens: list[list] = []
     candidate_news_categories: list[list] = []
     candidate_news_subcategories: list[list] = []
+    candidate_news_entities: list[list] = []
+    candidate_news_ctr: list[list] = []
     labels: list[list] = []
     impression_ids: list[int] = []
     user_ids: list[str] = []
@@ -276,6 +285,16 @@ def process_behaviors(
             curr_history_subcategories = [
                 news_subcategories[h_idx] for h_idx in history_nid_list
             ]
+            curr_history_entities = (
+                [news_entity_indices[h_idx].tolist() for h_idx in history_nid_list]
+                if has_entities
+                else []
+            )
+            curr_history_ctr = (
+                [news_ctr_values.get(h_idx, 0.0) for h_idx in history_nid_list]
+                if has_ctr
+                else []
+            )
 
             # Pad history to max_history_length
             history_pad_length = max_history_length - len(history_nid_list)
@@ -291,6 +310,13 @@ def process_behaviors(
             curr_history_subcategories = (
                 [0] * history_pad_length + curr_history_subcategories
             )
+            if has_entities:
+                max_ent = len(curr_history_entities[0]) if curr_history_entities else 5
+                curr_history_entities = (
+                    [[0] * max_ent] * history_pad_length + curr_history_entities
+                )
+            if has_ctr:
+                curr_history_ctr = [0.0] * history_pad_length + curr_history_ctr
 
             # Sample candidate news
             cand_nid_group_list, label_group_list = sampler.sample_candidates_news(
@@ -310,6 +336,16 @@ def process_behaviors(
                     history_news_abstract_tokens.append(curr_history_abstract_tokens)
                     history_news_categories.append(curr_history_categories)
                     history_news_subcategories.append(curr_history_subcategories)
+                    if has_entities:
+                        history_news_entities.append(curr_history_entities)
+                        candidate_news_entities.append(
+                            [news_entity_indices[nid].tolist() for nid in cand_nid_group]
+                        )
+                    if has_ctr:
+                        history_news_ctr.append(curr_history_ctr)
+                        candidate_news_ctr.append(
+                            [news_ctr_values.get(nid, 0.0) for nid in cand_nid_group]
+                        )
                     candidate_news_ids.append(cand_nid_group)
                     candidate_news_tokens.append(
                         [news_tokens[nid] for nid in cand_nid_group]
@@ -334,6 +370,17 @@ def process_behaviors(
                 history_news_abstract_tokens.append(curr_history_abstract_tokens)
                 history_news_categories.append(curr_history_categories)
                 history_news_subcategories.append(curr_history_subcategories)
+                if has_entities:
+                    history_news_entities.append(curr_history_entities)
+                    candidate_news_entities.append(
+                        [news_entity_indices.get(nid, np.zeros(5, dtype=np.int32)).tolist()
+                         for nid in cand_nid_group]
+                    )
+                if has_ctr:
+                    history_news_ctr.append(curr_history_ctr)
+                    candidate_news_ctr.append(
+                        [news_ctr_values.get(nid, 0.0) for nid in cand_nid_group]
+                    )
                 candidate_news_ids.append(cand_nid_group)
                 candidate_news_tokens.append(
                     [news_tokens[nid] for nid in cand_nid_group]
@@ -385,6 +432,20 @@ def process_behaviors(
                 "impression_ids": np.array(impression_ids, dtype=np.int32),
                 "user_ids": np.array(user_ids, dtype=np.int32),
             }
+            if has_entities and history_news_entities:
+                result["history_news_entities"] = np.array(
+                    history_news_entities, dtype=np.int32
+                )
+                result["candidate_news_entities"] = np.array(
+                    candidate_news_entities, dtype=np.int32
+                )
+            if has_ctr and history_news_ctr:
+                result["history_news_ctr"] = np.array(
+                    history_news_ctr, dtype=np.float32
+                )
+                result["candidate_news_ctr"] = np.array(
+                    candidate_news_ctr, dtype=np.float32
+                )
         else:
             result = {
                 "histories_news_ids": histories_news_ids,
@@ -401,6 +462,12 @@ def process_behaviors(
                 "impression_ids": impression_ids,
                 "user_ids": user_ids,
             }
+            if has_entities and history_news_entities:
+                result["history_news_entities"] = history_news_entities
+                result["candidate_news_entities"] = candidate_news_entities
+            if has_ctr and history_news_ctr:
+                result["history_news_ctr"] = history_news_ctr
+                result["candidate_news_ctr"] = candidate_news_ctr
 
         total_processed_rows = len(histories_news_ids)
         expansion_factor = (

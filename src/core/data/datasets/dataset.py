@@ -97,6 +97,7 @@ class NewsDatasetBase(BaseNewsDataset):
         process_category: bool = True,
         process_subcategory: bool = True,
         process_user_id: bool = False,
+        process_entities: bool = False,
         max_entities: int = 1000,
         max_relations: int = 500,
         download_if_missing: bool = True,
@@ -145,6 +146,7 @@ class NewsDatasetBase(BaseNewsDataset):
         self.process_category = process_category
         self.process_subcategory = process_subcategory
         self.process_user_id = process_user_id
+        self.process_entities = process_entities
 
         self.float_dtype = "float32"
 
@@ -202,6 +204,8 @@ class NewsDatasetBase(BaseNewsDataset):
             self._auto_split_behaviors_file()
 
         self.processed_news = self.process_news()
+        if self.process_entities:
+            self._compute_news_ctr()
         self._load_data(mode)
         self._compute_num_users()
 
@@ -444,6 +448,8 @@ class NewsDatasetBase(BaseNewsDataset):
                 segment_text_fn=self._segment_text_into_words,
                 create_embeddings_fn=_create_embeddings_fn,
                 console=console,
+                process_entities=self.process_entities,
+                max_entities=self.max_entities,
             )
         )
 
@@ -587,6 +593,57 @@ class NewsDatasetBase(BaseNewsDataset):
                 f"Computed num_users: {num_users} "
                 f"(max user ID + 1 from {len(all_user_ids)} unique users across all splits)"
             )
+
+    def _compute_news_ctr(self) -> None:
+        """Compute aggregate CTR for each news article from training behaviors.
+
+        Reads the raw training behaviors.tsv, counts clicks and impressions
+        per news article, and stores CTR values in ``processed_news["news_ctr"]``.
+        Used by PP-Rec for popularity modeling.
+        """
+        ctr_cache = self.dataset_path / "processed" / "news_ctr.npy"
+        if ctr_cache.exists():
+            logger.info("Loading cached news CTR data...")
+            self.processed_news["news_ctr"] = np.load(ctr_cache)
+            return
+
+        train_path = self.dataset_path / "train" / "behaviors.tsv"
+        if not train_path.exists():
+            logger.warning("No training behaviors found — CTR computation skipped.")
+            return
+
+        logger.info("Computing per-news CTR from training behaviors...")
+        news_ids_str = self.processed_news["news_ids_original_strings"]
+        news_str_to_idx = {nid: i for i, nid in enumerate(news_ids_str)}
+        num_news = len(news_ids_str)
+
+        click_counts = np.zeros(num_news, dtype=np.float32)
+        impression_counts = np.zeros(num_news, dtype=np.float32)
+
+        df = pd.read_csv(
+            train_path, sep="\t", header=None,
+            names=["impression_id", "user_id", "time", "history", "impressions"],
+        )
+        for impressions_str in df["impressions"]:
+            if pd.isna(impressions_str):
+                continue
+            for item in str(impressions_str).split():
+                parts = item.split("-")
+                if len(parts) >= 2:
+                    nid_str, label = parts[0], parts[1]
+                    idx = news_str_to_idx.get(nid_str)
+                    if idx is not None:
+                        impression_counts[idx] += 1.0
+                        if label == "1":
+                            click_counts[idx] += 1.0
+
+        news_ctr = click_counts / (impression_counts + 0.01)
+        self.processed_news["news_ctr"] = news_ctr
+        np.save(ctr_cache, news_ctr)
+        logger.info(
+            f"Computed CTR for {int((impression_counts > 0).sum())} news articles "
+            f"(mean CTR={news_ctr[impression_counts > 0].mean():.4f})"
+        )
 
     def _process_data(self) -> None:
         """Process train/val/test data and save to disk."""

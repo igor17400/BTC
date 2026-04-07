@@ -55,3 +55,4 @@ process_abstract: false
 process_category: false
 process_subcategory: false
 process_user_id: false
+process_entities: false

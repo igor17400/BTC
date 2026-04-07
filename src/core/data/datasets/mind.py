@@ -38,6 +38,7 @@ class MINDDataset(NewsDatasetBase):
             process_category: bool = True,
             process_subcategory: bool = True,
             process_user_id: bool = False,
+            process_entities: bool = False,
             max_entities: int = 1000,
             max_relations: int = 500,
             **kwargs
@@ -71,6 +72,7 @@ class MINDDataset(NewsDatasetBase):
             process_category=process_category,
             process_subcategory=process_subcategory,
             process_user_id=process_user_id,
+            process_entities=process_entities,
             max_entities=max_entities,
             max_relations=max_relations,
             download_if_missing=True,

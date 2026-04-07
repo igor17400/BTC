@@ -51,7 +51,7 @@ training:
     label_smoothing: 0.0
   optimizer: adam
   learning_rate: 0.0001
-  batch_size: 16
+  batch_size: 512
   num_epochs: 10
   early_stopping:
     patience: 5

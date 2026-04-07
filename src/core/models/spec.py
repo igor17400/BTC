@@ -9,7 +9,7 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from .configs import CROWNConfig, LSTURConfig, NAMLConfig, NRMSConfig
+from .configs import CROWNConfig, LSTURConfig, NAMLConfig, NRMSConfig, PPRecConfig
 
 # ---------------------------------------------------------------------------
 # Spec → Config translation functions
@@ -120,11 +120,43 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
 # Spec → Config dispatcher
 # ---------------------------------------------------------------------------
 
+def spec_to_pprec_config(spec: DictConfig) -> PPRecConfig:
+    """Convert a parsed PP-Rec spec into PPRecConfig."""
+    arch = spec.model.architecture
+    ne = arch.news_encoder
+    return PPRecConfig(
+        embedding_size=spec.model.embedding.size,
+        news_dim=ne.get("news_dim", 400),
+        entity_embedding_dim=ne.get("entity_embedding_dim", 100),
+        category_embedding_dim=ne.get("category_embedding_dim", 200),
+        num_heads=ne.num_heads,
+        head_dim=ne.head_dim,
+        attention_hidden_dim=ne.attention_hidden_dim,
+        popularity_embedding_bins=arch.get("popularity_embedding_bins", 200),
+        popularity_embedding_dim=arch.get("popularity_embedding_dim", 400),
+        recency_embedding_bins=arch.get("recency_embedding_bins", 1500),
+        recency_embedding_dim=arch.get("recency_embedding_dim", 100),
+        ctr_scaler_init=arch.get("ctr_scaler_init", 19.0),
+        use_entity=arch.get("use_entity", True),
+        use_recency=arch.get("use_recency", True),
+        use_ctr=arch.get("use_ctr", True),
+        use_activity_gate=arch.get("use_activity_gate", True),
+        dropout_rate=spec.model.dropout_rate,
+        seed=spec.model.seed,
+        max_title_length=spec.inputs.title.max_length,
+        max_history_length=spec.inputs.history.max_length,
+        max_impressions_length=spec.inputs.impressions.max_length,
+        max_entities=spec.inputs.get("max_entities", 5),
+        process_user_id=spec.inputs.get("process_user_id", False),
+    )
+
+
 _SPEC_CONVERTERS = {
     "nrms": spec_to_nrms_config,
     "naml": spec_to_naml_config,
     "lstur": spec_to_lstur_config,
     "crown": spec_to_crown_config,
+    "pprec": spec_to_pprec_config,
 }
 
 
@@ -157,6 +189,7 @@ _MODEL_CLASS_PATHS = {
         "naml": "src.frameworks.keras.models.naml.NAML",
         "lstur": "src.frameworks.keras.models.lstur.LSTUR",
         "crown": "src.frameworks.keras.models.crown.CROWN",
+        "pprec": "src.frameworks.keras.models.pprec.PPRec",
     },
     "pytorch": {
         "nrms": "src.frameworks.pytorch.models.nrms.NRMS",

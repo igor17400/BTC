@@ -115,3 +115,48 @@ class CROWNConfig:
 
     # Training parameters
     process_user_id: bool = False
+
+
+@dataclass
+class PPRecConfig:
+    """Configuration class for PP-Rec model parameters.
+
+    PP-Rec: News Recommendation with Personalized User Interest and
+    Time-aware News Popularity (ACL 2021).
+    """
+
+    # Embedding dimensions
+    embedding_size: int = 300
+    news_dim: int = 400
+    entity_embedding_dim: int = 100
+    category_embedding_dim: int = 200
+
+    # Multi-head attention
+    num_heads: int = 20
+    head_dim: int = 20
+    attention_hidden_dim: int = 200
+
+    # Popularity embeddings
+    popularity_embedding_bins: int = 200
+    popularity_embedding_dim: int = 400
+    recency_embedding_bins: int = 1500
+    recency_embedding_dim: int = 100
+    ctr_scaler_init: float = 19.0
+
+    # Feature flags
+    use_entity: bool = True
+    use_recency: bool = True
+    use_ctr: bool = True
+    use_activity_gate: bool = True
+
+    # Training
+    dropout_rate: float = 0.2
+    seed: int = 42
+
+    # Input constraints
+    max_title_length: int = 32
+    max_history_length: int = 50
+    max_impressions_length: int = 5
+    max_entities: int = 5
+
+    process_user_id: bool = False

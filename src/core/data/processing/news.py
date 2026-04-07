@@ -4,6 +4,7 @@ Standalone functions extracted from NewsDatasetBase for reading news TSV files,
 tokenizing titles/abstracts, and orchestrating the full news processing pipeline.
 """
 
+import json
 import logging
 import os
 import pickle
@@ -167,6 +168,95 @@ def tokenize_all_news(
     return tokenized_titles_np, tokenized_abstracts_np
 
 
+def load_entity_embeddings(dataset_path: Path) -> dict[str, np.ndarray]:
+    """Load pre-trained entity embeddings from MIND entity_embedding.vec files.
+
+    Args:
+        dataset_path: Root dataset path containing train/valid/test splits.
+
+    Returns:
+        Dict mapping WikidataId (e.g. "Q12345") to 100-dim numpy vectors.
+    """
+    entity_emb_dict: dict[str, np.ndarray] = {}
+    for split in ("train", "valid", "test"):
+        emb_path = dataset_path / split / "entity_embedding.vec"
+        if not emb_path.exists():
+            continue
+        with open(emb_path, "r", encoding="utf-8") as f:
+            for line in f:
+                parts = line.strip().split("\t")
+                if len(parts) >= 2:
+                    entity_id = parts[0]
+                    vec = np.array([float(x) for x in parts[1:]], dtype=np.float32)
+                    if entity_id not in entity_emb_dict:
+                        entity_emb_dict[entity_id] = vec
+    logger.info(f"Loaded {len(entity_emb_dict)} entity embeddings")
+    return entity_emb_dict
+
+
+def parse_entity_indices(
+    all_news_df: pd.DataFrame,
+    news_str_id_to_int_idx: dict[str, int],
+    entity_emb_dict: dict[str, np.ndarray],
+    max_entities: int = 5,
+) -> tuple[np.ndarray, np.ndarray, int]:
+    """Parse entity IDs from news title_entities column and build index arrays.
+
+    Args:
+        all_news_df: DataFrame with ``title_entities`` column (JSON arrays).
+        news_str_id_to_int_idx: News string ID to int index mapping.
+        entity_emb_dict: Pre-loaded entity embeddings.
+        max_entities: Max entities per news article.
+
+    Returns:
+        Tuple of (entity_indices, entity_embedding_matrix, entity_vocab_size).
+        entity_indices: (num_news, max_entities) int32 array.
+        entity_embedding_matrix: (entity_vocab_size, emb_dim) float32 array.
+    """
+    # Build entity vocabulary from entities that have embeddings
+    entity_to_idx: dict[str, int] = {}  # WikidataId -> index (1-based, 0 = pad)
+    emb_dim = 0
+    for vec in entity_emb_dict.values():
+        emb_dim = len(vec)
+        break
+
+    num_news = len(all_news_df["id"].unique())
+    entity_indices = np.zeros((num_news, max_entities), dtype=np.int32)
+
+    for nid_str, entities_str in zip(
+        all_news_df["id"], all_news_df["title_entities"]
+    ):
+        int_idx = news_str_id_to_int_idx.get(nid_str)
+        if int_idx is None:
+            continue
+
+        try:
+            entities = json.loads(str(entities_str)) if entities_str else []
+        except (json.JSONDecodeError, TypeError):
+            entities = []
+
+        for i, ent in enumerate(entities[:max_entities]):
+            wikidata_id = ent.get("WikidataId", "")
+            if wikidata_id and wikidata_id in entity_emb_dict:
+                if wikidata_id not in entity_to_idx:
+                    entity_to_idx[wikidata_id] = len(entity_to_idx) + 1  # 1-based
+                entity_indices[int_idx, i] = entity_to_idx[wikidata_id]
+
+    # Build embedding matrix (index 0 = zero padding)
+    entity_vocab_size = len(entity_to_idx) + 1
+    entity_embedding_matrix = np.zeros(
+        (entity_vocab_size, emb_dim), dtype=np.float32
+    )
+    for wikidata_id, idx in entity_to_idx.items():
+        entity_embedding_matrix[idx] = entity_emb_dict[wikidata_id]
+
+    logger.info(
+        f"Built entity vocabulary: {entity_vocab_size} entities "
+        f"(embedding dim={emb_dim}), max_entities={max_entities}"
+    )
+    return entity_indices, entity_embedding_matrix, entity_vocab_size
+
+
 def process_news(
     dataset_path: Path,
     word_threshold: int = 3,
@@ -181,6 +271,8 @@ def process_news(
     create_embeddings_fn: Callable | None = None,
     tokenize_fn: Callable | None = None,
     console: Console | None = None,
+    process_entities: bool = False,
+    max_entities: int = 5,
 ) -> tuple[dict[str, Any], dict[str, int], dict[str, int]]:
     """Orchestrate full news processing: vocab building, tokenization, embeddings.
 
@@ -333,5 +425,38 @@ def process_news(
         processed_news_content["embeddings"] = np.load(embeddings_file)
 
     processed_news_content["vocab"] = vocab
+
+    # --- Entity processing (optional, for PP-Rec) ---
+    if process_entities:
+        entity_cache = processed_path / f"entity_data_max{max_entities}.pkl"
+        if entity_cache.exists():
+            logger.info("Loading cached entity data...")
+            with open(entity_cache, "rb") as f:
+                entity_data = pickle.load(f)
+            processed_news_content["entity_indices"] = entity_data["entity_indices"]
+            processed_news_content["entity_embeddings"] = entity_data["entity_embeddings"]
+            processed_news_content["entity_vocab_size"] = entity_data["entity_vocab_size"]
+        else:
+            logger.info("Processing entity embeddings...")
+            entity_emb_dict = load_entity_embeddings(dataset_path)
+            if entity_emb_dict:
+                all_news_df = read_all_news(dataset_path)
+                entity_indices, entity_emb_matrix, entity_vocab_size = (
+                    parse_entity_indices(
+                        all_news_df, news_str_id_to_int_idx,
+                        entity_emb_dict, max_entities=max_entities,
+                    )
+                )
+                processed_news_content["entity_indices"] = entity_indices
+                processed_news_content["entity_embeddings"] = entity_emb_matrix
+                processed_news_content["entity_vocab_size"] = entity_vocab_size
+                with open(entity_cache, "wb") as f:
+                    pickle.dump({
+                        "entity_indices": entity_indices,
+                        "entity_embeddings": entity_emb_matrix,
+                        "entity_vocab_size": entity_vocab_size,
+                    }, f)
+            else:
+                logger.warning("No entity embeddings found — entity features disabled.")
 
     return processed_news_content, vocab, news_str_id_to_int_idx

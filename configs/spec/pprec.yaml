@@ -1,18 +1,24 @@
 model:
-  name: nrms
+  name: pprec
   architecture:
     news_encoder:
       type: multi_head_self_attention
+      news_dim: 400
       num_heads: 20
-      head_dim: 15
+      head_dim: 20
       attention_hidden_dim: 200
-    user_encoder:
-      type: multi_head_self_attention
-      num_heads: 20
-      head_dim: 15
-      attention_hidden_dim: 200
-    click_predictor:
-      type: dot_product
+      entity_embedding_dim: 100
+      category_embedding_dim: 200
+    # Popularity components
+    use_entity: true
+    use_recency: true
+    use_ctr: true
+    use_activity_gate: true
+    popularity_embedding_bins: 200
+    popularity_embedding_dim: 400
+    recency_embedding_bins: 1500
+    recency_embedding_dim: 100
+    ctr_scaler_init: 19.0
   embedding:
     size: 300
     trainable: true
@@ -23,9 +29,10 @@ inputs:
   title: { max_length: 32 }
   history: { max_length: 50 }
   impressions: { max_length: 5 }
+  max_entities: 5
   process_title: true
   process_abstract: false
-  process_category: false
+  process_category: true
   process_subcategory: false
   process_user_id: false
 
