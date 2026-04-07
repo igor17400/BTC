@@ -87,7 +87,7 @@ class EvaluationCallback(keras.callbacks.Callback):
             if wandb.run and self.wandb_history is not None:
                 payload = {f"val/{k}": v for k, v in val_metrics.items()}
                 payload["train/loss"] = train_loss
-                log_metrics_to_wandb_fn(payload, epoch + 1, self.wandb_history)
+                log_metrics_to_wandb_fn(payload, epoch, self.wandb_history)
 
         log_epoch_end(
             epoch=epoch + 1,

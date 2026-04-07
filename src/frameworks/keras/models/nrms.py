@@ -4,7 +4,7 @@ import keras
 from keras import layers, ops
 
 from src.core.models.configs import NRMSConfig
-from src.frameworks.keras.layers import AdditiveAttention
+from src.frameworks.keras.layers import AdditiveAttention, GlorotUniformMHA
 from src.frameworks.keras.models.base import BaseModel
 
 
@@ -33,7 +33,7 @@ class NewsEncoder(keras.Model):
             num_heads=self.config.multiheads,
             key_dim=self.config.head_dim,
             dropout=self.config.dropout_rate,
-            kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
+            kernel_initializer=GlorotUniformMHA(),
             name="title_word_self_attention",
         )
         self.dropout2 = layers.Dropout(
@@ -115,7 +115,7 @@ class UserEncoder(keras.Model):
             num_heads=self.config.multiheads,
             key_dim=self.config.head_dim,
             dropout=self.config.dropout_rate,
-            kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
+            kernel_initializer=GlorotUniformMHA(),
             name="browsed_news_self_attention",
         )
         self.user_additive_attention = AdditiveAttention(

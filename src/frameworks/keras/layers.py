@@ -2,6 +2,55 @@ import keras
 from keras import layers, ops
 
 # ---------------------------------------------------------------------------
+# Initializers
+# ---------------------------------------------------------------------------
+
+
+class GlorotUniformMHA(keras.initializers.Initializer):
+    """GlorotUniform with the *correct* fan computation for MHA EinsumDense kernels.
+
+    Keras 3's ``MultiHeadAttention`` stores Q/K/V projections as 3D einsum
+    kernels of shape ``(input_dim, num_heads, head_dim)`` and the output
+    projection as ``(num_heads, head_dim, output_dim)``. The default
+    ``GlorotUniform`` treats these as convolution kernels and computes
+    ``fan_in = input_dim * num_heads`` and ``fan_out = input_dim * head_dim``,
+    which is **wrong** — it gives an init scale roughly 4× smaller than what
+    JAX/Flax and PyTorch use. The result is severely underscaled MHA outputs
+    and slow training.
+
+    This initializer uses the correct fans:
+        For ``(input_dim, num_heads, head_dim)``: fan_in=input_dim,
+            fan_out=num_heads*head_dim.
+        For ``(num_heads, head_dim, output_dim)``: fan_in=num_heads*head_dim,
+            fan_out=output_dim.
+        For 2D kernels: standard ``(fan_in, fan_out)``.
+    """
+
+    def __call__(self, shape, dtype=None):
+        if len(shape) == 3:
+            # Q/K/V kernel: (input_dim, num_heads, head_dim) — first dim is large
+            # Output kernel: (num_heads, head_dim, output_dim) — last dim is large
+            first = int(shape[0])
+            mid_last = int(shape[1]) * int(shape[2])
+            if first >= mid_last:
+                # Q/K/V style: fan_in = input_dim, fan_out = num_heads * head_dim
+                fan_in, fan_out = first, mid_last
+            else:
+                # Output proj style: fan_in = num_heads * head_dim, fan_out = output_dim
+                fan_in, fan_out = int(shape[0]) * int(shape[1]), int(shape[2])
+        elif len(shape) == 2:
+            fan_in, fan_out = int(shape[0]), int(shape[1])
+        else:
+            fan_in = int(shape[0])
+            fan_out = int(shape[-1])
+        limit = float((6.0 / (fan_in + fan_out)) ** 0.5)
+        return keras.random.uniform(shape, minval=-limit, maxval=limit, dtype=dtype)
+
+    def get_config(self):
+        return {}
+
+
+# ---------------------------------------------------------------------------
 # Pure-function masking utilities (isomorphic with JAX/PyTorch)
 # ---------------------------------------------------------------------------
 

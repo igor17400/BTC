@@ -198,7 +198,7 @@ class CategoryEncoder(keras.Model):
             self.config.cnn_filter_num,
             activation=self.config.activation,
             bias_initializer=keras.initializers.Zeros(),
-            kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
+            kernel_initializer=keras.initializers.GlorotUniform(),
             name="category_projection",
         )
 
@@ -265,7 +265,7 @@ class SubcategoryEncoder(keras.Model):
             self.config.cnn_filter_num,
             activation=self.config.activation,
             bias_initializer=keras.initializers.Zeros(),
-            kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
+            kernel_initializer=keras.initializers.GlorotUniform(),
             name="subcategory_projection",
         )
 

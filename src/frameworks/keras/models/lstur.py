@@ -45,7 +45,7 @@ class NewsEncoder(keras.Model):
             activation=self.config.cnn_activation,
             padding="same",
             bias_initializer=keras.initializers.Zeros(),
-            kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
+            kernel_initializer=keras.initializers.GlorotUniform(),
             name="title_cnn",
         )
         self.dropout2 = layers.Dropout(
@@ -333,7 +333,7 @@ class UserEncoder(keras.Model):
         # GRU layer
         self.gru = layers.GRU(
             self.config.gru_unit,
-            kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
+            kernel_initializer=keras.initializers.GlorotUniform(),
             recurrent_initializer=keras.initializers.GlorotUniform(
                 seed=self.config.seed
             ),
