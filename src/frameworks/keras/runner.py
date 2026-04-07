@@ -82,6 +82,10 @@ def _build_train_features(dataset_provider) -> tuple:
         # Discretize history CTR for embedding lookup: ceil(ctr * 200), capped at 199
         features["hist_ctr"] = np.minimum(np.ceil(ctr * 200).astype(np.int32), 199)
         features["cand_ctr"] = keras.ops.convert_to_numpy(data["candidate_news_ctr"])
+    if "candidate_news_recency" in data:
+        features["cand_recency"] = keras.ops.convert_to_numpy(
+            data["candidate_news_recency"]
+        )
 
     labels = keras.ops.convert_to_numpy(data["labels"])
     return features, labels

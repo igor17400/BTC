@@ -2,13 +2,79 @@
 Simplified MIND Dataset class that inherits from NewsDatasetBase.
 This class only defines MIND-specific configurations.
 """
+import logging
+
+import pandas as pd
 from omegaconf import DictConfig
 
 from src.core.data.datasets.dataset import NewsDatasetBase
+from src.core.data.processing.popularity import (
+    compute_news_ctr_and_publish_times,
+    load_popularity_cache,
+    save_popularity_cache,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class MINDDataset(NewsDatasetBase):
     """MIND (Microsoft News Dataset) implementation."""
+
+    def _compute_extra_features(self) -> None:
+        """Compute MIND-specific popularity features (CTR + publish times).
+
+        Reads ``train/behaviors.tsv`` and computes aggregate CTR, per-news
+        publish times (proxied as the earliest impression timestamp), and
+        time-bucketed CTR. Used by PP-Rec.
+        """
+        cache_dir = self.dataset_path / "processed"
+        cached = load_popularity_cache(cache_dir)
+        if cached is not None:
+            logger.info("Loading cached popularity features...")
+            news_ctr, publish_time_arr, news_ctr_bucketed = cached
+            self.processed_news["news_ctr"] = news_ctr
+            self.processed_news["news_ctr_bucketed"] = news_ctr_bucketed
+            self.processed_news["news_publish_time"] = publish_time_arr
+            return
+
+        train_path = self.dataset_path / "train" / "behaviors.tsv"
+        if not train_path.exists():
+            logger.warning(
+                "No training behaviors found — popularity features skipped."
+            )
+            return
+
+        logger.info(
+            "Computing MIND popularity features (CTR, publish times, bucketed CTR)..."
+        )
+        df = pd.read_csv(
+            train_path, sep="\t", header=None,
+            names=["impression_id", "user_id", "time", "history", "impressions"],
+        )
+        news_ids_str = self.processed_news["news_ids_original_strings"]
+        news_str_to_idx = {nid: i for i, nid in enumerate(news_ids_str)}
+
+        news_ctr, publish_time_arr, news_ctr_bucketed = (
+            compute_news_ctr_and_publish_times(
+                behaviors_df=df,
+                news_str_to_idx=news_str_to_idx,
+                num_news=len(news_ids_str),
+                bucket_hours=2,
+                max_buckets=1500,
+            )
+        )
+
+        self.processed_news["news_ctr"] = news_ctr
+        self.processed_news["news_ctr_bucketed"] = news_ctr_bucketed
+        self.processed_news["news_publish_time"] = publish_time_arr
+
+        save_popularity_cache(
+            cache_dir=cache_dir,
+            news_ctr=news_ctr,
+            publish_time_arr=publish_time_arr,
+            news_ctr_bucketed=news_ctr_bucketed,
+            news_str_to_idx=news_str_to_idx,
+        )
 
     def __init__(
             self,

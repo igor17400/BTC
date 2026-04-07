@@ -205,7 +205,7 @@ class NewsDatasetBase(BaseNewsDataset):
 
         self.processed_news = self.process_news()
         if self.process_entities:
-            self._compute_news_ctr()
+            self._compute_extra_features()
         self._load_data(mode)
         self._compute_num_users()
 
@@ -496,31 +496,81 @@ class NewsDatasetBase(BaseNewsDataset):
     # Data loading and processing (delegates to processing.behaviors)
     # ------------------------------------------------------------------
 
+    def _get_cache_key(self) -> str:
+        """Compute a short hash representing the current data-processing config.
+
+        Two runs with identical values for these fields can safely share cached
+        behaviors files; otherwise the cache is invalidated and reprocessed.
+        """
+        import hashlib
+        import json
+
+        sampling_cfg = self.sampler.config if hasattr(self.sampler, "config") else {}
+        try:
+            sampling_dict = (
+                dict(sampling_cfg) if hasattr(sampling_cfg, "keys") else {}
+            )
+        except Exception:
+            sampling_dict = {}
+
+        key_data = {
+            "max_history_length": self.max_history_length,
+            "max_impressions_length": self.max_impressions_length,
+            "max_title_length": self.max_title_length,
+            "max_abstract_length": self.max_abstract_length,
+            "process_title": self.process_title,
+            "process_abstract": self.process_abstract,
+            "process_category": self.process_category,
+            "process_subcategory": self.process_subcategory,
+            "process_user_id": self.process_user_id,
+            "process_entities": self.process_entities,
+            "max_entities": self.max_entities,
+            "random_train_samples": self.random_train_samples,
+            "validation_split_strategy": self.validation_split_strategy,
+            "validation_split_percentage": self.validation_split_percentage,
+            "validation_split_seed": self.validation_split_seed,
+            "sampling_strategy": sampling_dict.get("strategy", ""),
+        }
+        key_str = json.dumps(key_data, sort_keys=True, default=str)
+        return hashlib.md5(key_str.encode()).hexdigest()[:10]
+
+    def _cache_paths(self) -> dict[str, "Path"]:
+        """Return cache file paths for the current config."""
+        processed_path = self.dataset_path / "processed"
+        key = self._get_cache_key()
+        return {
+            "train": processed_path / f"processed_train_{key}.pkl",
+            "val": processed_path / f"processed_val_{key}.pkl",
+            "test": processed_path / f"processed_test_{key}.pkl",
+            "meta": processed_path / f"processed_meta_{key}.json",
+        }
+
     def _load_data(self, mode: str = "train") -> bool:
         """Try to load processed tensor data from disk."""
         processed_path = self.dataset_path / "processed"
+        cache = self._cache_paths()
         files_exist = (
-            (processed_path / "processed_train.pkl").exists()
-            and (processed_path / "processed_val.pkl").exists()
-            and (processed_path / "processed_test.pkl").exists()
+            cache["train"].exists()
+            and cache["val"].exists()
+            and cache["test"].exists()
         )
 
         if not files_exist:
+            logger.info(
+                f"Cache miss for config key {self._get_cache_key()} — reprocessing..."
+            )
             self._process_data()
         else:
+            logger.info(f"Cache hit for config key {self._get_cache_key()}")
             self._rebuild_id_mappings()
 
         logger.info("Files have already been processed, loading data...")
         try:
             if mode == "train":
                 logger.info("Loading train behaviors data...")
-                self.train_behaviors_data = pd.read_pickle(
-                    processed_path / "processed_train.pkl"
-                )
+                self.train_behaviors_data = pd.read_pickle(cache["train"])
                 logger.info("Loading validation behaviors data...")
-                self.val_behaviors_data = pd.read_pickle(
-                    processed_path / "processed_val.pkl"
-                )
+                self.val_behaviors_data = pd.read_pickle(cache["val"])
 
                 if self.data_fraction_train < 1.0:
                     self.train_behaviors_data = apply_data_fraction(
@@ -541,9 +591,7 @@ class NewsDatasetBase(BaseNewsDataset):
                 return True
             else:
                 logger.info("Loading test behaviors data...")
-                self.test_behaviors_data = pd.read_pickle(
-                    processed_path / "processed_test.pkl"
-                )
+                self.test_behaviors_data = pd.read_pickle(cache["test"])
 
                 if self.data_fraction_test < 1.0:
                     self.test_behaviors_data = apply_data_fraction(
@@ -594,78 +642,63 @@ class NewsDatasetBase(BaseNewsDataset):
                 f"(max user ID + 1 from {len(all_user_ids)} unique users across all splits)"
             )
 
-    def _compute_news_ctr(self) -> None:
-        """Compute aggregate CTR for each news article from training behaviors.
+    def _compute_extra_features(self) -> None:
+        """Hook for subclasses to compute dataset-specific extra features.
 
-        Reads the raw training behaviors.tsv, counts clicks and impressions
-        per news article, and stores CTR values in ``processed_news["news_ctr"]``.
-        Used by PP-Rec for popularity modeling.
+        Default no-op. Subclasses (e.g. ``MINDDataset``) override this to
+        compute features like CTR, publish times, etc., and attach them to
+        ``self.processed_news``. Called from ``__init__`` after ``process_news``
+        only when ``self.process_entities`` is true.
         """
-        ctr_cache = self.dataset_path / "processed" / "news_ctr.npy"
-        if ctr_cache.exists():
-            logger.info("Loading cached news CTR data...")
-            self.processed_news["news_ctr"] = np.load(ctr_cache)
-            return
-
-        train_path = self.dataset_path / "train" / "behaviors.tsv"
-        if not train_path.exists():
-            logger.warning("No training behaviors found — CTR computation skipped.")
-            return
-
-        logger.info("Computing per-news CTR from training behaviors...")
-        news_ids_str = self.processed_news["news_ids_original_strings"]
-        news_str_to_idx = {nid: i for i, nid in enumerate(news_ids_str)}
-        num_news = len(news_ids_str)
-
-        click_counts = np.zeros(num_news, dtype=np.float32)
-        impression_counts = np.zeros(num_news, dtype=np.float32)
-
-        df = pd.read_csv(
-            train_path, sep="\t", header=None,
-            names=["impression_id", "user_id", "time", "history", "impressions"],
-        )
-        for impressions_str in df["impressions"]:
-            if pd.isna(impressions_str):
-                continue
-            for item in str(impressions_str).split():
-                parts = item.split("-")
-                if len(parts) >= 2:
-                    nid_str, label = parts[0], parts[1]
-                    idx = news_str_to_idx.get(nid_str)
-                    if idx is not None:
-                        impression_counts[idx] += 1.0
-                        if label == "1":
-                            click_counts[idx] += 1.0
-
-        news_ctr = click_counts / (impression_counts + 0.01)
-        self.processed_news["news_ctr"] = news_ctr
-        np.save(ctr_cache, news_ctr)
-        logger.info(
-            f"Computed CTR for {int((impression_counts > 0).sum())} news articles "
-            f"(mean CTR={news_ctr[impression_counts > 0].mean():.4f})"
-        )
+        pass
 
     def _process_data(self) -> None:
         """Process train/val/test data and save to disk."""
+        import json
+
         processed_path = self.dataset_path / "processed"
+        processed_path.mkdir(parents=True, exist_ok=True)
+        cache = self._cache_paths()
 
         logger.info("Processing train data...")
         train_behaviors_dict, val_behaviors_dict = self.get_train_val_data()
 
         logger.info("Saving training data...")
-        with open(processed_path / "processed_train.pkl", "wb") as f:
+        with open(cache["train"], "wb") as f:
             pickle.dump(train_behaviors_dict, f)
 
         logger.info("Processing validation data...")
-        with open(processed_path / "processed_val.pkl", "wb") as f:
+        with open(cache["val"], "wb") as f:
             pickle.dump(val_behaviors_dict, f)
 
         logger.info("Processing test data...")
         test_behaviors_dict = self.get_test_data()
 
         logger.info("Saving test data...")
-        with open(processed_path / "processed_test.pkl", "wb") as f:
+        with open(cache["test"], "wb") as f:
             pickle.dump(test_behaviors_dict, f)
+
+        # Write metadata for debugging/inspection
+        meta = {
+            "cache_key": self._get_cache_key(),
+            "max_history_length": self.max_history_length,
+            "max_impressions_length": self.max_impressions_length,
+            "max_title_length": self.max_title_length,
+            "max_abstract_length": self.max_abstract_length,
+            "process_title": self.process_title,
+            "process_abstract": self.process_abstract,
+            "process_category": self.process_category,
+            "process_subcategory": self.process_subcategory,
+            "process_user_id": self.process_user_id,
+            "process_entities": self.process_entities,
+            "max_entities": self.max_entities,
+            "random_train_samples": self.random_train_samples,
+            "validation_split_strategy": self.validation_split_strategy,
+            "validation_split_percentage": self.validation_split_percentage,
+            "validation_split_seed": self.validation_split_seed,
+        }
+        with open(cache["meta"], "w") as f:
+            json.dump(meta, f, indent=2, default=str)
 
         self.train_behaviors_data = train_behaviors_dict
         self.val_behaviors_data = val_behaviors_dict

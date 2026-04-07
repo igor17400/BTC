@@ -168,6 +168,44 @@ def process_behaviors(
             zip(news_int_ids, processed_news["news_ctr"])
         )
 
+    # Time-aware CTR (bucketed by recency since publish time, for PP-Rec candidates)
+    has_time_ctr = (
+        "news_ctr_bucketed" in processed_news
+        and "news_publish_time" in processed_news
+    )
+    news_ctr_bucketed = processed_news.get("news_ctr_bucketed")
+    news_publish_time = processed_news.get("news_publish_time")
+    BUCKET_HOURS = 2
+    MAX_RECENCY = 1499  # NUM_BUCKETS - 1 in PPRecConfig
+
+    def _compute_recency_and_ctr(news_int_idx: int, impression_time):
+        """Return (recency_bucket, time_aware_ctr) for one candidate."""
+        if not has_time_ctr or news_publish_time is None:
+            return 0, news_ctr_values.get(news_int_idx, 0.0)
+        # news_publish_time is indexed by row position, not news_int_id
+        news_row = news_int_to_row.get(news_int_idx)
+        if news_row is None:
+            return 0, 0.0
+        pub = news_publish_time[news_row]
+        if pd.isna(pub) or pd.isna(impression_time):
+            return 0, news_ctr_values.get(news_int_idx, 0.0)
+        delta = pd.Timestamp(impression_time) - pd.Timestamp(pub)
+        delta_hours = delta.total_seconds() / 3600.0
+        bucket = int(delta_hours / BUCKET_HOURS)
+        bucket = max(0, min(bucket, MAX_RECENCY))
+        ctr_val = float(news_ctr_bucketed[news_row, bucket])
+        return bucket, ctr_val
+
+    # Map news_int_id -> row index in processed_news arrays
+    news_int_to_row: dict[int, int] = {
+        nid: i for i, nid in enumerate(news_int_ids)
+    }
+
+    # Parse impression timestamps once if we have time-aware CTR
+    if has_time_ctr and "time" in behaviors_df.columns:
+        behaviors_df = behaviors_df.copy()
+        behaviors_df["time"] = pd.to_datetime(behaviors_df["time"])
+
     # Accumulator lists
     histories_news_ids: list[list] = []
     history_news_tokens: list[list] = []
@@ -183,6 +221,7 @@ def process_behaviors(
     candidate_news_subcategories: list[list] = []
     candidate_news_entities: list[list] = []
     candidate_news_ctr: list[list] = []
+    candidate_news_recency: list[list] = []
     labels: list[list] = []
     impression_ids: list[int] = []
     user_ids: list[str] = []
@@ -327,6 +366,9 @@ def process_behaviors(
                 available_news_ids=set(news_tokens.keys()),
             )
 
+            # Impression timestamp for time-aware CTR
+            impression_time = row["time"] if has_time_ctr and "time" in row else None
+
             if stage == "train":
                 for cand_nid_group, label_group in zip(
                     cand_nid_group_list, label_group_list
@@ -343,9 +385,14 @@ def process_behaviors(
                         )
                     if has_ctr:
                         history_news_ctr.append(curr_history_ctr)
-                        candidate_news_ctr.append(
-                            [news_ctr_values.get(nid, 0.0) for nid in cand_nid_group]
-                        )
+                        # Time-aware CTR + recency for candidates
+                        cand_ctrs, cand_recs = [], []
+                        for nid in cand_nid_group:
+                            rec, ctr_val = _compute_recency_and_ctr(nid, impression_time)
+                            cand_ctrs.append(ctr_val)
+                            cand_recs.append(rec)
+                        candidate_news_ctr.append(cand_ctrs)
+                        candidate_news_recency.append(cand_recs)
                     candidate_news_ids.append(cand_nid_group)
                     candidate_news_tokens.append(
                         [news_tokens[nid] for nid in cand_nid_group]
@@ -378,9 +425,13 @@ def process_behaviors(
                     )
                 if has_ctr:
                     history_news_ctr.append(curr_history_ctr)
-                    candidate_news_ctr.append(
-                        [news_ctr_values.get(nid, 0.0) for nid in cand_nid_group]
-                    )
+                    cand_ctrs, cand_recs = [], []
+                    for nid in cand_nid_group:
+                        rec, ctr_val = _compute_recency_and_ctr(nid, impression_time)
+                        cand_ctrs.append(ctr_val)
+                        cand_recs.append(rec)
+                    candidate_news_ctr.append(cand_ctrs)
+                    candidate_news_recency.append(cand_recs)
                 candidate_news_ids.append(cand_nid_group)
                 candidate_news_tokens.append(
                     [news_tokens[nid] for nid in cand_nid_group]
@@ -446,6 +497,10 @@ def process_behaviors(
                 result["candidate_news_ctr"] = np.array(
                     candidate_news_ctr, dtype=np.float32
                 )
+                if candidate_news_recency:
+                    result["candidate_news_recency"] = np.array(
+                        candidate_news_recency, dtype=np.int32
+                    )
         else:
             result = {
                 "histories_news_ids": histories_news_ids,
@@ -468,6 +523,8 @@ def process_behaviors(
             if has_ctr and history_news_ctr:
                 result["history_news_ctr"] = history_news_ctr
                 result["candidate_news_ctr"] = candidate_news_ctr
+                if candidate_news_recency:
+                    result["candidate_news_recency"] = candidate_news_recency
 
         total_processed_rows = len(histories_news_ids)
         expansion_factor = (
