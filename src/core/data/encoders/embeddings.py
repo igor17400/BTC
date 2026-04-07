@@ -1,16 +1,16 @@
 import logging
 import tarfile
+import zipfile
 
 import numpy as np
 import requests
-from rich.progress import Progress
-import zipfile
 import urllib3
+from rich.progress import Progress
+
+from src.core.data.loaders.cache import CacheManager
 
 # Disable SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-from src.core.data.loaders.cache import CacheManager
 
 logger = logging.getLogger("embeddings")
 
@@ -43,22 +43,27 @@ class EmbeddingsManager:
             logger.info(f"Loading GloVe embeddings from .npy file: {npy_file}")
             try:
                 loaded_data = np.load(npy_file, allow_pickle=True)
-                if hasattr(loaded_data, 'item'):
+                if hasattr(loaded_data, "item"):
                     self.glove_embeddings = loaded_data.item()
                 else:
                     self.glove_embeddings = loaded_data
 
                 if self.glove_embeddings and isinstance(self.glove_embeddings, dict):
-                    logger.info(f"Loaded {len(self.glove_embeddings):,} word vectors from .npy")
+                    logger.info(
+                        f"Loaded {len(self.glove_embeddings):,} word vectors from .npy"
+                    )
                     # Create embedding matrix
                     self._create_embedding_matrix(dim)
                     return
                 else:
-                    logger.error(f"Loaded data is not a valid dictionary. Type: {type(self.glove_embeddings)}")
+                    logger.error(
+                        f"Loaded data is not a valid dictionary. Type: {type(self.glove_embeddings)}"
+                    )
                     self.glove_embeddings = None
             except Exception as e:
                 logger.error(f"Failed to load .npy file: {e}")
                 import traceback
+
                 logger.error(traceback.format_exc())
                 self.glove_embeddings = None
 
@@ -74,7 +79,7 @@ class EmbeddingsManager:
             file_size = txt_file.stat().st_size
             task = progress.add_task("Loading embeddings...", total=file_size)
 
-            with open(txt_file, "r", encoding="utf-8") as f:
+            with open(txt_file, encoding="utf-8") as f:
                 for line in f:
                     try:
                         values = line.split()
@@ -86,7 +91,9 @@ class EmbeddingsManager:
                         self.glove_embeddings[word] = vector
                         progress.advance(task, len(line.encode("utf-8")))
                     except Exception as e:
-                        logger.warning(f"Error processing line: {line[:50]}... Error: {str(e)}")
+                        logger.warning(
+                            f"Error processing line: {line[:50]}... Error: {str(e)}"
+                        )
                         continue
 
         # Save embeddings for faster future loading
@@ -146,7 +153,7 @@ class EmbeddingsManager:
         self.embedding_matrix = np.zeros(
             (self.vocab_size + 1, dim), dtype=self.float_dtype
         )  # +1 for padding
-        for idx, (word, vector) in enumerate(self.glove_embeddings.items(), 1):
+        for idx, (_word, vector) in enumerate(self.glove_embeddings.items(), 1):
             self.embedding_matrix[idx] = vector
 
     def get_glove_raw_data(
@@ -169,10 +176,14 @@ class EmbeddingsManager:
             self.load_glove(dim)
 
         if self.glove_embeddings is None:  # Still None after trying to load
-            logger.error("GloVe embeddings could not be loaded after calling load_glove().")
+            logger.error(
+                "GloVe embeddings could not be loaded after calling load_glove()."
+            )
             return None, None
 
-        logger.info(f"Creating GloVe array and word-to-index map from {len(self.glove_embeddings)} words...")
+        logger.info(
+            f"Creating GloVe array and word-to-index map from {len(self.glove_embeddings)} words..."
+        )
         try:
             glove_words = list(self.glove_embeddings.keys())
             glove_vectors_list = [self.glove_embeddings[word] for word in glove_words]
@@ -184,13 +195,16 @@ class EmbeddingsManager:
             logger.error("No GloVe vectors found in self.glove_embeddings.")
             return None, None
 
-        logger.info(f"Converting {len(glove_vectors_list)} GloVe vectors to NumPy array...")
+        logger.info(
+            f"Converting {len(glove_vectors_list)} GloVe vectors to NumPy array..."
+        )
         try:
             glove_array = np.array(glove_vectors_list, dtype=np.float32)
             logger.info(f"Successfully created array with shape {glove_array.shape}")
         except Exception as e:
             logger.error(f"Critical error: Could not create GloVe array: {e}")
             import traceback
+
             logger.error(traceback.format_exc())
             return None, None
 
@@ -261,7 +275,9 @@ class EmbeddingsManager:
         """Get subcategory embeddings if they exist."""
         return self.subcategory_embeddings
 
-    def load_bpemb(self, language: str, vocab_size: int = 200000, dim: int = 300) -> dict[str, np.ndarray]:
+    def load_bpemb(
+        self, language: str, vocab_size: int = 200000, dim: int = 300
+    ) -> dict[str, np.ndarray]:
         """Load BPEmb embeddings from pre-trained files.
 
         Args:
@@ -272,7 +288,9 @@ class EmbeddingsManager:
         Returns:
             Dictionary mapping BPE tokens to embedding vectors
         """
-        path = self.cache_manager.get_embedding_path("bpemb", f"{language}_{vocab_size}_{dim}")
+        path = self.cache_manager.get_embedding_path(
+            "bpemb", f"{language}_{vocab_size}_{dim}"
+        )
         txt_file = path / f"{language}.wiki.bpe.vs{vocab_size}.d{dim}.w2v.txt"
         npy_file = path / f"{language}.wiki.bpe.vs{vocab_size}.d{dim}.w2v.npy"
 
@@ -282,10 +300,14 @@ class EmbeddingsManager:
             try:
                 bpemb_embeddings = np.load(npy_file, allow_pickle=True).item()
                 if bpemb_embeddings and isinstance(bpemb_embeddings, dict):
-                    logger.info(f"Loaded {len(bpemb_embeddings):,} BPE tokens from .npy")
+                    logger.info(
+                        f"Loaded {len(bpemb_embeddings):,} BPE tokens from .npy"
+                    )
                     return bpemb_embeddings
                 else:
-                    logger.error(f"Loaded data is not a valid dictionary. Type: {type(bpemb_embeddings)}")
+                    logger.error(
+                        f"Loaded data is not a valid dictionary. Type: {type(bpemb_embeddings)}"
+                    )
             except Exception as e:
                 logger.error(f"Failed to load .npy file: {e}")
 
@@ -301,10 +323,10 @@ class EmbeddingsManager:
             file_size = txt_file.stat().st_size
             task = progress.add_task("Loading BPEmb embeddings...", total=file_size)
 
-            with open(txt_file, "r", encoding="utf-8") as f:
+            with open(txt_file, encoding="utf-8") as f:
                 # Skip header line if present
                 first_line = f.readline()
-                if not first_line.split()[0].replace('-', '').isdigit():
+                if not first_line.split()[0].replace("-", "").isdigit():
                     # First line contains vocab size and dimension, skip it
                     pass
                 else:
@@ -319,11 +341,13 @@ class EmbeddingsManager:
 
                         # First element is the BPE token, rest are embeddings
                         token = values[0]
-                        vector = np.asarray(values[1:dim+1], dtype=self.float_dtype)
+                        vector = np.asarray(values[1 : dim + 1], dtype=self.float_dtype)
                         bpemb_embeddings[token] = vector
                         progress.advance(task, len(line.encode("utf-8")))
                     except Exception as e:
-                        logger.warning(f"Error processing line: {line[:50]}... Error: {str(e)}")
+                        logger.warning(
+                            f"Error processing line: {line[:50]}... Error: {str(e)}"
+                        )
                         continue
 
         # Save embeddings for faster future loading
@@ -334,7 +358,9 @@ class EmbeddingsManager:
         logger.info(f"Loaded {len(bpemb_embeddings):,} BPE token embeddings")
         return bpemb_embeddings
 
-    def _download_and_extract_bpemb(self, path, language: str, vocab_size: int, dim: int) -> None:
+    def _download_and_extract_bpemb(
+        self, path, language: str, vocab_size: int, dim: int
+    ) -> None:
         """Download and extract BPEmb embeddings."""
         # BPEmb download URL pattern
         url = f"https://bpemb.h-its.org/{language}/{language}.wiki.bpe.vs{vocab_size}.d{dim}.w2v.txt.tar.gz"
@@ -349,7 +375,9 @@ class EmbeddingsManager:
             response = requests.get(url, stream=True, verify=False)
 
             if response.status_code != 200:
-                raise RuntimeError(f"Failed to download BPEmb embeddings. Status code: {response.status_code}")
+                raise RuntimeError(
+                    f"Failed to download BPEmb embeddings. Status code: {response.status_code}"
+                )
 
             total_size = int(response.headers.get("content-length", 0))
             progress.update(task, total=total_size)
@@ -366,11 +394,17 @@ class EmbeddingsManager:
 
         # Move the extracted file to the expected location
         # The tar contains nested directories like data/ja/ja.wiki.bpe.vs200000.d300.w2v.txt
-        extracted_file = path / "data" / language / f"{language}.wiki.bpe.vs{vocab_size}.d{dim}.w2v.txt"
+        extracted_file = (
+            path
+            / "data"
+            / language
+            / f"{language}.wiki.bpe.vs{vocab_size}.d{dim}.w2v.txt"
+        )
         target_file = path / f"{language}.wiki.bpe.vs{vocab_size}.d{dim}.w2v.txt"
 
         if extracted_file.exists():
             import shutil
+
             shutil.move(str(extracted_file), str(target_file))
             # Clean up the empty data directory
             data_dir = path / "data"
@@ -379,9 +413,13 @@ class EmbeddingsManager:
 
         # Clean up tar.gz file
         tar_path.unlink()
-        logger.info(f"Successfully downloaded and extracted BPEmb embeddings for {language}")
+        logger.info(
+            f"Successfully downloaded and extracted BPEmb embeddings for {language}"
+        )
 
-    def get_bpemb_embeddings(self, language: str, vocab_size: int = 200000, dim: int = 300) -> dict[str, np.ndarray]:
+    def get_bpemb_embeddings(
+        self, language: str, vocab_size: int = 200000, dim: int = 300
+    ) -> dict[str, np.ndarray]:
         """Get BPEmb embeddings, loading them if necessary.
 
         Args:

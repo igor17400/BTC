@@ -76,12 +76,12 @@ class BPEmbManager:
 
     def install_bpemb(self) -> bool:
         """Install BPEmb library if not available."""
-        try:
-            import bpemb
+        import importlib.util
 
+        if importlib.util.find_spec("bpemb") is not None:
             logger.info("BPEmb library is already available")
             return True
-        except ImportError:
+        else:
             logger.info("BPEmb library not found, attempting to install...")
             try:
                 import subprocess

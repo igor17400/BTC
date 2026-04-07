@@ -21,8 +21,6 @@ Usage::
     optuna-dashboard sqlite:///outputs/search/optuna.db
 """
 
-import logging
-
 import hydra
 import optuna
 from omegaconf import DictConfig
@@ -40,9 +38,11 @@ def main(cfg: DictConfig) -> None:
     optuna.logging.set_verbosity(optuna.logging.WARNING)
 
     search = cfg.search
-    console.log(f"[bold]Starting hyperparameter search[/bold]")
+    console.log("[bold]Starting hyperparameter search[/bold]")
     console.log(f"  Model: {search.model} | Framework: {search.framework}")
-    console.log(f"  Phase: {search.phase} | Trials: {search.n_trials} | Epochs: {search.epochs}")
+    console.log(
+        f"  Phase: {search.phase} | Trials: {search.n_trials} | Epochs: {search.epochs}"
+    )
     console.log(f"  WandB: {'enabled' if search.wandb else 'disabled'}")
     console.log(f"  Storage: {search.storage}")
 

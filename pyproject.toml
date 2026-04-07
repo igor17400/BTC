@@ -67,7 +67,12 @@ packages = ["src"]
 
 [tool.ruff]
 line-length = 88
-target-version = "py311"
+target-version = "py312"
+extend-exclude = [
+  "reference_codes",  # third-party reference implementations — keep verbatim
+  "outputs",
+  ".data",
+]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -88,6 +93,12 @@ ignore = [
   "B905",   # zip without strict= (python 3.10+)
   "SIM108", # ternary operator (readability preference)
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py files re-export public API; unused-import is intentional
+"**/__init__.py" = ["F401"]
+# Test entry points manipulate sys.path before importing — late imports are intentional
+"tests/**" = ["E402"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["src"]

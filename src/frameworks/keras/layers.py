@@ -1,7 +1,6 @@
 import keras
 from keras import layers, ops
 
-
 # ---------------------------------------------------------------------------
 # Pure-function masking utilities (isomorphic with JAX/PyTorch)
 # ---------------------------------------------------------------------------
@@ -394,9 +393,9 @@ class GraphSAGELayer(layers.Layer):
 
     def call(self, inputs, training=None):
         user_features, news_features, adjacency_matrix = inputs
-        batch_size = ops.shape(user_features)[0]
+        ops.shape(user_features)[0]
         num_users = ops.shape(user_features)[1]
-        num_news = ops.shape(news_features)[1]
+        ops.shape(news_features)[1]
 
         user_to_news = adjacency_matrix[:, :num_users, num_users:]
         news_to_user = adjacency_matrix[:, num_users:, :num_users]
@@ -457,7 +456,7 @@ class MultiHeadAttentionBlock(layers.Layer):
         if isinstance(input_shape, tuple) and len(input_shape) == 2:
             q_shape, k_shape = input_shape
         else:
-            q_shape = k_shape = input_shape
+            pass
 
         self.fc_q = layers.Dense(
             self.dim_out,
@@ -521,18 +520,18 @@ class MultiHeadAttentionBlock(layers.Layer):
             attention_output, (batch_size, seq_len_q, self.dim_out)
         )
 
-        O = self.fc_o(attention_output)
-        O = self.dropout(O, training=training)
-        O = O + Q
+        out = self.fc_o(attention_output)
+        out = self.dropout(out, training=training)
+        out = out + Q
         if self.use_layer_norm:
-            O = self.ln0(O)
+            out = self.ln0(out)
 
-        O_ff = self.fc_o(ops.relu(O))
-        O = O + O_ff
+        ff = self.fc_o(ops.relu(out))
+        out = out + ff
         if self.use_layer_norm:
-            O = self.ln1(O)
+            out = self.ln1(out)
 
-        return O
+        return out
 
     def compute_output_shape(self, input_shape):
         return input_shape

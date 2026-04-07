@@ -15,13 +15,11 @@ Components
 from typing import Any
 
 import keras
-import numpy as np
 from keras import layers, ops
 
 from src.core.models.configs import PPRecConfig
 from src.frameworks.keras.layers import AdditiveAttention, AttentivePoolingQKY
 from src.frameworks.keras.models.base import BaseModel
-
 
 # ---------------------------------------------------------------------------
 # News Encoder
@@ -121,8 +119,11 @@ class PPRecNewsEncoder(keras.Model):
         title_emb = self.word_dropout(title_emb, training=training)
         title_mask = ops.not_equal(title_tokens, 0)
         title_emb = self.word_mhsa(
-            title_emb, title_emb, title_emb,
-            key_mask=title_mask, value_mask=title_mask,
+            title_emb,
+            title_emb,
+            title_emb,
+            key_mask=title_mask,
+            value_mask=title_mask,
             training=training,
         )
         title_emb = self.word_dropout2(title_emb, training=training)
@@ -139,8 +140,11 @@ class PPRecNewsEncoder(keras.Model):
             entity_emb = self.entity_embedding(entity_indices)
             entity_mask = ops.not_equal(entity_indices, 0)
             entity_emb = self.entity_mhsa(
-                entity_emb, entity_emb, entity_emb,
-                key_mask=entity_mask, value_mask=entity_mask,
+                entity_emb,
+                entity_emb,
+                entity_emb,
+                key_mask=entity_mask,
+                value_mask=entity_mask,
                 training=training,
             )
             entity_vec = self.entity_attention(entity_emb, mask=entity_mask)
@@ -186,14 +190,29 @@ class PopularityPredictor(keras.Model):
         seed = config.seed
 
         # Content scorer: news_dim -> 256 -> 256 -> 128 -> 1
-        self.content_dense1 = layers.Dense(256, activation="tanh", name="content_d1",
-                                           kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
-        self.content_dense2 = layers.Dense(256, activation="tanh", name="content_d2",
-                                           kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
-        self.content_dense3 = layers.Dense(128, name="content_d3",
-                                           kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
-        self.content_out = layers.Dense(1, use_bias=False, name="content_out",
-                                        kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
+        self.content_dense1 = layers.Dense(
+            256,
+            activation="tanh",
+            name="content_d1",
+            kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+        )
+        self.content_dense2 = layers.Dense(
+            256,
+            activation="tanh",
+            name="content_d2",
+            kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+        )
+        self.content_dense3 = layers.Dense(
+            128,
+            name="content_d3",
+            kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+        )
+        self.content_out = layers.Dense(
+            1,
+            use_bias=False,
+            name="content_out",
+            kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+        )
 
         # Recency scorer: recency_emb_dim -> 64 -> 64 -> 1
         if config.use_recency:
@@ -202,24 +221,50 @@ class PopularityPredictor(keras.Model):
                 config.recency_embedding_dim,
                 name="recency_embedding",
             )
-            self.recency_dense1 = layers.Dense(64, activation="tanh", name="recency_d1",
-                                               kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
-            self.recency_dense2 = layers.Dense(64, activation="tanh", name="recency_d2",
-                                               kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
-            self.recency_out = layers.Dense(1, use_bias=False, name="recency_out",
-                                            kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
+            self.recency_dense1 = layers.Dense(
+                64,
+                activation="tanh",
+                name="recency_d1",
+                kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+            )
+            self.recency_dense2 = layers.Dense(
+                64,
+                activation="tanh",
+                name="recency_d2",
+                kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+            )
+            self.recency_out = layers.Dense(
+                1,
+                use_bias=False,
+                name="recency_out",
+                kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+            )
             # Gate: concat(news_vec, recency_emb) -> 128 -> 64 -> 1(sigmoid)
-            self.gate_dense1 = layers.Dense(128, activation="tanh", name="gate_d1",
-                                            kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
-            self.gate_dense2 = layers.Dense(64, activation="tanh", name="gate_d2",
-                                            kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
-            self.gate_out = layers.Dense(1, activation="sigmoid", name="gate_out",
-                                         kernel_initializer=keras.initializers.GlorotUniform(seed=seed))
+            self.gate_dense1 = layers.Dense(
+                128,
+                activation="tanh",
+                name="gate_d1",
+                kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+            )
+            self.gate_dense2 = layers.Dense(
+                64,
+                activation="tanh",
+                name="gate_d2",
+                kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+            )
+            self.gate_out = layers.Dense(
+                1,
+                activation="sigmoid",
+                name="gate_out",
+                kernel_initializer=keras.initializers.GlorotUniform(seed=seed),
+            )
 
         # CTR scaler: single learned weight initialized to ctr_scaler_init
         if config.use_ctr:
             self.ctr_scaler = layers.Dense(
-                1, use_bias=False, name="ctr_scaler",
+                1,
+                use_bias=False,
+                name="ctr_scaler",
                 kernel_initializer=keras.initializers.Constant(config.ctr_scaler_init),
             )
 
@@ -342,8 +387,11 @@ class PPRecUserEncoder(keras.Model):
 
         # Self-attention over clicked news
         user_vecs = self.user_mhsa(
-            user_vecs, user_vecs, user_vecs,
-            key_mask=history_mask, value_mask=history_mask,
+            user_vecs,
+            user_vecs,
+            user_vecs,
+            key_mask=history_mask,
+            value_mask=history_mask,
             training=training,
         )
 
@@ -376,11 +424,15 @@ class ActivityGater(keras.Model):
     def __init__(self, config: PPRecConfig, name: str = "activity_gater"):
         super().__init__(name=name)
         self.dense1 = layers.Dense(
-            64, activation="tanh", name="gate_d1",
+            64,
+            activation="tanh",
+            name="gate_d1",
             kernel_initializer=keras.initializers.GlorotUniform(seed=config.seed),
         )
         self.dense2 = layers.Dense(
-            1, activation="sigmoid", name="gate_d2",
+            1,
+            activation="sigmoid",
+            name="gate_d2",
             kernel_initializer=keras.initializers.GlorotUniform(seed=config.seed),
         )
 
@@ -588,9 +640,7 @@ class PPRec(BaseModel):
 
         # User vector from relevance encoder
         if hist_ctr is not None:
-            user_vec = self.user_encoder(
-                [hist_features, hist_ctr], training=training
-            )
+            user_vec = self.user_encoder([hist_features, hist_ctr], training=training)
         else:
             user_vec = self.user_encoder(hist_features, training=training)
 
@@ -618,7 +668,9 @@ class PPRec(BaseModel):
             ctr_flat = ops.reshape(cand_ctr, (B * C,))
 
         pop_scores_flat = self.popularity_predictor(
-            bias_flat, recency_indices=recency_flat, ctr_values=ctr_flat,
+            bias_flat,
+            recency_indices=recency_flat,
+            ctr_values=ctr_flat,
             training=training,
         )
         pop_scores = ops.reshape(pop_scores_flat, (B, C))
@@ -640,9 +692,7 @@ class PPRec(BaseModel):
         hist_ctr = inputs.get("hist_ctr")
 
         if hist_ctr is not None:
-            user_vec = self.user_encoder(
-                [hist_features, hist_ctr], training=training
-            )
+            user_vec = self.user_encoder([hist_features, hist_ctr], training=training)
         else:
             user_vec = self.user_encoder(hist_features, training=training)
 

@@ -240,19 +240,19 @@ class MultiHeadAttentionBlock(nnx.Module):
             batch_size, seq_len, self.dim_out
         )
 
-        O = self.fc_o(attn_out)
-        O = self.dropout(O, deterministic=det)
-        O = O + x  # residual
+        out = self.fc_o(attn_out)
+        out = self.dropout(out, deterministic=det)
+        out = out + x  # residual
         if self.use_layer_norm:
-            O = self.ln0(O)
+            out = self.ln0(out)
 
         # Feed-forward + residual
-        O_ff = self.fc_o(jax.nn.relu(O))
-        O = O + O_ff
+        ff = self.fc_o(jax.nn.relu(out))
+        out = out + ff
         if self.use_layer_norm:
-            O = self.ln1(O)
+            out = self.ln1(out)
 
-        return O
+        return out
 
 
 # ---------------------------------------------------------------------------

@@ -14,13 +14,22 @@ class TitleEncoder(keras.Model):
     Processes news titles through word embeddings, CNN, and additive attention.
     """
 
-    def __init__(self, config: NAMLConfig, embedding_layer: layers.Embedding, name: str = "title_encoder"):
+    def __init__(
+        self,
+        config: NAMLConfig,
+        embedding_layer: layers.Embedding,
+        name: str = "title_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.embedding_layer = embedding_layer
 
         # Create layers
-        self.dropout1 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="title_embedding_dropout")
+        self.dropout1 = layers.Dropout(
+            self.config.dropout_rate,
+            seed=self.config.seed,
+            name="title_embedding_dropout",
+        )
         self.cnn = layers.Conv1D(
             self.config.cnn_filter_num,
             self.config.cnn_kernel_size,
@@ -28,7 +37,9 @@ class TitleEncoder(keras.Model):
             padding="same",
             name="title_cnn",
         )
-        self.dropout2 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="title_cnn_dropout")
+        self.dropout2 = layers.Dropout(
+            self.config.dropout_rate, seed=self.config.seed, name="title_cnn_dropout"
+        )
         self.additive_attention = AdditiveAttention(
             self.config.word_attention_query_dim,
             seed=self.config.seed,
@@ -86,14 +97,22 @@ class AbstractEncoder(keras.Model):
     Processes news abstracts through word embeddings, CNN, and additive attention.
     """
 
-    def __init__(self, config: NAMLConfig, embedding_layer: layers.Embedding, name: str = "abstract_encoder"):
+    def __init__(
+        self,
+        config: NAMLConfig,
+        embedding_layer: layers.Embedding,
+        name: str = "abstract_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.embedding_layer = embedding_layer
 
         # Create layers
-        self.dropout1 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed,
-                                       name="abstract_embedding_dropout")
+        self.dropout1 = layers.Dropout(
+            self.config.dropout_rate,
+            seed=self.config.seed,
+            name="abstract_embedding_dropout",
+        )
         self.cnn = layers.Conv1D(
             self.config.cnn_filter_num,
             self.config.cnn_kernel_size,
@@ -101,7 +120,9 @@ class AbstractEncoder(keras.Model):
             padding="same",
             name="abstract_cnn",
         )
-        self.dropout2 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="abstract_cnn_dropout")
+        self.dropout2 = layers.Dropout(
+            self.config.dropout_rate, seed=self.config.seed, name="abstract_cnn_dropout"
+        )
         self.additive_attention = AdditiveAttention(
             self.config.word_attention_query_dim,
             seed=self.config.seed,
@@ -159,7 +180,9 @@ class CategoryEncoder(keras.Model):
     Embeds and projects category IDs into the same dimension as CNN outputs.
     """
 
-    def __init__(self, config: NAMLConfig, num_categories: int, name: str = "category_encoder"):
+    def __init__(
+        self, config: NAMLConfig, num_categories: int, name: str = "category_encoder"
+    ):
         super().__init__(name=name)
         self.config = config
         self.num_categories = num_categories
@@ -221,7 +244,12 @@ class SubcategoryEncoder(keras.Model):
     Embeds and projects subcategory IDs into the same dimension as CNN outputs.
     """
 
-    def __init__(self, config: NAMLConfig, num_subcategories: int, name: str = "subcategory_encoder"):
+    def __init__(
+        self,
+        config: NAMLConfig,
+        num_subcategories: int,
+        name: str = "subcategory_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.num_subcategories = num_subcategories
@@ -284,13 +312,15 @@ class NewsEncoder(keras.Model):
     using view-level attention to produce a unified news representation.
     """
 
-    def __init__(self,
-                 config: NAMLConfig,
-                 title_encoder: TitleEncoder,
-                 abstract_encoder: AbstractEncoder,
-                 category_encoder: CategoryEncoder,
-                 subcategory_encoder: SubcategoryEncoder,
-                 name: str = "news_encoder"):
+    def __init__(
+        self,
+        config: NAMLConfig,
+        title_encoder: TitleEncoder,
+        abstract_encoder: AbstractEncoder,
+        category_encoder: CategoryEncoder,
+        subcategory_encoder: SubcategoryEncoder,
+        name: str = "news_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.title_encoder = title_encoder
@@ -331,12 +361,22 @@ class NewsEncoder(keras.Model):
             News representations (batch_size, cnn_filter_num)
         """
         # Split the concatenated input: [title, abstract, category, subcategory]
-        title_tokens = inputs[:, :self.config.max_title_length]
+        title_tokens = inputs[:, : self.config.max_title_length]
         abstract_tokens = inputs[
-            :, self.config.max_title_length:self.config.max_title_length + self.config.max_abstract_length]
+            :,
+            self.config.max_title_length : self.config.max_title_length
+            + self.config.max_abstract_length,
+        ]
         category_id = inputs[
-            :, self.config.max_title_length + self.config.max_abstract_length:self.config.max_title_length + self.config.max_abstract_length + 1]
-        subcategory_id = inputs[:, self.config.max_title_length + self.config.max_abstract_length + 1:]
+            :,
+            self.config.max_title_length
+            + self.config.max_abstract_length : self.config.max_title_length
+            + self.config.max_abstract_length
+            + 1,
+        ]
+        subcategory_id = inputs[
+            :, self.config.max_title_length + self.config.max_abstract_length + 1 :
+        ]
 
         # Encode each view
         title_vec = self.title_encoder(title_tokens, training=training)
@@ -345,7 +385,9 @@ class NewsEncoder(keras.Model):
         subcategory_vec = self.subcategory_encoder(subcategory_id, training=training)
 
         # Stack views for attention (batch_size, 4, cnn_filter_num)
-        views = ops.stack([title_vec, abstract_vec, category_vec, subcategory_vec], axis=1)
+        views = ops.stack(
+            [title_vec, abstract_vec, category_vec, subcategory_vec], axis=1
+        )
 
         # Apply view-level attention to combine views
         news_representation = self.view_attention(views)
@@ -360,7 +402,9 @@ class UserEncoder(keras.Model):
     to produce user representations.
     """
 
-    def __init__(self, config: NAMLConfig, news_encoder: NewsEncoder, name: str = "user_encoder"):
+    def __init__(
+        self, config: NAMLConfig, news_encoder: NewsEncoder, name: str = "user_encoder"
+    ):
         super().__init__(name=name)
         self.config = config
         self.news_encoder = news_encoder
@@ -408,7 +452,7 @@ class UserEncoder(keras.Model):
 
         # Create mask for valid history items by checking title tokens
         # Extract title tokens from the concatenated input to create the mask
-        title_tokens = inputs[:, :, :self.config.max_title_length]
+        title_tokens = inputs[:, :, : self.config.max_title_length]
         history_mask = ops.any(ops.not_equal(title_tokens, 0), axis=-1)
 
         # Apply user-level attention
@@ -424,8 +468,13 @@ class NAMLScorer(keras.Model):
     single candidate scoring (with sigmoid), and multiple candidate scoring (raw scores).
     """
 
-    def __init__(self, config: NAMLConfig, news_encoder: NewsEncoder, user_encoder: UserEncoder,
-                 name: str = "naml_scorer"):
+    def __init__(
+        self,
+        config: NAMLConfig,
+        news_encoder: NewsEncoder,
+        user_encoder: UserEncoder,
+        name: str = "naml_scorer",
+    ):
         super().__init__(name=name)
         self.config = config
         self.news_encoder = news_encoder
@@ -462,10 +511,14 @@ class NAMLScorer(keras.Model):
         # Result: (batch_size, num_candidates, cnn_filter_num)
 
         # Expand user representation for broadcasting
-        user_repr_expanded = ops.expand_dims(user_repr, axis=1)  # (batch_size, 1, cnn_filter_num)
+        user_repr_expanded = ops.expand_dims(
+            user_repr, axis=1
+        )  # (batch_size, 1, cnn_filter_num)
 
         # Calculate scores using dot product (raw logits)
-        scores = ops.sum(candidate_reprs * user_repr_expanded, axis=-1)  # (batch_size, num_candidates)
+        scores = ops.sum(
+            candidate_reprs * user_repr_expanded, axis=-1
+        )  # (batch_size, num_candidates)
 
         return scores
 
@@ -493,7 +546,9 @@ class NAMLScorer(keras.Model):
         output = ops.sigmoid(score)
         return output
 
-    def score_multiple_candidates(self, history_inputs, candidate_inputs, training=None):
+    def score_multiple_candidates(
+        self, history_inputs, candidate_inputs, training=None
+    ):
         """Score multiple candidates with sigmoid activation.
 
         Args:
@@ -539,26 +594,26 @@ class NAML(BaseModel):
     """
 
     def __init__(
-            self,
-            processed_news: dict[str, Any],
-            max_title_length: int = 30,
-            max_abstract_length: int = 50,
-            embedding_size: int = 300,
-            category_embedding_dim: int = 100,
-            subcategory_embedding_dim: int = 100,
-            cnn_filter_num: int = 400,
-            cnn_kernel_size: int = 3,
-            word_attention_query_dim: int = 200,
-            view_attention_query_dim: int = 200,
-            user_attention_query_dim: int = 200,
-            dropout_rate: float = 0.2,
-            activation: str = "relu",
-            max_history_length: int = 50,
-            max_impressions_length: int = 5,
-            process_user_id: bool = False,
-            seed: int = 42,
-            name: str = "naml",
-            **kwargs,
+        self,
+        processed_news: dict[str, Any],
+        max_title_length: int = 30,
+        max_abstract_length: int = 50,
+        embedding_size: int = 300,
+        category_embedding_dim: int = 100,
+        subcategory_embedding_dim: int = 100,
+        cnn_filter_num: int = 400,
+        cnn_kernel_size: int = 3,
+        word_attention_query_dim: int = 200,
+        view_attention_query_dim: int = 200,
+        user_attention_query_dim: int = 200,
+        dropout_rate: float = 0.2,
+        activation: str = "relu",
+        max_history_length: int = 50,
+        max_impressions_length: int = 5,
+        process_user_id: bool = False,
+        seed: int = 42,
+        name: str = "naml",
+        **kwargs,
     ):
         super().__init__(name=name, **kwargs)
 
@@ -616,7 +671,9 @@ class NAML(BaseModel):
         self.embedding_layer = layers.Embedding(
             input_dim=self.processed_news["vocab_size"],
             output_dim=self.config.embedding_size,
-            embeddings_initializer=keras.initializers.Constant(self.processed_news["embeddings"]),
+            embeddings_initializer=keras.initializers.Constant(
+                self.processed_news["embeddings"]
+            ),
             trainable=True,
             name="word_embedding",
         )
@@ -656,42 +713,58 @@ class NAML(BaseModel):
         # ----- Training model -----
         # Create concatenated inputs that match the expected format
         history_concat_input = keras.Input(
-            shape=(self.config.max_history_length, self.config.max_title_length + self.config.max_abstract_length + 2),
-            dtype="int32", name="hist_concat_input"
+            shape=(
+                self.config.max_history_length,
+                self.config.max_title_length + self.config.max_abstract_length + 2,
+            ),
+            dtype="int32",
+            name="hist_concat_input",
         )
         candidate_concat_input = keras.Input(
-            shape=(self.config.max_impressions_length,
-                   self.config.max_title_length + self.config.max_abstract_length + 2),
-            dtype="int32", name="cand_concat_input"
+            shape=(
+                self.config.max_impressions_length,
+                self.config.max_title_length + self.config.max_abstract_length + 2,
+            ),
+            dtype="int32",
+            name="cand_concat_input",
         )
 
         # Pass concatenated inputs directly to the scorer
-        training_output = self.scorer.score_training_batch(history_concat_input, candidate_concat_input)
+        training_output = self.scorer.score_training_batch(
+            history_concat_input, candidate_concat_input
+        )
 
         training_model = keras.Model(
             inputs=[history_concat_input, candidate_concat_input],
             outputs=training_output,
-            name="naml_training_model"
+            name="naml_training_model",
         )
 
         # ----- Scorer model -----
         # Create concatenated inputs for scorer model
         score_history_concat_input = keras.Input(
-            shape=(self.config.max_history_length, self.config.max_title_length + self.config.max_abstract_length + 2),
-            dtype="int32", name="score_hist_concat_input"
+            shape=(
+                self.config.max_history_length,
+                self.config.max_title_length + self.config.max_abstract_length + 2,
+            ),
+            dtype="int32",
+            name="score_hist_concat_input",
         )
         score_candidate_concat_input = keras.Input(
             shape=(self.config.max_title_length + self.config.max_abstract_length + 2,),
-            dtype="int32", name="score_cand_concat_input"
+            dtype="int32",
+            name="score_cand_concat_input",
         )
 
         # Pass concatenated inputs directly to the scorer
-        scorer_output = self.scorer.score_single_candidate(score_history_concat_input, score_candidate_concat_input)
+        scorer_output = self.scorer.score_single_candidate(
+            score_history_concat_input, score_candidate_concat_input
+        )
 
         scorer_model = keras.Model(
             inputs=[score_history_concat_input, score_candidate_concat_input],
             outputs=scorer_output,
-            name="naml_scorer_model"
+            name="naml_scorer_model",
         )
 
         return training_model, scorer_model
@@ -717,10 +790,23 @@ class NAML(BaseModel):
 
         if training:
             # Training mode expects multiple keys for history and candidates
-            required_hist_keys = {"hist_tokens", "hist_abstract_tokens", "hist_category", "hist_subcategory"}
-            required_cand_keys = {"cand_tokens", "cand_abstract_tokens", "cand_category", "cand_subcategory"}
+            required_hist_keys = {
+                "hist_tokens",
+                "hist_abstract_tokens",
+                "hist_category",
+                "hist_subcategory",
+            }
+            required_cand_keys = {
+                "cand_tokens",
+                "cand_abstract_tokens",
+                "cand_category",
+                "cand_subcategory",
+            }
 
-            if not (required_hist_keys.issubset(input_keys) and required_cand_keys.issubset(input_keys)):
+            if not (
+                required_hist_keys.issubset(input_keys)
+                and required_cand_keys.issubset(input_keys)
+            ):
                 raise ValueError(
                     f"Training mode requires history keys: {required_hist_keys} and candidate keys: {required_cand_keys}, "
                     f"but got keys: {list(input_keys)}"
@@ -759,62 +845,76 @@ class NAML(BaseModel):
     def _handle_training(self, inputs):
         """Handle training batch scoring (raw logits)."""
         # Concatenate history inputs
-        history_concat = ops.concatenate([
-            inputs["hist_tokens"],
-            inputs["hist_abstract_tokens"],
-            ops.expand_dims(inputs["hist_category"], axis=-1),
-            ops.expand_dims(inputs["hist_subcategory"], axis=-1),
-        ], axis=-1)
+        history_concat = ops.concatenate(
+            [
+                inputs["hist_tokens"],
+                inputs["hist_abstract_tokens"],
+                ops.expand_dims(inputs["hist_category"], axis=-1),
+                ops.expand_dims(inputs["hist_subcategory"], axis=-1),
+            ],
+            axis=-1,
+        )
 
         # Concatenate candidate inputs
-        candidate_concat = ops.concatenate([
-            inputs["cand_tokens"],
-            inputs["cand_abstract_tokens"],
-            ops.expand_dims(inputs["cand_category"], axis=-1),
-            ops.expand_dims(inputs["cand_subcategory"], axis=-1),
-        ], axis=-1)
+        candidate_concat = ops.concatenate(
+            [
+                inputs["cand_tokens"],
+                inputs["cand_abstract_tokens"],
+                ops.expand_dims(inputs["cand_category"], axis=-1),
+                ops.expand_dims(inputs["cand_subcategory"], axis=-1),
+            ],
+            axis=-1,
+        )
 
         return self.scorer.score_training_batch(history_concat, candidate_concat)
 
     def _handle_multiple_candidates(self, inputs):
         """Handle multiple candidate scoring with sigmoid scores."""
         # Concatenate history inputs
-        history_concat = ops.concatenate([
-            inputs["hist_tokens"],
-            inputs["hist_abstract_tokens"],
-            ops.expand_dims(inputs["hist_category"], axis=-1),
-            ops.expand_dims(inputs["hist_subcategory"], axis=-1),
-        ], axis=-1)
+        history_concat = ops.concatenate(
+            [
+                inputs["hist_tokens"],
+                inputs["hist_abstract_tokens"],
+                ops.expand_dims(inputs["hist_category"], axis=-1),
+                ops.expand_dims(inputs["hist_subcategory"], axis=-1),
+            ],
+            axis=-1,
+        )
 
         # Concatenate candidate inputs
-        candidate_concat = ops.concatenate([
-            inputs["cand_tokens"],
-            inputs["cand_abstract_tokens"],
-            ops.expand_dims(inputs["cand_category"], axis=-1),
-            ops.expand_dims(inputs["cand_subcategory"], axis=-1),
-        ], axis=-1)
+        candidate_concat = ops.concatenate(
+            [
+                inputs["cand_tokens"],
+                inputs["cand_abstract_tokens"],
+                ops.expand_dims(inputs["cand_category"], axis=-1),
+                ops.expand_dims(inputs["cand_subcategory"], axis=-1),
+            ],
+            axis=-1,
+        )
 
         return self.scorer.score_multiple_candidates(history_concat, candidate_concat)
 
     def get_config(self):
         """Returns the configuration of the NAML model for serialization."""
         base_config = super().get_config()
-        base_config.update({
-            "max_title_length": self.config.max_title_length,
-            "max_abstract_length": self.config.max_abstract_length,
-            "embedding_size": self.config.embedding_size,
-            "category_embedding_dim": self.config.category_embedding_dim,
-            "subcategory_embedding_dim": self.config.subcategory_embedding_dim,
-            "cnn_filter_num": self.config.cnn_filter_num,
-            "cnn_kernel_size": self.config.cnn_kernel_size,
-            "word_attention_query_dim": self.config.word_attention_query_dim,
-            "view_attention_query_dim": self.config.view_attention_query_dim,
-            "user_attention_query_dim": self.config.user_attention_query_dim,
-            "dropout_rate": self.config.dropout_rate,
-            "activation": self.config.activation,
-            "max_history_length": self.config.max_history_length,
-            "max_impressions_length": self.config.max_impressions_length,
-            "process_user_id": self.config.process_user_id,
-            "seed": self.config.seed,
-        })
+        base_config.update(
+            {
+                "max_title_length": self.config.max_title_length,
+                "max_abstract_length": self.config.max_abstract_length,
+                "embedding_size": self.config.embedding_size,
+                "category_embedding_dim": self.config.category_embedding_dim,
+                "subcategory_embedding_dim": self.config.subcategory_embedding_dim,
+                "cnn_filter_num": self.config.cnn_filter_num,
+                "cnn_kernel_size": self.config.cnn_kernel_size,
+                "word_attention_query_dim": self.config.word_attention_query_dim,
+                "view_attention_query_dim": self.config.view_attention_query_dim,
+                "user_attention_query_dim": self.config.user_attention_query_dim,
+                "dropout_rate": self.config.dropout_rate,
+                "activation": self.config.activation,
+                "max_history_length": self.config.max_history_length,
+                "max_impressions_length": self.config.max_impressions_length,
+                "process_user_id": self.config.process_user_id,
+                "seed": self.config.seed,
+            }
+        )
         return base_config

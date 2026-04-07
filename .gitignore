@@ -48,6 +48,7 @@ checkpoints/
 *.pt
 logs/
 .hydra/
+reference_codes/
 
 # Do not keep dataset files (root-level only, not src/core/data/)
 /data/

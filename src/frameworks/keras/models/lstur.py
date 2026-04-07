@@ -6,7 +6,11 @@ import keras
 from keras import layers, ops
 
 from src.core.models.configs import LSTURConfig
-from src.frameworks.keras.layers import AdditiveAttention, ComputeMasking, OverwriteMasking
+from src.frameworks.keras.layers import (
+    AdditiveAttention,
+    ComputeMasking,
+    OverwriteMasking,
+)
 from src.frameworks.keras.models.base import BaseModel
 
 
@@ -17,10 +21,14 @@ class NewsEncoder(keras.Model):
     Can optionally incorporate category and subcategory information for multi-view learning.
     """
 
-    def __init__(self, config: LSTURConfig, embedding_layer: layers.Embedding,
-                 category_encoder: 'CategoryEncoder' | None = None,
-                 subcategory_encoder: 'SubcategoryEncoder' | None = None,
-                 name: str = "news_encoder"):
+    def __init__(
+        self,
+        config: LSTURConfig,
+        embedding_layer: layers.Embedding,
+        category_encoder: CategoryEncoder | None = None,
+        subcategory_encoder: SubcategoryEncoder | None = None,
+        name: str = "news_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.embedding_layer = embedding_layer
@@ -28,7 +36,9 @@ class NewsEncoder(keras.Model):
         self.subcategory_encoder = subcategory_encoder
 
         # Create layers for title processing
-        self.dropout1 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="embedding_dropout")
+        self.dropout1 = layers.Dropout(
+            self.config.dropout_rate, seed=self.config.seed, name="embedding_dropout"
+        )
         self.cnn = layers.Conv1D(
             self.config.cnn_filter_num,
             self.config.cnn_kernel_size,
@@ -38,7 +48,9 @@ class NewsEncoder(keras.Model):
             kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
             name="title_cnn",
         )
-        self.dropout2 = layers.Dropout(self.config.dropout_rate, seed=self.config.seed, name="cnn_dropout")
+        self.dropout2 = layers.Dropout(
+            self.config.dropout_rate, seed=self.config.seed, name="cnn_dropout"
+        )
         self.compute_masking = ComputeMasking(name="compute_masking")
         self.overwrite_masking = OverwriteMasking(name="overwrite_masking")
         self.additive_attention = AdditiveAttention(
@@ -89,11 +101,15 @@ class NewsEncoder(keras.Model):
         input_shape = ops.shape(inputs)
         has_category_data = input_shape[-1] > self.config.max_title_length
 
-        if has_category_data and (self.category_encoder is not None or self.subcategory_encoder is not None):
+        if has_category_data and (
+            self.category_encoder is not None or self.subcategory_encoder is not None
+        ):
             # Split concatenated input: [title, category, subcategory]
-            title_tokens = inputs[:, :self.config.max_title_length]
-            category_id = inputs[:, self.config.max_title_length:self.config.max_title_length + 1]
-            subcategory_id = inputs[:, self.config.max_title_length + 1:]
+            title_tokens = inputs[:, : self.config.max_title_length]
+            category_id = inputs[
+                :, self.config.max_title_length : self.config.max_title_length + 1
+            ]
+            subcategory_id = inputs[:, self.config.max_title_length + 1 :]
 
             # Process title
             title_vec = self._process_title(title_tokens, training)
@@ -108,7 +124,9 @@ class NewsEncoder(keras.Model):
 
             # Process subcategory if encoder is available
             if self.subcategory_encoder is not None:
-                subcategory_vec = self.subcategory_encoder(subcategory_id, training=training)
+                subcategory_vec = self.subcategory_encoder(
+                    subcategory_id, training=training
+                )
                 representations.append(subcategory_vec)
 
             if len(representations) > 1:
@@ -122,7 +140,7 @@ class NewsEncoder(keras.Model):
         else:
             # Title-only input or no category encoders available
             if has_category_data:
-                title_tokens = inputs[:, :self.config.max_title_length]
+                title_tokens = inputs[:, : self.config.max_title_length]
             else:
                 title_tokens = inputs
 
@@ -171,7 +189,9 @@ class CategoryEncoder(keras.Model):
     Simple embedding layer for category IDs as described in the LSTUR paper.
     """
 
-    def __init__(self, config: LSTURConfig, num_categories: int, name: str = "category_encoder"):
+    def __init__(
+        self, config: LSTURConfig, num_categories: int, name: str = "category_encoder"
+    ):
         super().__init__(name=name)
         self.config = config
         self.num_categories = num_categories
@@ -223,7 +243,12 @@ class SubcategoryEncoder(keras.Model):
     Simple embedding layer for subcategory IDs as described in the LSTUR paper.
     """
 
-    def __init__(self, config: LSTURConfig, num_subcategories: int, name: str = "subcategory_encoder"):
+    def __init__(
+        self,
+        config: LSTURConfig,
+        num_subcategories: int,
+        name: str = "subcategory_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.num_subcategories = num_subcategories
@@ -276,8 +301,13 @@ class UserEncoder(keras.Model):
     to produce user representations.
     """
 
-    def __init__(self, config: LSTURConfig, news_encoder: NewsEncoder,
-                 num_users: int, name: str = "user_encoder"):
+    def __init__(
+        self,
+        config: LSTURConfig,
+        news_encoder: NewsEncoder,
+        num_users: int,
+        name: str = "user_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.news_encoder = news_encoder
@@ -304,7 +334,9 @@ class UserEncoder(keras.Model):
         self.gru = layers.GRU(
             self.config.gru_unit,
             kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
-            recurrent_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
+            recurrent_initializer=keras.initializers.GlorotUniform(
+                seed=self.config.seed
+            ),
             bias_initializer=keras.initializers.Zeros(),
             return_sequences=False,
             name="user_gru",
@@ -318,7 +350,9 @@ class UserEncoder(keras.Model):
             self.concat_dense = layers.Dense(
                 self.config.gru_unit,
                 bias_initializer=keras.initializers.Zeros(),
-                kernel_initializer=keras.initializers.GlorotUniform(seed=self.config.seed),
+                kernel_initializer=keras.initializers.GlorotUniform(
+                    seed=self.config.seed
+                ),
                 name="concat_dense",
             )
 
@@ -388,8 +422,13 @@ class LSTURScorer(keras.Model):
     single candidate scoring (with sigmoid), and multiple candidate scoring (raw scores).
     """
 
-    def __init__(self, config: LSTURConfig, news_encoder: NewsEncoder, user_encoder: UserEncoder,
-                 name: str = "lstur_scorer"):
+    def __init__(
+        self,
+        config: LSTURConfig,
+        news_encoder: NewsEncoder,
+        user_encoder: UserEncoder,
+        name: str = "lstur_scorer",
+    ):
         super().__init__(name=name)
         self.config = config
         self.news_encoder = news_encoder
@@ -406,7 +445,9 @@ class LSTURScorer(keras.Model):
     def build(self, input_shape):
         super().build(input_shape)
 
-    def score_training_batch(self, history_inputs, user_indices, candidate_inputs, training=None):
+    def score_training_batch(
+        self, history_inputs, user_indices, candidate_inputs, training=None
+    ):
         """Score training batch (raw logits — loss handles softmax).
 
         Args:
@@ -422,15 +463,21 @@ class LSTURScorer(keras.Model):
         user_repr = self.user_encoder([history_inputs, user_indices], training=training)
 
         # Get representations for all candidates
-        candidate_reprs = self.candidate_encoder_train(candidate_inputs, training=training)
+        candidate_reprs = self.candidate_encoder_train(
+            candidate_inputs, training=training
+        )
         # Result: (batch_size, num_candidates, cnn_filter_num)
 
         # Calculate scores using dot product (raw logits)
-        scores = layers.Dot(axes=-1, name="dot_product_train")([candidate_reprs, user_repr])
+        scores = layers.Dot(axes=-1, name="dot_product_train")(
+            [candidate_reprs, user_repr]
+        )
 
         return scores
 
-    def score_single_candidate(self, history_inputs, user_indices, candidate_inputs, training=None):
+    def score_single_candidate(
+        self, history_inputs, user_indices, candidate_inputs, training=None
+    ):
         """Score single candidate with sigmoid output.
 
         Args:
@@ -449,12 +496,16 @@ class LSTURScorer(keras.Model):
         candidate_repr = self.news_encoder(candidate_inputs, training=training)
 
         # Calculate score using dot product
-        score = layers.Dot(axes=-1, name="dot_product_single")([candidate_repr, user_repr])
+        score = layers.Dot(axes=-1, name="dot_product_single")(
+            [candidate_repr, user_repr]
+        )
 
         # Apply sigmoid for probability
         return layers.Activation("sigmoid", name="sigmoid_activation")(score)
 
-    def score_multiple_candidates(self, history_inputs, user_indices, candidate_inputs, training=False):
+    def score_multiple_candidates(
+        self, history_inputs, user_indices, candidate_inputs, training=False
+    ):
         """Score multiple candidates with sigmoid activation.
 
         Args:
@@ -470,7 +521,9 @@ class LSTURScorer(keras.Model):
         user_repr = self.user_encoder([history_inputs, user_indices], training=training)
 
         # Get representations for all candidates
-        candidate_reprs = self.candidate_encoder_eval(candidate_inputs, training=training)
+        candidate_reprs = self.candidate_encoder_eval(
+            candidate_inputs, training=training
+        )
         # Result: (batch_size, num_candidates, cnn_filter_num)
 
         # Expand user representation for broadcasting
@@ -500,28 +553,28 @@ class LSTUR(BaseModel):
     """
 
     def __init__(
-            self,
-            processed_news: dict[str, Any],
-            num_users: int,
-            embedding_size: int = 300,
-            cnn_filter_num: int = 300,
-            cnn_kernel_size: int = 3,
-            cnn_activation: str = "relu",
-            attention_hidden_dim: int = 200,
-            gru_unit: int = 300,
-            type: str = "ini",
-            dropout_rate: float = 0.2,
-            seed: int = 42,
-            max_title_length: int = 50,
-            max_history_length: int = 50,
-            max_impressions_length: int = 5,
-            process_user_id: bool = True,
-            use_category: bool = False,
-            use_subcategory: bool = False,
-            category_embedding_dim: int = 100,
-            subcategory_embedding_dim: int = 100,
-            name: str = "lstur",
-            **kwargs,
+        self,
+        processed_news: dict[str, Any],
+        num_users: int,
+        embedding_size: int = 300,
+        cnn_filter_num: int = 300,
+        cnn_kernel_size: int = 3,
+        cnn_activation: str = "relu",
+        attention_hidden_dim: int = 200,
+        gru_unit: int = 300,
+        type: str = "ini",
+        dropout_rate: float = 0.2,
+        seed: int = 42,
+        max_title_length: int = 50,
+        max_history_length: int = 50,
+        max_impressions_length: int = 5,
+        process_user_id: bool = True,
+        use_category: bool = False,
+        use_subcategory: bool = False,
+        category_embedding_dim: int = 100,
+        subcategory_embedding_dim: int = 100,
+        name: str = "lstur",
+        **kwargs,
     ):
         super().__init__(name=name, **kwargs)
 
@@ -579,7 +632,9 @@ class LSTUR(BaseModel):
         self.embedding_layer = layers.Embedding(
             input_dim=self.processed_news["vocab_size"],
             output_dim=self.config.embedding_size,
-            embeddings_initializer=keras.initializers.Constant(self.processed_news["embeddings"]),
+            embeddings_initializer=keras.initializers.Constant(
+                self.processed_news["embeddings"]
+            ),
             trainable=True,
             mask_zero=False,  # LSTUR uses custom masking
             name="word_embedding",
@@ -604,7 +659,7 @@ class LSTUR(BaseModel):
             self.config,
             self.embedding_layer,
             category_encoder=category_encoder,
-            subcategory_encoder=subcategory_encoder
+            subcategory_encoder=subcategory_encoder,
         )
         self.user_encoder = UserEncoder(self.config, self.news_encoder, self.num_users)
         self.scorer = LSTURScorer(self.config, self.news_encoder, self.user_encoder)
@@ -619,14 +674,14 @@ class LSTUR(BaseModel):
         # ----- Training model -----
         history_input = keras.Input(
             shape=(self.config.max_history_length, self.config.max_title_length),
-            dtype="int32", name="hist_tokens"
+            dtype="int32",
+            name="hist_tokens",
         )
-        user_indices_input = keras.Input(
-            shape=(1,), dtype="int32", name="user_indices"
-        )
+        user_indices_input = keras.Input(shape=(1,), dtype="int32", name="user_indices")
         candidates_input = keras.Input(
             shape=(self.config.max_impressions_length, self.config.max_title_length),
-            dtype="int32", name="cand_tokens"
+            dtype="int32",
+            name="cand_tokens",
         )
 
         training_output = self.scorer.score_training_batch(
@@ -635,29 +690,35 @@ class LSTUR(BaseModel):
         training_model = keras.Model(
             inputs=[history_input, user_indices_input, candidates_input],
             outputs=training_output,
-            name="lstur_training_model"
+            name="lstur_training_model",
         )
 
         # ----- Scorer model -----
         history_input_score = keras.Input(
             shape=(self.config.max_history_length, self.config.max_title_length),
-            dtype="int32", name="history_tokens_score"
+            dtype="int32",
+            name="history_tokens_score",
         )
         user_indices_input_score = keras.Input(
             shape=(1,), dtype="int32", name="user_indices_score"
         )
         single_candidate_input = keras.Input(
             shape=(self.config.max_title_length,),
-            dtype="int32", name="single_candidate_tokens_score"
+            dtype="int32",
+            name="single_candidate_tokens_score",
         )
 
         scorer_output = self.scorer.score_single_candidate(
             history_input_score, user_indices_input_score, single_candidate_input
         )
         scorer_model = keras.Model(
-            inputs=[history_input_score, user_indices_input_score, single_candidate_input],
+            inputs=[
+                history_input_score,
+                user_indices_input_score,
+                single_candidate_input,
+            ],
             outputs=scorer_output,
-            name="lstur_scorer_model"
+            name="lstur_scorer_model",
         )
 
         return training_model, scorer_model
@@ -728,7 +789,9 @@ class LSTUR(BaseModel):
         """Handle training batch scoring (raw logits)."""
         # Extract the inputs - note that dataloader uses "user_ids" not "user_indices"
         history_tokens = inputs["hist_tokens"]
-        user_ids = inputs.get("user_ids", inputs.get("user_indices"))  # Handle both keys
+        user_ids = inputs.get(
+            "user_ids", inputs.get("user_indices")
+        )  # Handle both keys
         candidate_tokens = inputs["cand_tokens"]
 
         # Check if we have category/subcategory data
@@ -748,10 +811,7 @@ class LSTUR(BaseModel):
             )
 
         return self.scorer.score_training_batch(
-            history_tokens,
-            user_ids,
-            candidate_tokens,
-            training=training
+            history_tokens, user_ids, candidate_tokens, training=training
         )
 
     def _handle_multiple_candidates(self, inputs):
@@ -778,10 +838,7 @@ class LSTUR(BaseModel):
             )
 
         return self.scorer.score_multiple_candidates(
-            history_tokens,
-            user_ids,
-            candidate_tokens,
-            training=False
+            history_tokens, user_ids, candidate_tokens, training=False
         )
 
     def _handle_single_candidate(self, inputs):
@@ -802,40 +859,44 @@ class LSTUR(BaseModel):
 
             # Concatenate single candidate inputs: title + category + subcategory
             if "single_cand_category" in inputs and "single_cand_subcategory" in inputs:
-                single_cand_category = ops.expand_dims(inputs["single_cand_category"], axis=-1)
-                single_cand_subcategory = ops.expand_dims(inputs["single_cand_subcategory"], axis=-1)
+                single_cand_category = ops.expand_dims(
+                    inputs["single_cand_category"], axis=-1
+                )
+                single_cand_subcategory = ops.expand_dims(
+                    inputs["single_cand_subcategory"], axis=-1
+                )
                 candidate_tokens = ops.concatenate(
-                    [candidate_tokens, single_cand_category, single_cand_subcategory], axis=-1
+                    [candidate_tokens, single_cand_category, single_cand_subcategory],
+                    axis=-1,
                 )
 
         return self.scorer.score_single_candidate(
-            history_tokens,
-            user_ids,
-            candidate_tokens,
-            training=False
+            history_tokens, user_ids, candidate_tokens, training=False
         )
 
     def get_config(self):
         """Returns the configuration of the LSTUR model for serialization."""
         base_config = super().get_config()
-        base_config.update({
-            "num_users": self.num_users,
-            "embedding_size": self.config.embedding_size,
-            "cnn_filter_num": self.config.cnn_filter_num,
-            "cnn_kernel_size": self.config.cnn_kernel_size,
-            "cnn_activation": self.config.cnn_activation,
-            "attention_hidden_dim": self.config.attention_hidden_dim,
-            "gru_unit": self.config.gru_unit,
-            "type": self.config.type,
-            "dropout_rate": self.config.dropout_rate,
-            "seed": self.config.seed,
-            "max_title_length": self.config.max_title_length,
-            "max_history_length": self.config.max_history_length,
-            "max_impressions_length": self.config.max_impressions_length,
-            "process_user_id": self.config.process_user_id,
-            "use_category": self.config.use_category,
-            "use_subcategory": self.config.use_subcategory,
-            "category_embedding_dim": self.config.category_embedding_dim,
-            "subcategory_embedding_dim": self.config.subcategory_embedding_dim,
-        })
+        base_config.update(
+            {
+                "num_users": self.num_users,
+                "embedding_size": self.config.embedding_size,
+                "cnn_filter_num": self.config.cnn_filter_num,
+                "cnn_kernel_size": self.config.cnn_kernel_size,
+                "cnn_activation": self.config.cnn_activation,
+                "attention_hidden_dim": self.config.attention_hidden_dim,
+                "gru_unit": self.config.gru_unit,
+                "type": self.config.type,
+                "dropout_rate": self.config.dropout_rate,
+                "seed": self.config.seed,
+                "max_title_length": self.config.max_title_length,
+                "max_history_length": self.config.max_history_length,
+                "max_impressions_length": self.config.max_impressions_length,
+                "process_user_id": self.config.process_user_id,
+                "use_category": self.config.use_category,
+                "use_subcategory": self.config.use_subcategory,
+                "category_embedding_dim": self.config.category_embedding_dim,
+                "subcategory_embedding_dim": self.config.subcategory_embedding_dim,
+            }
+        )
         return base_config

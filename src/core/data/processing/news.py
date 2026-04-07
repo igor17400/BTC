@@ -8,9 +8,9 @@ import json
 import logging
 import os
 import pickle
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from collections.abc import Callable
 
 import numpy as np
 import pandas as pd
@@ -136,7 +136,11 @@ def tokenize_all_news(
 
     def _default_tokenize(text: str, v: dict[str, int], ml: int) -> list[int]:
         return tokenize_text(
-            text, v, ml, unk_token_id=unk_id, pad_token_id=pad_id,
+            text,
+            v,
+            ml,
+            unk_token_id=unk_id,
+            pad_token_id=pad_id,
             segment_text_fn=segment_text_fn,
         )
 
@@ -182,7 +186,7 @@ def load_entity_embeddings(dataset_path: Path) -> dict[str, np.ndarray]:
         emb_path = dataset_path / split / "entity_embedding.vec"
         if not emb_path.exists():
             continue
-        with open(emb_path, "r", encoding="utf-8") as f:
+        with open(emb_path, encoding="utf-8") as f:
             for line in f:
                 parts = line.strip().split("\t")
                 if len(parts) >= 2:
@@ -223,9 +227,7 @@ def parse_entity_indices(
     num_news = len(all_news_df["id"].unique())
     entity_indices = np.zeros((num_news, max_entities), dtype=np.int32)
 
-    for nid_str, entities_str in zip(
-        all_news_df["id"], all_news_df["title_entities"]
-    ):
+    for nid_str, entities_str in zip(all_news_df["id"], all_news_df["title_entities"]):
         int_idx = news_str_id_to_int_idx.get(nid_str)
         if int_idx is None:
             continue
@@ -244,9 +246,7 @@ def parse_entity_indices(
 
     # Build embedding matrix (index 0 = zero padding)
     entity_vocab_size = len(entity_to_idx) + 1
-    entity_embedding_matrix = np.zeros(
-        (entity_vocab_size, emb_dim), dtype=np.float32
-    )
+    entity_embedding_matrix = np.zeros((entity_vocab_size, emb_dim), dtype=np.float32)
     for wikidata_id, idx in entity_to_idx.items():
         entity_embedding_matrix[idx] = entity_emb_dict[wikidata_id]
 
@@ -434,8 +434,12 @@ def process_news(
             with open(entity_cache, "rb") as f:
                 entity_data = pickle.load(f)
             processed_news_content["entity_indices"] = entity_data["entity_indices"]
-            processed_news_content["entity_embeddings"] = entity_data["entity_embeddings"]
-            processed_news_content["entity_vocab_size"] = entity_data["entity_vocab_size"]
+            processed_news_content["entity_embeddings"] = entity_data[
+                "entity_embeddings"
+            ]
+            processed_news_content["entity_vocab_size"] = entity_data[
+                "entity_vocab_size"
+            ]
         else:
             logger.info("Processing entity embeddings...")
             entity_emb_dict = load_entity_embeddings(dataset_path)
@@ -443,19 +447,24 @@ def process_news(
                 all_news_df = read_all_news(dataset_path)
                 entity_indices, entity_emb_matrix, entity_vocab_size = (
                     parse_entity_indices(
-                        all_news_df, news_str_id_to_int_idx,
-                        entity_emb_dict, max_entities=max_entities,
+                        all_news_df,
+                        news_str_id_to_int_idx,
+                        entity_emb_dict,
+                        max_entities=max_entities,
                     )
                 )
                 processed_news_content["entity_indices"] = entity_indices
                 processed_news_content["entity_embeddings"] = entity_emb_matrix
                 processed_news_content["entity_vocab_size"] = entity_vocab_size
                 with open(entity_cache, "wb") as f:
-                    pickle.dump({
-                        "entity_indices": entity_indices,
-                        "entity_embeddings": entity_emb_matrix,
-                        "entity_vocab_size": entity_vocab_size,
-                    }, f)
+                    pickle.dump(
+                        {
+                            "entity_indices": entity_indices,
+                            "entity_embeddings": entity_emb_matrix,
+                            "entity_vocab_size": entity_vocab_size,
+                        },
+                        f,
+                    )
             else:
                 logger.warning("No entity embeddings found — entity features disabled.")
 

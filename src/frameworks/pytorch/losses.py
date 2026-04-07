@@ -18,7 +18,9 @@ class CategoricalCrossEntropyLoss(nn.Module):
     but is always True — PyTorch CrossEntropyLoss always expects logits.
     """
 
-    def __init__(self, label_smoothing: float = 0.0, from_logits: bool = True, **kwargs: Any):
+    def __init__(
+        self, label_smoothing: float = 0.0, from_logits: bool = True, **kwargs: Any
+    ):
         super().__init__()
         self.ce = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
 

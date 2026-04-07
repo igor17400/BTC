@@ -120,6 +120,7 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
 # Spec → Config dispatcher
 # ---------------------------------------------------------------------------
 
+
 def spec_to_pprec_config(spec: DictConfig) -> PPRecConfig:
     """Convert a parsed PP-Rec spec into PPRecConfig."""
     arch = spec.model.architecture

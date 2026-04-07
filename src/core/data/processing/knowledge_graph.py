@@ -1,13 +1,15 @@
 import logging
-import pandas as pd
-import numpy as np
 from pathlib import Path
+
 import networkx as nx
-from sklearn.preprocessing import normalize
+import numpy as np
+import pandas as pd
 import requests
+from sklearn.preprocessing import normalize
 from tqdm import tqdm
 
 logger = logging.getLogger(__name__)
+
 
 class KnowledgeGraphProcessor:
     def __init__(
@@ -39,7 +41,7 @@ class KnowledgeGraphProcessor:
             "format": "json",
             "language": "en",
             "search": name,
-            "type": "item"
+            "type": "item",
         }
 
         try:
@@ -64,7 +66,7 @@ class KnowledgeGraphProcessor:
             "format": "json",
             "ids": entity_id,
             "languages": "en",
-            "props": "claims"
+            "props": "claims",
         }
 
         try:
@@ -80,14 +82,16 @@ class KnowledgeGraphProcessor:
             return []
 
         linked_entities = []
-        for entity_id, entity_data in json_links["entities"].items():
+        for _entity_id, entity_data in json_links["entities"].items():
             if "claims" in entity_data:
-                for prop_id, claims in entity_data["claims"].items():
+                for _prop_id, claims in entity_data["claims"].items():
                     for claim in claims:
                         if "mainsnak" in claim and "datavalue" in claim["mainsnak"]:
                             value = claim["mainsnak"]["datavalue"]["value"]
                             if isinstance(value, dict) and "id" in value:
-                                linked_entities.append((value["id"], value.get("label", "")))
+                                linked_entities.append(
+                                    (value["id"], value.get("label", ""))
+                                )
 
         return linked_entities
 
@@ -130,14 +134,16 @@ class KnowledgeGraphProcessor:
 
         # Create graph from edge list
         self.graph = nx.from_pandas_edgelist(
-            results_df,
-            "original_entity",
-            "linked_entities"
+            results_df, "original_entity", "linked_entities"
         )
 
         # Create name mapping
-        target_names = results_df[["linked_entities", "name_linked_entities"]].drop_duplicates()
-        target_names = target_names.rename(columns={"linked_entities": "labels", "name_linked_entities": "name"})
+        target_names = results_df[
+            ["linked_entities", "name_linked_entities"]
+        ].drop_duplicates()
+        target_names = target_names.rename(
+            columns={"linked_entities": "labels", "name_linked_entities": "name"}
+        )
 
         source_names = results_df[["original_entity", "name"]].drop_duplicates()
         source_names = source_names.rename(columns={"original_entity": "labels"})
@@ -146,7 +152,9 @@ class KnowledgeGraphProcessor:
         names = names.set_index("labels")
         self.name_mapping = names.to_dict()["name"]
 
-        logger.info(f"Built graph with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges")
+        logger.info(
+            f"Built graph with {self.graph.number_of_nodes()} nodes and {self.graph.number_of_edges()} edges"
+        )
 
     def generate_embeddings(self) -> None:
         """Generate entity and context embeddings."""

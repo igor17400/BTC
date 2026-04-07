@@ -329,7 +329,7 @@ class NewsDatasetBase(BaseNewsDataset):
             return conversion_path
         except Exception as e:
             logger.error(f"Failed to convert dataset format: {e}")
-            raise RuntimeError(f"Dataset format conversion failed: {e}")
+            raise RuntimeError(f"Dataset format conversion failed: {e}") from e
 
     def _check_conversion_needed(self) -> bool:
         """Check if custom format conversion is needed."""
@@ -507,9 +507,7 @@ class NewsDatasetBase(BaseNewsDataset):
 
         sampling_cfg = self.sampler.config if hasattr(self.sampler, "config") else {}
         try:
-            sampling_dict = (
-                dict(sampling_cfg) if hasattr(sampling_cfg, "keys") else {}
-            )
+            sampling_dict = dict(sampling_cfg) if hasattr(sampling_cfg, "keys") else {}
         except Exception:
             sampling_dict = {}
 
@@ -534,7 +532,7 @@ class NewsDatasetBase(BaseNewsDataset):
         key_str = json.dumps(key_data, sort_keys=True, default=str)
         return hashlib.md5(key_str.encode()).hexdigest()[:10]
 
-    def _cache_paths(self) -> dict[str, "Path"]:
+    def _cache_paths(self) -> dict[str, Path]:
         """Return cache file paths for the current config."""
         processed_path = self.dataset_path / "processed"
         key = self._get_cache_key()
@@ -547,12 +545,10 @@ class NewsDatasetBase(BaseNewsDataset):
 
     def _load_data(self, mode: str = "train") -> bool:
         """Try to load processed tensor data from disk."""
-        processed_path = self.dataset_path / "processed"
+        self.dataset_path / "processed"
         cache = self._cache_paths()
         files_exist = (
-            cache["train"].exists()
-            and cache["val"].exists()
-            and cache["test"].exists()
+            cache["train"].exists() and cache["val"].exists() and cache["test"].exists()
         )
 
         if not files_exist:
@@ -840,7 +836,7 @@ class NewsDatasetBase(BaseNewsDataset):
                 (context_file, self.context_embeddings),
             ):
                 if filepath.exists():
-                    with open(filepath, "r", encoding="utf-8") as f:
+                    with open(filepath, encoding="utf-8") as f:
                         for line in f:
                             if len(line.strip()) > 0:
                                 terms = line.strip().split("\t")

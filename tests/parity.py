@@ -8,7 +8,9 @@ import numpy as np
 import pytest
 
 
-def _make_processed_news(vocab_size=50, embedding_size=64, num_categories=5, num_subcategories=10):
+def _make_processed_news(
+    vocab_size=50, embedding_size=64, num_categories=5, num_subcategories=10
+):
     """Create small processed_news dict for parity testing."""
     np.random.seed(42)
     return {
@@ -19,12 +21,18 @@ def _make_processed_news(vocab_size=50, embedding_size=64, num_categories=5, num
     }
 
 
-def _make_inputs(batch_size=2, history_len=5, title_len=10, num_candidates=3, vocab_size=50):
+def _make_inputs(
+    batch_size=2, history_len=5, title_len=10, num_candidates=3, vocab_size=50
+):
     """Create identical input data for all frameworks."""
     np.random.seed(123)
     return {
-        "hist_tokens": np.random.randint(1, vocab_size, (batch_size, history_len, title_len)).astype(np.int32),
-        "cand_tokens": np.random.randint(1, vocab_size, (batch_size, num_candidates, title_len)).astype(np.int32),
+        "hist_tokens": np.random.randint(
+            1, vocab_size, (batch_size, history_len, title_len)
+        ).astype(np.int32),
+        "cand_tokens": np.random.randint(
+            1, vocab_size, (batch_size, num_candidates, title_len)
+        ).astype(np.int32),
     }
 
 
@@ -87,6 +95,7 @@ class TestNRMSParity:
         # Keras
         try:
             import os
+
             os.environ["KERAS_BACKEND"] = "jax"
             from src.frameworks.keras.models.nrms import NRMS as KerasNRMS
 
@@ -107,6 +116,7 @@ class TestNRMSParity:
         # PyTorch
         try:
             import torch
+
             from src.frameworks.pytorch.models.nrms import NRMS as TorchNRMS
 
             model = TorchNRMS(
@@ -131,6 +141,7 @@ class TestNRMSParity:
         try:
             import jax.numpy as jnp
             from flax import nnx
+
             from src.frameworks.jax.models.nrms import NRMS as JaxNRMS
 
             rngs = nnx.Rngs(0)
@@ -166,6 +177,7 @@ class TestNRMSParity:
 
         try:
             import os
+
             os.environ["KERAS_BACKEND"] = "jax"
             from src.frameworks.keras.models.nrms import NRMS as KerasNRMS
 

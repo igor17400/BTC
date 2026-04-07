@@ -53,8 +53,7 @@ def get_loss(loss_name: str, framework: str, **kwargs: Any):
         from src.frameworks.jax.losses import get_loss as _get_loss
     else:
         raise ValueError(
-            f"Unknown framework '{framework}'. "
-            "Supported: 'pytorch', 'keras', 'jax'"
+            f"Unknown framework '{framework}'. Supported: 'pytorch', 'keras', 'jax'"
         )
 
     return _get_loss(loss_name, **kwargs)

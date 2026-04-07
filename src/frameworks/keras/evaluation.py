@@ -4,8 +4,6 @@ Provides a standalone ``fast_evaluate`` function isomorphic with the
 PyTorch and JAX evaluation modules.
 """
 
-from typing import Any
-
 import numpy as np
 from keras import ops
 from rich.progress import Progress
@@ -36,9 +34,7 @@ def precompute_news_vectors(
         news_ids = batch["news_id"]
         news_features = batch["news_features"]
 
-        batch_vecs = ops.convert_to_numpy(
-            news_encoder(news_features, training=False)
-        )
+        batch_vecs = ops.convert_to_numpy(news_encoder(news_features, training=False))
 
         for i, nid in enumerate(news_ids):
             key = ops.convert_to_numpy(nid).item() if hasattr(nid, "item") else nid
@@ -131,7 +127,11 @@ def fast_evaluate(
         if user_vector is None:
             continue
 
-        cand_ids_np = ops.convert_to_numpy(cand_ids) if hasattr(cand_ids, "numpy") else np.asarray(cand_ids)
+        cand_ids_np = (
+            ops.convert_to_numpy(cand_ids)
+            if hasattr(cand_ids, "numpy")
+            else np.asarray(cand_ids)
+        )
 
         news_vectors = []
         for nid in cand_ids_np:
@@ -151,7 +151,11 @@ def fast_evaluate(
             news_mat = np.stack(news_vectors, axis=0)
             scores = np.dot(news_mat, user_vector)
 
-        group_labels.append(ops.convert_to_numpy(labels) if hasattr(labels, "numpy") else np.asarray(labels))
+        group_labels.append(
+            ops.convert_to_numpy(labels)
+            if hasattr(labels, "numpy")
+            else np.asarray(labels)
+        )
         group_preds.append(scores)
         progress.update(imp_task, advance=1)
 

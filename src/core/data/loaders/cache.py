@@ -19,7 +19,9 @@ class CacheManager:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
         # Create subdirectories
-        self.dataset_dir = self.project_root.parent / ".data"  # Datasets outside source tree
+        self.dataset_dir = (
+            self.project_root.parent / ".data"
+        )  # Datasets outside source tree
         self.embeddings_dir = self.cache_dir / "embeddings"  # Embeddings in .cache
 
         self.dataset_dir.mkdir(exist_ok=True)
@@ -32,7 +34,7 @@ class CacheManager:
     def _load_cache_index(self) -> dict:
         """Load or create cache index"""
         if self.index_file.exists():
-            with open(self.index_file, "r") as f:
+            with open(self.index_file) as f:
                 return json.load(f)
         return {"datasets": {}, "embeddings": {}}
 

@@ -21,8 +21,8 @@ from src.core.io.logging import (
     setup_wandb_session,
 )
 from src.core.io.saving import get_output_run_dir
-from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.losses import get_loss
+from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
 
 

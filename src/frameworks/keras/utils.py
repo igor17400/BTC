@@ -3,9 +3,7 @@
 import logging
 
 import keras
-import numpy as np
 
-from src.core.io.logging import console
 from src.core.metrics.functions import NewsRecommenderMetrics
 
 logger = logging.getLogger(__name__)

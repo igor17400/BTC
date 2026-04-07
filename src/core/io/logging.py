@@ -181,7 +181,9 @@ def log_test_results(metrics: dict[str, float]) -> None:
     console.log(f"[bold green]Test results:[/bold green] {'  '.join(parts)}")
 
     if wandb.run:
-        wandb.log({f"test/{k}": v for k, v in metrics.items() if k != "num_impressions"})
+        wandb.log(
+            {f"test/{k}": v for k, v in metrics.items() if k != "num_impressions"}
+        )
 
 
 def log_training_complete(model_name: str, framework: str, total_time: float) -> None:

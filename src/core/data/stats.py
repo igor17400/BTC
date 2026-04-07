@@ -1,8 +1,9 @@
 import logging
+from collections import Counter
+from typing import Any
+
 import numpy as np
 import pandas as pd
-from typing import Any
-from collections import Counter
 
 logger = logging.getLogger(__name__)
 
@@ -27,7 +28,10 @@ def display_statistics(data_dict: dict[str, dict], mode: str = "train") -> None:
 
         # Additional statistics using NumPy
         avg_history_length = np.mean(
-            [len(history) for history in data_dict["train_behaviors"]["history_news_tokens"]]
+            [
+                len(history)
+                for history in data_dict["train_behaviors"]["history_news_tokens"]
+            ]
         )
         avg_impressions_length = np.mean(
             [
@@ -36,16 +40,26 @@ def display_statistics(data_dict: dict[str, dict], mode: str = "train") -> None:
             ]
         )
         avg_history_length_val = np.mean(
-            [len(history) for history in data_dict["val_behaviors"]["history_news_tokens"]]
+            [
+                len(history)
+                for history in data_dict["val_behaviors"]["history_news_tokens"]
+            ]
         )
         avg_impressions_length_val = np.mean(
-            [len(impression) for impression in data_dict["val_behaviors"]["candidate_news_tokens"]]
+            [
+                len(impression)
+                for impression in data_dict["val_behaviors"]["candidate_news_tokens"]
+            ]
         )
 
         logger.info(f"Average history length: {avg_history_length:.2f}")
         logger.info(f"Average impressions length: {avg_impressions_length:.2f}")
-        logger.info(f"Average history length (validation): {avg_history_length_val:.2f}")
-        logger.info(f"Average impressions length (validation): {avg_impressions_length_val:.2f}")
+        logger.info(
+            f"Average history length (validation): {avg_history_length_val:.2f}"
+        )
+        logger.info(
+            f"Average impressions length (validation): {avg_impressions_length_val:.2f}"
+        )
     else:
         num_test_news = len(data_dict["news"]["news_ids_original_strings"])
         num_test_behaviors = len(data_dict["test_behaviors"]["histories_news_ids"])
@@ -54,17 +68,27 @@ def display_statistics(data_dict: dict[str, dict], mode: str = "train") -> None:
         logger.info(f"Number of test behaviors: {num_test_behaviors}")
 
         avg_history_length_test = np.mean(
-            [len(history) for history in data_dict["test_behaviors"]["history_news_tokens"]]
+            [
+                len(history)
+                for history in data_dict["test_behaviors"]["history_news_tokens"]
+            ]
         )
         avg_impressions_length_test = np.mean(
-            [len(impression) for impression in data_dict["test_behaviors"]["candidate_news_tokens"]]
+            [
+                len(impression)
+                for impression in data_dict["test_behaviors"]["candidate_news_tokens"]
+            ]
         )
 
         logger.info(f"Average history length (test): {avg_history_length_test:.2f}")
-        logger.info(f"Average impressions length (test): {avg_impressions_length_test:.2f}")
+        logger.info(
+            f"Average impressions length (test): {avg_impressions_length_test:.2f}"
+        )
 
 
-def collect_processed_data_statistics(dataset_instance: Any, summary_data: dict) -> None:
+def collect_processed_data_statistics(
+    dataset_instance: Any, summary_data: dict
+) -> None:
     """Collect statistics from processed data after processing."""
     logger.info("Collecting processed data statistics...")
 
@@ -117,7 +141,10 @@ def collect_basic_dataset_info(dataset_instance: Any, summary_data: dict) -> Non
 def collect_news_statistics(dataset_instance: Any, summary_data: dict) -> None:
     """Collect news-related statistics."""
     try:
-        if not (hasattr(dataset_instance, "processed_news") and dataset_instance.processed_news):
+        if not (
+            hasattr(dataset_instance, "processed_news")
+            and dataset_instance.processed_news
+        ):
             logger.debug("No processed news data available")
             return
 
@@ -125,7 +152,9 @@ def collect_news_statistics(dataset_instance: Any, summary_data: dict) -> None:
             dataset_instance.processed_news["news_ids_original_strings"]
         )
         summary_data["vocabulary_size"] = len(dataset_instance.vocab)
-        summary_data["num_categories"] = dataset_instance.processed_news.get("num_categories", 0)
+        summary_data["num_categories"] = dataset_instance.processed_news.get(
+            "num_categories", 0
+        )
         summary_data["num_subcategories"] = dataset_instance.processed_news.get(
             "num_subcategories", 0
         )
@@ -133,7 +162,8 @@ def collect_news_statistics(dataset_instance: Any, summary_data: dict) -> None:
         # Calculate average lengths
         if "tokens" in dataset_instance.processed_news:
             non_pad_tokens = (
-                dataset_instance.processed_news["tokens"] != dataset_instance.vocab["[PAD]"]
+                dataset_instance.processed_news["tokens"]
+                != dataset_instance.vocab["[PAD]"]
             )
             avg_title_length = np.mean(np.sum(non_pad_tokens, axis=1))
             summary_data["average_title_length"] = round(avg_title_length, 2)
@@ -166,12 +196,18 @@ def collect_user_occurrence_counts(dataset_instance: Any, summary_data: dict) ->
                 if isinstance(user_ids, (list, np.ndarray)):
                     all_user_occurrences.update(user_ids)
                     all_unique_users.update(user_ids)
-                    logger.info(f"Added {len(set(user_ids))} unique users from {split} split")
-                    logger.info(f"{split} user ID range: {min(user_ids)} to {max(user_ids)}")
+                    logger.info(
+                        f"Added {len(set(user_ids))} unique users from {split} split"
+                    )
+                    logger.info(
+                        f"{split} user ID range: {min(user_ids)} to {max(user_ids)}"
+                    )
 
         # Debug: Let's see what we actually have
         logger.info(f"DEBUG: Total unique users collected: {len(all_unique_users)}")
-        logger.info(f"DEBUG: User ID range: {min(all_unique_users)} to {max(all_unique_users)}")
+        logger.info(
+            f"DEBUG: User ID range: {min(all_unique_users)} to {max(all_unique_users)}"
+        )
         logger.info(f"DEBUG: Sample user IDs: {sorted(list(all_unique_users))[:10]}")
         logger.info(f"DEBUG: Last 10 user IDs: {sorted(list(all_unique_users))[-10:]}")
 
@@ -182,7 +218,9 @@ def collect_user_occurrence_counts(dataset_instance: Any, summary_data: dict) ->
         logger.info(
             f"NOTE: User IDs are sparse - range spans {max(all_unique_users) - min(all_unique_users) + 1} but only {len(all_unique_users)} actual users exist"
         )
-        logger.info("NOTE: This is expected for MIND dataset due to sparse user ID assignment")
+        logger.info(
+            "NOTE: This is expected for MIND dataset due to sparse user ID assignment"
+        )
 
         # Save total unique users count (across all three datasets)
         summary_data["total_unique_users"] = len(all_unique_users)
@@ -191,7 +229,9 @@ def collect_user_occurrence_counts(dataset_instance: Any, summary_data: dict) ->
         if all_unique_users:
             summary_data["min_user_id"] = min(all_unique_users)
             summary_data["max_user_id"] = max(all_unique_users)
-            summary_data["user_id_range"] = max(all_unique_users) - min(all_unique_users) + 1
+            summary_data["user_id_range"] = (
+                max(all_unique_users) - min(all_unique_users) + 1
+            )
             summary_data["user_id_density"] = round(
                 len(all_unique_users) / summary_data["user_id_range"], 4
             )
@@ -210,7 +250,9 @@ def collect_user_occurrence_counts(dataset_instance: Any, summary_data: dict) ->
             summary_data["min_user_occurrences"] = min(occurrence_values)
             summary_data["max_user_occurrences"] = max(occurrence_values)
             summary_data["avg_user_occurrences"] = round(np.mean(occurrence_values), 2)
-            summary_data["median_user_occurrences"] = round(np.median(occurrence_values), 2)
+            summary_data["median_user_occurrences"] = round(
+                np.median(occurrence_values), 2
+            )
         else:
             summary_data["min_user_occurrences"] = 0
             summary_data["max_user_occurrences"] = 0
@@ -253,7 +295,9 @@ def collect_behavior_statistics(dataset_instance: Any, summary_data: dict) -> No
         logger.warning(f"Error collecting behavior statistics: {e}")
 
 
-def collect_split_statistics(dataset_instance: Any, summary_data: dict, split: str) -> None:
+def collect_split_statistics(
+    dataset_instance: Any, summary_data: dict, split: str
+) -> None:
     """Collect statistics for a specific data split."""
     try:
         data_attr = f"{split}_behaviors_data"
@@ -289,7 +333,9 @@ def collect_split_statistics(dataset_instance: Any, summary_data: dict, split: s
                         history_lengths.append(int(np.sum(history != 0)))
                     elif isinstance(history, list):
                         non_zero_count = sum(
-                            np.sum(x != 0) if isinstance(x, np.ndarray) else (1 if x != 0 else 0)
+                            np.sum(x != 0)
+                            if isinstance(x, np.ndarray)
+                            else (1 if x != 0 else 0)
                             for x in history
                         )
                         history_lengths.append(non_zero_count)
@@ -304,11 +350,17 @@ def collect_split_statistics(dataset_instance: Any, summary_data: dict, split: s
         if "candidate_news_tokens" in data:
             candidate_data = data["candidate_news_tokens"]
             if isinstance(candidate_data, np.ndarray):
-                summary_data[f"{prefix}_avg_impressions_length"] = candidate_data.shape[1]
+                summary_data[f"{prefix}_avg_impressions_length"] = candidate_data.shape[
+                    1
+                ]
             else:
                 impression_lengths = [len(impression) for impression in candidate_data]
-                avg_impressions_length = np.mean(impression_lengths) if impression_lengths else 0
-                summary_data[f"{prefix}_avg_impressions_length"] = round(avg_impressions_length, 2)
+                avg_impressions_length = (
+                    np.mean(impression_lengths) if impression_lengths else 0
+                )
+                summary_data[f"{prefix}_avg_impressions_length"] = round(
+                    avg_impressions_length, 2
+                )
         else:
             summary_data[f"{prefix}_avg_impressions_length"] = 0
 
@@ -359,9 +411,13 @@ def calculate_label_statistics(summary_data: dict, labels, prefix: str) -> None:
                     positive_samples += float(label_list) if label_list else 0
 
         summary_data[f"{prefix}_positive_samples"] = int(positive_samples)
-        summary_data[f"{prefix}_negative_samples"] = int(total_samples - positive_samples)
+        summary_data[f"{prefix}_negative_samples"] = int(
+            total_samples - positive_samples
+        )
         summary_data[f"{prefix}_positive_ratio"] = (
-            round(float(positive_samples / total_samples), 4) if total_samples > 0 else 0
+            round(float(positive_samples / total_samples), 4)
+            if total_samples > 0
+            else 0
         )
     except Exception as e:
         logger.warning(f"Error calculating label statistics for {prefix}: {e}")
@@ -375,7 +431,8 @@ def collect_overall_statistics(dataset_instance: Any, summary_data: dict) -> Non
     """Collect overall statistics across all splits."""
     try:
         total_behaviors = sum(
-            summary_data.get(f"{split}_behaviors_count", 0) for split in ["train", "val", "test"]
+            summary_data.get(f"{split}_behaviors_count", 0)
+            for split in ["train", "val", "test"]
         )
         summary_data["total_behaviors"] = total_behaviors
 
@@ -417,7 +474,9 @@ def collect_quality_metrics(summary_data: dict) -> None:
 def log_processed_data_statistics(summary_data: dict) -> None:
     """Log processed data statistics to console."""
     logger.info("=== PROCESSED DATA STATISTICS (After Processing) ===")
-    logger.info(f"  Total news articles: {summary_data.get('total_news_articles', 'N/A')}")
+    logger.info(
+        f"  Total news articles: {summary_data.get('total_news_articles', 'N/A')}"
+    )
     logger.info(f"  Vocabulary size: {summary_data.get('vocabulary_size', 'N/A')}")
     logger.info(
         f"  Total unique users (across all splits): {summary_data.get('total_unique_users', 'N/A')}"
@@ -455,25 +514,43 @@ def log_key_statistics(summary_data: dict) -> None:
     logger.info(
         f"Dataset: {summary_data.get('dataset_name', 'N/A')} ({summary_data.get('dataset_version', 'N/A')})"
     )
-    logger.info(f"Total news articles: {summary_data.get('total_news_articles', 'N/A'):,}")
+    logger.info(
+        f"Total news articles: {summary_data.get('total_news_articles', 'N/A'):,}"
+    )
     logger.info(f"Vocabulary size: {summary_data.get('vocabulary_size', 'N/A'):,}")
-    logger.info(f"Total unique users: {summary_data.get('total_unique_users', 'N/A'):,}")
+    logger.info(
+        f"Total unique users: {summary_data.get('total_unique_users', 'N/A'):,}"
+    )
     logger.info(f"Total behaviors: {summary_data.get('total_behaviors', 'N/A'):,}")
 
     # Training statistics
-    logger.info(f"Train behaviors: {summary_data.get('train_behaviors_count', 'N/A'):,}")
-    logger.info(f"Train unique users: {summary_data.get('train_unique_users', 'N/A'):,}")
-    logger.info(f"Train positive ratio: {summary_data.get('train_positive_ratio', 'N/A'):.2%}")
+    logger.info(
+        f"Train behaviors: {summary_data.get('train_behaviors_count', 'N/A'):,}"
+    )
+    logger.info(
+        f"Train unique users: {summary_data.get('train_unique_users', 'N/A'):,}"
+    )
+    logger.info(
+        f"Train positive ratio: {summary_data.get('train_positive_ratio', 'N/A'):.2%}"
+    )
 
     # Validation statistics
-    logger.info(f"Validation behaviors: {summary_data.get('val_behaviors_count', 'N/A'):,}")
-    logger.info(f"Validation unique users: {summary_data.get('val_unique_users', 'N/A'):,}")
-    logger.info(f"Validation positive ratio: {summary_data.get('val_positive_ratio', 'N/A'):.2%}")
+    logger.info(
+        f"Validation behaviors: {summary_data.get('val_behaviors_count', 'N/A'):,}"
+    )
+    logger.info(
+        f"Validation unique users: {summary_data.get('val_unique_users', 'N/A'):,}"
+    )
+    logger.info(
+        f"Validation positive ratio: {summary_data.get('val_positive_ratio', 'N/A'):.2%}"
+    )
 
     # Test statistics
     logger.info(f"Test behaviors: {summary_data.get('test_behaviors_count', 'N/A'):,}")
     logger.info(f"Test unique users: {summary_data.get('test_unique_users', 'N/A'):,}")
-    logger.info(f"Test positive ratio: {summary_data.get('test_positive_ratio', 'N/A'):.2%}")
+    logger.info(
+        f"Test positive ratio: {summary_data.get('test_positive_ratio', 'N/A'):.2%}"
+    )
 
     # Data quality
     logger.info(f"Data sparsity: {summary_data.get('data_sparsity', 'N/A'):.4f}")
@@ -484,7 +561,9 @@ def log_key_statistics(summary_data: dict) -> None:
 # ============================================================================
 
 
-def apply_data_fraction(data_dict: dict[str, np.ndarray], fraction: float) -> dict[str, np.ndarray]:
+def apply_data_fraction(
+    data_dict: dict[str, np.ndarray], fraction: float
+) -> dict[str, np.ndarray]:
     """Reduce the dataset size based on the fraction parameter."""
     if fraction < 1.0:
         logger.info(f"Using {fraction * 100:.0f}% of the dataset")
@@ -518,7 +597,9 @@ def save_unique_users_to_csv(dataset_instance: Any) -> None:
             # Convert to list and sort for better readability
             sorted_user_ids = sorted(list(all_unique_users))
 
-            logger.info(f"User ID range: {min(sorted_user_ids)} to {max(sorted_user_ids)}")
+            logger.info(
+                f"User ID range: {min(sorted_user_ids)} to {max(sorted_user_ids)}"
+            )
 
             # Show some sample user IDs
             sample_ids = (

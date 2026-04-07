@@ -7,7 +7,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-
 # ---------------------------------------------------------------------------
 # Pure-function masking utilities (isomorphic with Keras/JAX)
 # ---------------------------------------------------------------------------
@@ -65,9 +64,7 @@ class AdditiveAttention(nn.Module):
         attention = torch.exp(attention_scores)
         if mask is not None:
             attention = attention * mask.float()
-        attention_weights = attention / (
-            attention.sum(dim=-1, keepdim=True) + 1e-7
-        )
+        attention_weights = attention / (attention.sum(dim=-1, keepdim=True) + 1e-7)
 
         # 4. Weighted sum
         attention_weights_expanded = attention_weights.unsqueeze(
@@ -208,18 +205,18 @@ class MultiHeadAttentionBlock(nn.Module):
         # Concat heads
         attn_out = attn_out.transpose(1, 2).contiguous().view(B, S_q, self.dim_out)
 
-        O = self.dropout(self.fc_o(attn_out))
-        O = O + Q  # residual
+        out = self.dropout(self.fc_o(attn_out))
+        out = out + Q  # residual
         if self.use_layer_norm:
-            O = self.ln0(O)
+            out = self.ln0(out)
 
         # Feed-forward + residual
-        O_ff = self.fc_o(F.relu(O))
-        O = O + O_ff
+        ff = self.fc_o(F.relu(out))
+        out = out + ff
         if self.use_layer_norm:
-            O = self.ln1(O)
+            out = self.ln1(out)
 
-        return O
+        return out
 
 
 class GraphSAGELayer(nn.Module):

@@ -22,7 +22,6 @@ from src.core.io.logging import (
 from src.core.io.saving import save_run_summary_fn
 from src.core.metrics.functions import NewsRecommenderMetrics
 
-
 # =============================================================================
 # Callbacks
 # =============================================================================
@@ -108,7 +107,9 @@ class EvaluationCallback(keras.callbacks.Callback):
 class RichProgressCallback(keras.callbacks.Callback):
     """Rich progress bar for Keras training."""
 
-    def __init__(self, progress: Progress, num_epochs: int, steps_per_epoch: int | None = None):
+    def __init__(
+        self, progress: Progress, num_epochs: int, steps_per_epoch: int | None = None
+    ):
         super().__init__()
         self.progress = progress
         self.num_epochs = num_epochs
@@ -253,10 +254,12 @@ def training_loop(
     )
 
     if wandb.run:
-        wandb.summary.update({
-            "best_epoch": best_epoch_metrics.get("epoch_number"),
-            **{f"best/{k}": v for k, v in best_epoch_metrics.items()},
-        })
+        wandb.summary.update(
+            {
+                "best_epoch": best_epoch_metrics.get("epoch_number"),
+                **{f"best/{k}": v for k, v in best_epoch_metrics.items()},
+            }
+        )
         wandb.finish()
 
     return best_epoch_metrics, test_metrics

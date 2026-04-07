@@ -203,7 +203,9 @@ def print_results(study: optuna.Study, cfg: DictConfig) -> None:
     pruned = [t for t in study.trials if t.state == optuna.trial.TrialState.PRUNED]
     failed = [t for t in study.trials if t.state == optuna.trial.TrialState.FAIL]
 
-    print(f"\nTrials: {len(completed)} completed, {len(pruned)} pruned, {len(failed)} failed")
+    print(
+        f"\nTrials: {len(completed)} completed, {len(pruned)} pruned, {len(failed)} failed"
+    )
 
     if not completed:
         print("\nNo completed trials. Check logs for errors.")
@@ -217,14 +219,14 @@ def print_results(study: optuna.Study, cfg: DictConfig) -> None:
         print(f"  {k}: {v}")
 
     # All trials ranked
-    print(f"\nAll completed trials (ranked):")
+    print("\nAll completed trials (ranked):")
     sorted_trials = sorted(completed, key=lambda t: t.value, reverse=True)
     for i, t in enumerate(sorted_trials, 1):
         params = ", ".join(f"{k}={v}" for k, v in t.params.items())
         print(f"  {i}. trial #{t.number}: {t.value:.4f} | {params}")
 
     # Ready-to-copy command
-    print(f"\nTrain with best config:")
+    print("\nTrain with best config:")
     override_parts = []
     for k, v in best.params.items():
         if k == "learning_rate":

@@ -133,7 +133,10 @@ def infer_publication_dates(
     logger.info("Inferred dates for %d news articles", len(pub_dates))
 
     df = pd.DataFrame(
-        [{"news_id": k, "publication_date": v.isoformat()} for k, v in pub_dates.items()]
+        [
+            {"news_id": k, "publication_date": v.isoformat()}
+            for k, v in pub_dates.items()
+        ]
     )
     out = Path(output_path)
     out.parent.mkdir(parents=True, exist_ok=True)

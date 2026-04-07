@@ -1,51 +1,55 @@
 """
 Code Reference: https://github.com/seongeunryu/crown-www25
 """
+
 from typing import Any
-import numpy as np
 
 import keras
+import numpy as np
 from keras import layers, ops
 
 from src.core.models.configs import CROWNConfig
 from src.frameworks.keras.layers import (
-    AdditiveAttention, GraphSAGELayer, GraphAttentionLayer, MultiHeadAttentionBlock
+    AdditiveAttention,
+    GraphAttentionLayer,
+    GraphSAGELayer,
+    MultiHeadAttentionBlock,
 )
 from src.frameworks.keras.models.base import BaseModel
 
 
 class PositionalEncoding(layers.Layer):
     """Positional encoding layer for Multi-head Attention Block (MAB) models.
-    
+
     Why Positional Encoding is Essential:
     --------------------------------------
-    Transformers and attention mechanisms are inherently permutation-invariant, meaning they 
+    Transformers and attention mechanisms are inherently permutation-invariant, meaning they
     cannot distinguish between different positions in a sequence. Without positional information,
     the model treats "The cat sat on the mat" the same as "Mat the on sat the cat".
-    
+
     In CROWN's Context:
     -------------------
     CROWN uses Multi-head Attention Blocks (MABs) to process news titles and abstracts.
     Positional encoding is crucial because:
-    
+
     1. **Word Order Matters**: In news articles, word order carries semantic meaning.
        "Company acquires startup" vs "Startup acquires company" have opposite meanings.
-    
+
     2. **Syntactic Structure**: Position helps identify subject, verb, object relationships.
        Early positions often contain subjects, while later positions contain objects/details.
-    
+
     3. **Title vs Body Processing**: Titles are typically shorter and front-loaded with key
        information, while abstracts have more complex positional patterns.
-    
+
     How It Works:
     -------------
     Uses sinusoidal functions to generate unique position encodings:
     - Even dimensions: sin(pos / 10000^(2i/d_model))
     - Odd dimensions: cos(pos / 10000^(2i/d_model))
-    
+
     These are added to word embeddings before attention processing:
     embedded_words + positional_encoding = position-aware embeddings
-    
+
     Benefits of Sinusoidal Encoding:
     --------------------------------
     1. **Deterministic**: No learned parameters, consistent across models
@@ -53,7 +57,7 @@ class PositionalEncoding(layers.Layer):
     3. **Relative Position**: The model can learn to attend based on relative positions
        (sin(pos+k) can be expressed as a function of sin(pos) and cos(pos))
     4. **Smooth Decay**: Positions far apart have increasingly different encodings
-    
+
     Args:
         dropout_rate: Dropout applied after adding positional encoding
         max_len: Maximum sequence length to generate encodings for
@@ -70,21 +74,27 @@ class PositionalEncoding(layers.Layer):
 
         # Create positional encoding matrix using numpy for initialization
         position = np.arange(0, self.max_len, dtype=np.float32).reshape(-1, 1)
-        div_term = np.exp(np.arange(0, model_dimension, 2, dtype=np.float32) *
-                          (-np.log(10000.0) / model_dimension))
+        div_term = np.exp(
+            np.arange(0, model_dimension, 2, dtype=np.float32)
+            * (-np.log(10000.0) / model_dimension)
+        )
 
-        positional_encoding = np.zeros((self.max_len, model_dimension), dtype=np.float32)
+        positional_encoding = np.zeros(
+            (self.max_len, model_dimension), dtype=np.float32
+        )
         positional_encoding[:, 0::2] = np.sin(position * div_term)
         positional_encoding[:, 1::2] = np.cos(position * div_term)
 
         # Add batch dimension
-        positional_encoding = positional_encoding.reshape(1, self.max_len, model_dimension)
+        positional_encoding = positional_encoding.reshape(
+            1, self.max_len, model_dimension
+        )
 
         self.positional_encoding = self.add_weight(
-            name='positional_encoding',
+            name="positional_encoding",
             shape=(1, self.max_len, model_dimension),
             initializer=keras.initializers.Constant(positional_encoding),
-            trainable=False
+            trainable=False,
         )
 
         super().build(input_shape)
@@ -97,7 +107,9 @@ class PositionalEncoding(layers.Layer):
 
         # Select the appropriate slice of positional encoding and broadcast to match input
         pe_for_input = self.positional_encoding[:, :seq_len, :]
-        pe_broadcasted = ops.broadcast_to(pe_for_input, (batch_size, seq_len, pe_for_input.shape[-1]))
+        pe_broadcasted = ops.broadcast_to(
+            pe_for_input, (batch_size, seq_len, pe_for_input.shape[-1])
+        )
 
         x = x + pe_broadcasted
         return self.dropout(x, training=training)
@@ -117,8 +129,8 @@ class CategoryPredictor(layers.Layer):
     def build(self, input_shape):
         self.fc = layers.Dense(
             self.num_categories,
-            kernel_initializer='glorot_uniform',
-            name='category_predictor_dense'
+            kernel_initializer="glorot_uniform",
+            name="category_predictor_dense",
         )
         super().build(input_shape)
 
@@ -141,13 +153,15 @@ class NewsEncoder(keras.Model):
     news representation.
     """
 
-    def __init__(self,
-                 config: CROWNConfig,
-                 embedding_layer: layers.Embedding,
-                 category_embedding: layers.Embedding,
-                 subcategory_embedding: layers.Embedding,
-                 category_predictor: CategoryPredictor,
-                 name: str = "news_encoder"):
+    def __init__(
+        self,
+        config: CROWNConfig,
+        embedding_layer: layers.Embedding,
+        category_embedding: layers.Embedding,
+        subcategory_embedding: layers.Embedding,
+        category_predictor: CategoryPredictor,
+        name: str = "news_encoder",
+    ):
         super().__init__(name=name)
         self.config = config
         self.embedding_layer = embedding_layer
@@ -158,16 +172,22 @@ class NewsEncoder(keras.Model):
         self.category_predictor = category_predictor
 
         # News embedding dimension calculation
-        self.news_embedding_dim = (config.intent_embedding_dim * 2 +
-                                   config.category_embedding_dim +
-                                   config.subcategory_embedding_dim)
+        self.news_embedding_dim = (
+            config.intent_embedding_dim * 2
+            + config.category_embedding_dim
+            + config.subcategory_embedding_dim
+        )
 
         # Dropout layer
         self.dropout = layers.Dropout(config.dropout_rate, seed=config.seed)
 
         # Positional encoding
-        self.title_pos_encoder = PositionalEncoding(config.dropout_rate, config.max_title_length)
-        self.body_pos_encoder = PositionalEncoding(config.dropout_rate, config.max_abstract_length)
+        self.title_pos_encoder = PositionalEncoding(
+            config.dropout_rate, config.max_title_length
+        )
+        self.body_pos_encoder = PositionalEncoding(
+            config.dropout_rate, config.max_abstract_length
+        )
 
         # MAB encoders
         self.title_mab = self._build_mab_encoder("title")
@@ -176,8 +196,8 @@ class NewsEncoder(keras.Model):
         # Category affine transformation
         self.category_affine = layers.Dense(
             config.category_embedding_dim,
-            kernel_initializer='glorot_uniform',
-            name='category_affine'
+            kernel_initializer="glorot_uniform",
+            name="category_affine",
         )
 
         # Intent layers for k-intent disentanglement
@@ -186,9 +206,9 @@ class NewsEncoder(keras.Model):
             self.intent_layers.append(
                 layers.Dense(
                     config.intent_embedding_dim,
-                    activation='relu',
-                    kernel_initializer='glorot_uniform',
-                    name=f'intent_layer_{i}'
+                    activation="relu",
+                    kernel_initializer="glorot_uniform",
+                    name=f"intent_layer_{i}",
                 )
             )
 
@@ -196,12 +216,12 @@ class NewsEncoder(keras.Model):
         self.title_intent_attention = AdditiveAttention(
             query_vec_dim=config.attention_dim,
             seed=config.seed,
-            name='title_intent_attention'
+            name="title_intent_attention",
         )
         self.body_intent_attention = AdditiveAttention(
             query_vec_dim=config.attention_dim,
             seed=config.seed,
-            name='body_intent_attention'
+            name="body_intent_attention",
         )
 
     def build(self, input_shape):
@@ -231,7 +251,7 @@ class NewsEncoder(keras.Model):
             num_heads=self.config.num_heads,
             use_layer_norm=True,
             seed=self.config.seed,
-            name=f'{name_prefix}_mab_block'
+            name=f"{name_prefix}_mab_block",
         )
 
         return mab_block
@@ -301,12 +321,22 @@ class NewsEncoder(keras.Model):
         """
         # Split the concatenated input: [title, abstract, category, subcategory]
         # Use fixed dimensions to avoid dynamic conditions that break JAX tracing
-        title_tokens = inputs[:, :self.config.max_title_length]
+        title_tokens = inputs[:, : self.config.max_title_length]
         abstract_tokens = inputs[
-            :, self.config.max_title_length:self.config.max_title_length + self.config.max_abstract_length]
+            :,
+            self.config.max_title_length : self.config.max_title_length
+            + self.config.max_abstract_length,
+        ]
         category_id = inputs[
-            :, self.config.max_title_length + self.config.max_abstract_length:self.config.max_title_length + self.config.max_abstract_length + 1]
-        subcategory_id = inputs[:, self.config.max_title_length + self.config.max_abstract_length + 1:]
+            :,
+            self.config.max_title_length
+            + self.config.max_abstract_length : self.config.max_title_length
+            + self.config.max_abstract_length
+            + 1,
+        ]
+        subcategory_id = inputs[
+            :, self.config.max_title_length + self.config.max_abstract_length + 1 :
+        ]
 
         # Squeeze dimension
         category_id = ops.squeeze(category_id, axis=-1)
@@ -335,8 +365,12 @@ class NewsEncoder(keras.Model):
         category_representation = self.category_affine(category_concat)
 
         # Concatenate with category information
-        category_aware_title = ops.concatenate([title_embedding, category_representation], axis=1)
-        category_aware_body = ops.concatenate([body_embedding, category_representation], axis=1)
+        category_aware_title = ops.concatenate(
+            [title_embedding, category_representation], axis=1
+        )
+        category_aware_body = ops.concatenate(
+            [body_embedding, category_representation], axis=1
+        )
 
         # K-intent disentanglement
         title_k_intents = self.k_intent_disentangle(category_aware_title)
@@ -352,21 +386,26 @@ class NewsEncoder(keras.Model):
             category_logits = self.category_predictor(title_intent_embedding)
 
         # Title-body similarity computation
-        similarity = self.similarity_compute(title_intent_embedding, body_intent_embedding)
+        similarity = self.similarity_compute(
+            title_intent_embedding, body_intent_embedding
+        )
         similarity_expanded = ops.expand_dims(similarity, axis=1)
 
         # Consistency-based representation
-        news_representation = ops.concatenate([
-            title_intent_embedding,
-            similarity_expanded * body_intent_embedding
-        ], axis=1)
+        news_representation = ops.concatenate(
+            [title_intent_embedding, similarity_expanded * body_intent_embedding],
+            axis=1,
+        )
 
         # Add category and subcategory embeddings
-        news_representation = ops.concatenate([
-            news_representation,
-            self.dropout(cat_embed, training=training),
-            self.dropout(subcat_embed, training=training)
-        ], axis=1)
+        news_representation = ops.concatenate(
+            [
+                news_representation,
+                self.dropout(cat_embed, training=training),
+                self.dropout(subcat_embed, training=training),
+            ],
+            axis=1,
+        )
 
         if return_category_logits:
             # Return tuple for auxiliary loss computation
@@ -382,8 +421,9 @@ class UserEncoder(keras.Model):
     Implements GNN-enhanced hybrid user representation using GraphSAGE.
     """
 
-    def __init__(self, config: CROWNConfig, news_encoder: NewsEncoder,
-                 name: str = "user_encoder"):
+    def __init__(
+        self, config: CROWNConfig, news_encoder: NewsEncoder, name: str = "user_encoder"
+    ):
         super().__init__(name=name)
         self.config = config
         self.news_encoder = news_encoder
@@ -406,53 +446,57 @@ class UserEncoder(keras.Model):
         )
 
         # GNN layer selection based on config
-        if self.config.gnn_type == 'gat':
+        if self.config.gnn_type == "gat":
             self.gnn_layer = GraphAttentionLayer(
                 units=self.config.graph_hidden_dim,
                 num_heads=self.config.gat_num_heads,
                 dropout_rate=self.config.dropout_rate,
-                activation='relu',
+                activation="relu",
                 seed=self.config.seed,
                 alpha=self.config.gat_alpha,
                 concat_heads=self.config.gat_concat_heads,
-                name='gnn_gat_layer'
+                name="gnn_gat_layer",
             )
-        elif self.config.gnn_type == 'graphsage':
+        elif self.config.gnn_type == "graphsage":
             self.gnn_layer = GraphSAGELayer(
                 units=self.config.graph_hidden_dim,
                 aggregator=self.config.sage_aggregator,
                 dropout_rate=self.config.dropout_rate,
-                activation='relu',
+                activation="relu",
                 seed=self.config.seed,
                 normalize=self.config.sage_normalize,
-                name='gnn_sage_layer'
+                name="gnn_sage_layer",
             )
         else:
-            raise ValueError(f"Unknown GNN type: {self.config.gnn_type}. Choose 'graphsage' or 'gat'.")
+            raise ValueError(
+                f"Unknown GNN type: {self.config.gnn_type}. Choose 'graphsage' or 'gat'."
+            )
 
         # User node initialization layer for creating initial user representations
         self.user_node_init = layers.Dense(
             self.config.graph_hidden_dim,
-            kernel_initializer='glorot_uniform',
-            name='user_node_init'
+            kernel_initializer="glorot_uniform",
+            name="user_node_init",
         )
 
         # News projection layer for graph processing
         self.news_graph_projection = layers.Dense(
             self.config.graph_hidden_dim,
-            kernel_initializer='glorot_uniform',
-            name='news_graph_projection'
+            kernel_initializer="glorot_uniform",
+            name="news_graph_projection",
         )
 
         # Final user representation projection
         # Combines GNN (graph_hidden_dim) + attention (news_embedding_dim) features
-        news_embedding_dim = (config.intent_embedding_dim * 2 +
-                              config.category_embedding_dim +
-                              config.subcategory_embedding_dim)
+        news_embedding_dim = (
+            config.intent_embedding_dim * 2
+            + config.category_embedding_dim
+            + config.subcategory_embedding_dim
+        )
         self.final_user_projection = layers.Dense(
             news_embedding_dim,
-            kernel_initializer='glorot_uniform',
-            name='final_user_projection'
+            kernel_initializer="glorot_uniform",
+            name="final_user_projection",
         )
 
     def build(self, input_shape):
@@ -473,7 +517,8 @@ class UserEncoder(keras.Model):
         # Create adjacency matrix parts
         # Top-left: history-to-history (no connections)
         hist_to_hist = ops.zeros_like(
-            ops.expand_dims(user_history_mask, axis=-1) @ ops.expand_dims(user_history_mask, axis=-2)
+            ops.expand_dims(user_history_mask, axis=-1)
+            @ ops.expand_dims(user_history_mask, axis=-2)
         )
 
         # Top-right: history-to-user connections based on mask
@@ -484,7 +529,9 @@ class UserEncoder(keras.Model):
 
         # Bottom-right: user-to-user (no self-loop)
         # Create a zeros tensor with shape (batch_size, 1, 1) using broadcasting
-        user_to_user = ops.zeros_like(ops.expand_dims(user_history_mask[:, :1], axis=-1))
+        user_to_user = ops.zeros_like(
+            ops.expand_dims(user_history_mask[:, :1], axis=-1)
+        )
 
         # Combine all parts
         top_half = ops.concatenate([hist_to_hist, hist_to_user], axis=2)
@@ -493,25 +540,27 @@ class UserEncoder(keras.Model):
 
         return adjacency
 
-    def gnn_enhanced_user_representation(self, news_embeddings, history_mask, training=None):
+    def gnn_enhanced_user_representation(
+        self, news_embeddings, history_mask, training=None
+    ):
         """Compute GNN-enhanced hybrid user representation using proper GraphSAGE/GAT.
-        
+
         According to CROWN paper, this implements:
         1. Bipartite graph construction between users and news
         2. Graph neural network processing with mutual updates using GraphSAGE or GAT
         3. Hybrid representation combining attention and graph features
-        
+
         Args:
             news_embeddings: News embeddings from history (batch_size, history_length, embedding_dim)
             history_mask: Mask for valid history items (batch_size, history_length)
             training: Whether in training mode
-            
+
         Returns:
             Tuple of (enhanced_user_embedding, enhanced_news_embeddings)
         """
         # Step 1: Initialize user representation from news mean pooling
         # This follows the paper's approach of initializing user nodes
-        mask_expanded = ops.expand_dims(ops.cast(history_mask, 'float32'), axis=-1)
+        mask_expanded = ops.expand_dims(ops.cast(history_mask, "float32"), axis=-1)
         masked_news = news_embeddings * mask_expanded
 
         # Compute mean over valid news items
@@ -522,8 +571,12 @@ class UserEncoder(keras.Model):
         user_initial = sum_news / count_news  # (batch_size, embedding_dim)
 
         # Step 2: Project to graph space
-        user_graph_features = self.user_node_init(user_initial)  # (batch_size, graph_hidden_dim)
-        user_graph_features = ops.expand_dims(user_graph_features, axis=1)  # (batch_size, 1, graph_hidden_dim)
+        user_graph_features = self.user_node_init(
+            user_initial
+        )  # (batch_size, graph_hidden_dim)
+        user_graph_features = ops.expand_dims(
+            user_graph_features, axis=1
+        )  # (batch_size, 1, graph_hidden_dim)
 
         news_graph_features = self.news_graph_projection(news_embeddings)
         # (batch_size, history_length, graph_hidden_dim)
@@ -535,12 +588,13 @@ class UserEncoder(keras.Model):
         # Step 4: Apply GNN layer (GraphSAGE or GAT)
         # The GNN layer expects (user_features, news_features, adjacency_matrix)
         enhanced_user_emb, enhanced_news_embs = self.gnn_layer(
-            (user_graph_features, news_graph_features, adjacency),
-            training=training
+            (user_graph_features, news_graph_features, adjacency), training=training
         )
 
         # Remove the extra dimension from user embeddings
-        enhanced_user_emb = ops.squeeze(enhanced_user_emb, axis=1)  # (batch_size, graph_hidden_dim)
+        enhanced_user_emb = ops.squeeze(
+            enhanced_user_emb, axis=1
+        )  # (batch_size, graph_hidden_dim)
 
         return enhanced_user_emb, enhanced_news_embs
 
@@ -575,22 +629,30 @@ class UserEncoder(keras.Model):
             # GNN-Enhanced Hybrid User Representation (CROWN paper)
             # Uses efficient bipartite graph approach
             try:
-                enhanced_user_emb, enhanced_news_embs = self.gnn_enhanced_user_representation(
-                    clicked_news, history_mask, training=training
+                enhanced_user_emb, enhanced_news_embs = (
+                    self.gnn_enhanced_user_representation(
+                        clicked_news, history_mask, training=training
+                    )
                 )
 
                 # Attention-based user representation on enhanced news
-                attention_user_repr = self.user_attention(enhanced_news_embs, mask=history_mask)
+                attention_user_repr = self.user_attention(
+                    enhanced_news_embs, mask=history_mask
+                )
 
                 # Hybrid representation: combine GNN and attention features
-                user_representation = ops.concatenate([enhanced_user_emb, attention_user_repr], axis=-1)
+                user_representation = ops.concatenate(
+                    [enhanced_user_emb, attention_user_repr], axis=-1
+                )
 
                 # Project to final dimension
                 user_representation = self.final_user_projection(user_representation)
             except Exception as e:
                 # Fallback to standard attention if GNN fails
                 print(f"GNN fallback activated: {e}")
-                user_representation = self.user_attention(clicked_news, mask=history_mask)
+                user_representation = self.user_attention(
+                    clicked_news, mask=history_mask
+                )
 
             return user_representation, hist_cat_logits, hist_cat_ids
         else:
@@ -602,22 +664,30 @@ class UserEncoder(keras.Model):
 
             # GNN-Enhanced Hybrid User Representation (CROWN paper)
             try:
-                enhanced_user_emb, enhanced_news_embs = self.gnn_enhanced_user_representation(
-                    clicked_news, history_mask, training=training
+                enhanced_user_emb, enhanced_news_embs = (
+                    self.gnn_enhanced_user_representation(
+                        clicked_news, history_mask, training=training
+                    )
                 )
 
                 # Attention-based user representation on enhanced news
-                attention_user_repr = self.user_attention(enhanced_news_embs, mask=history_mask)
+                attention_user_repr = self.user_attention(
+                    enhanced_news_embs, mask=history_mask
+                )
 
                 # Hybrid representation: combine GNN and attention features
-                user_representation = ops.concatenate([enhanced_user_emb, attention_user_repr], axis=-1)
+                user_representation = ops.concatenate(
+                    [enhanced_user_emb, attention_user_repr], axis=-1
+                )
 
                 # Project to final dimension
                 user_representation = self.final_user_projection(user_representation)
             except Exception as e:
                 # Fallback to standard attention if GNN fails
                 print(f"GNN fallback activated: {e}")
-                user_representation = self.user_attention(clicked_news, mask=history_mask)
+                user_representation = self.user_attention(
+                    clicked_news, mask=history_mask
+                )
 
             return user_representation
 
@@ -639,7 +709,9 @@ class TimeDistributedAux(layers.Layer):
         reshaped_inputs = ops.reshape(inputs, (-1, input_shape[-1]))
 
         # Process with auxiliary outputs
-        outputs = self.layer(reshaped_inputs, training=training, return_category_logits=True)
+        outputs = self.layer(
+            reshaped_inputs, training=training, return_category_logits=True
+        )
 
         if isinstance(outputs, tuple):
             news_reprs, category_logits, category_ids = outputs
@@ -656,8 +728,13 @@ class TimeDistributedAux(layers.Layer):
 class CROWNScorer(keras.Model):
     """Scoring component for CROWN model."""
 
-    def __init__(self, config: CROWNConfig, news_encoder: NewsEncoder,
-                 user_encoder: UserEncoder, name: str = "crown_scorer"):
+    def __init__(
+        self,
+        config: CROWNConfig,
+        news_encoder: NewsEncoder,
+        user_encoder: UserEncoder,
+        name: str = "crown_scorer",
+    ):
         super().__init__(name=name)
         self.config = config
         self.news_encoder = news_encoder
@@ -671,7 +748,9 @@ class CROWNScorer(keras.Model):
             self.news_encoder, name="td_news_encoder_eval"
         )
 
-    def score_training_batch(self, history_inputs, candidate_inputs, training=None, return_aux=False):
+    def score_training_batch(
+        self, history_inputs, candidate_inputs, training=None, return_aux=False
+    ):
         """Score training batch with softmax output.
 
         Args:
@@ -688,7 +767,9 @@ class CROWNScorer(keras.Model):
         """
         if return_aux:
             # Get user representation and history auxiliary outputs
-            user_outputs = self.user_encoder(history_inputs, training=True, return_aux=True)
+            user_outputs = self.user_encoder(
+                history_inputs, training=True, return_aux=True
+            )
 
             if isinstance(user_outputs, tuple):
                 user_repr, hist_cat_logits, hist_cat_ids = user_outputs
@@ -698,8 +779,9 @@ class CROWNScorer(keras.Model):
                 hist_cat_ids = None
 
             # Get representations and auxiliary outputs for all candidates
-            candidate_outputs = self.candidate_encoder_train(candidate_inputs, training=True,
-                                                             return_category_logits=True)
+            candidate_outputs = self.candidate_encoder_train(
+                candidate_inputs, training=True, return_category_logits=True
+            )
 
             if isinstance(candidate_outputs, tuple):
                 cand_repr, cand_cat_logits, cand_cat_ids = candidate_outputs
@@ -720,7 +802,9 @@ class CROWNScorer(keras.Model):
 
             # Combine auxiliary outputs
             if hist_cat_logits is not None and cand_cat_logits is not None:
-                all_cat_logits = ops.concatenate([hist_cat_logits, cand_cat_logits], axis=0)
+                all_cat_logits = ops.concatenate(
+                    [hist_cat_logits, cand_cat_logits], axis=0
+                )
                 all_cat_ids = ops.concatenate([hist_cat_ids, cand_cat_ids], axis=0)
                 return output, all_cat_logits, all_cat_ids
             else:
@@ -769,7 +853,9 @@ class CROWNScorer(keras.Model):
         # Apply sigmoid
         return ops.sigmoid(score)
 
-    def score_multiple_candidates(self, history_inputs, candidate_inputs, training=None):
+    def score_multiple_candidates(
+        self, history_inputs, candidate_inputs, training=None
+    ):
         """Score multiple candidates with sigmoid activation.
 
         Args:
@@ -784,7 +870,9 @@ class CROWNScorer(keras.Model):
         user_repr = self.user_encoder(history_inputs, training=False)
 
         # Get representations for all candidates using stored TimeDistributed layer
-        candidate_reprs = self.candidate_encoder_eval(candidate_inputs, training=False, return_category_logits=False)
+        candidate_reprs = self.candidate_encoder_eval(
+            candidate_inputs, training=False, return_category_logits=False
+        )
         # Result: (batch_size, num_candidates, cnn_filter_num)
 
         # Expand user representation for broadcasting
@@ -809,44 +897,44 @@ class CROWN(BaseModel):
     """
 
     def __init__(
-            self,
-            processed_news: dict[str, Any],
-            # Model dimensions
-            embedding_size: int = 300,
-            intent_embedding_dim: int = 200,
-            category_embedding_dim: int = 100,
-            subcategory_embedding_dim: int = 100,
-            attention_dim: int = 200,
-            # Intent disentanglement
-            intent_num: int = 4,
-            alpha: float = 0.5,
-            # MAB parameters
-            num_heads: int = 12,
-            head_dim: int = 25,
-            feedforward_dim: int = 512,
-            num_layers: int = 2,
-            # GNN parameters
-            gnn_type: str = 'graphsage',
-            graph_hidden_dim: int = 300,
-            graph_num_layers: int = 1,
-            # GAT-specific parameters
-            gat_num_heads: int = 4,
-            gat_alpha: float = 0.2,
-            gat_concat_heads: bool = True,
-            # GraphSAGE-specific parameters
-            sage_aggregator: str = 'mean',
-            sage_normalize: bool = True,
-            # Common parameters
-            dropout_rate: float = 0.2,
-            seed: int = 42,
-            # Input parameters
-            max_title_length: int = 50,
-            max_abstract_length: int = 100,
-            max_history_length: int = 50,
-            max_impressions_length: int = 5,
-            process_user_id: bool = False,
-            name: str = "crown",
-            **kwargs,
+        self,
+        processed_news: dict[str, Any],
+        # Model dimensions
+        embedding_size: int = 300,
+        intent_embedding_dim: int = 200,
+        category_embedding_dim: int = 100,
+        subcategory_embedding_dim: int = 100,
+        attention_dim: int = 200,
+        # Intent disentanglement
+        intent_num: int = 4,
+        alpha: float = 0.5,
+        # MAB parameters
+        num_heads: int = 12,
+        head_dim: int = 25,
+        feedforward_dim: int = 512,
+        num_layers: int = 2,
+        # GNN parameters
+        gnn_type: str = "graphsage",
+        graph_hidden_dim: int = 300,
+        graph_num_layers: int = 1,
+        # GAT-specific parameters
+        gat_num_heads: int = 4,
+        gat_alpha: float = 0.2,
+        gat_concat_heads: bool = True,
+        # GraphSAGE-specific parameters
+        sage_aggregator: str = "mean",
+        sage_normalize: bool = True,
+        # Common parameters
+        dropout_rate: float = 0.2,
+        seed: int = 42,
+        # Input parameters
+        max_title_length: int = 50,
+        max_abstract_length: int = 100,
+        max_history_length: int = 50,
+        max_impressions_length: int = 5,
+        process_user_id: bool = False,
+        name: str = "crown",
+        **kwargs,
     ):
         super().__init__(name=name, **kwargs)
 
@@ -914,7 +1002,9 @@ class CROWN(BaseModel):
         self.embedding_layer = layers.Embedding(
             input_dim=self.processed_news["vocab_size"],
             output_dim=self.config.embedding_size,
-            embeddings_initializer=keras.initializers.Constant(self.processed_news["embeddings"]),
+            embeddings_initializer=keras.initializers.Constant(
+                self.processed_news["embeddings"]
+            ),
             trainable=True,
             mask_zero=False,
             name="word_embedding",
@@ -923,7 +1013,7 @@ class CROWN(BaseModel):
         self.category_embedding = layers.Embedding(
             input_dim=self.processed_news["num_categories"],
             output_dim=self.config.category_embedding_dim,
-            embeddings_initializer='glorot_uniform',
+            embeddings_initializer="glorot_uniform",
             trainable=True,
             name="category_embedding",
         )
@@ -931,7 +1021,7 @@ class CROWN(BaseModel):
         self.subcategory_embedding = layers.Embedding(
             input_dim=self.processed_news["num_subcategories"],
             output_dim=self.config.subcategory_embedding_dim,
-            embeddings_initializer='glorot_uniform',
+            embeddings_initializer="glorot_uniform",
             trainable=True,
             name="subcategory_embedding",
         )
@@ -946,7 +1036,7 @@ class CROWN(BaseModel):
             self.embedding_layer,
             self.category_embedding,
             self.subcategory_embedding,
-            self.category_predictor
+            self.category_predictor,
         )
 
         self.user_encoder = UserEncoder(self.config, self.news_encoder)
@@ -962,42 +1052,58 @@ class CROWN(BaseModel):
         # ----- Training model -----
         # Create concatenated inputs that match the expected format
         history_concat_input = keras.Input(
-            shape=(self.config.max_history_length, self.config.max_title_length + self.config.max_abstract_length + 2),
-            dtype="int32", name="hist_concat_input"
+            shape=(
+                self.config.max_history_length,
+                self.config.max_title_length + self.config.max_abstract_length + 2,
+            ),
+            dtype="int32",
+            name="hist_concat_input",
         )
         candidate_concat_input = keras.Input(
-            shape=(self.config.max_impressions_length,
-                   self.config.max_title_length + self.config.max_abstract_length + 2),
-            dtype="int32", name="cand_concat_input"
+            shape=(
+                self.config.max_impressions_length,
+                self.config.max_title_length + self.config.max_abstract_length + 2,
+            ),
+            dtype="int32",
+            name="cand_concat_input",
         )
 
         # Pass concatenated inputs directly to the scorer
-        training_output = self.scorer.score_training_batch(history_concat_input, candidate_concat_input)
+        training_output = self.scorer.score_training_batch(
+            history_concat_input, candidate_concat_input
+        )
 
         training_model = keras.Model(
             inputs=[history_concat_input, candidate_concat_input],
             outputs=training_output,
-            name="crown_training_model"
+            name="crown_training_model",
         )
 
         # ----- Scorer model -----
         # Create concatenated inputs for scorer model
         score_history_concat_input = keras.Input(
-            shape=(self.config.max_history_length, self.config.max_title_length + self.config.max_abstract_length + 2),
-            dtype="int32", name="score_hist_concat_input"
+            shape=(
+                self.config.max_history_length,
+                self.config.max_title_length + self.config.max_abstract_length + 2,
+            ),
+            dtype="int32",
+            name="score_hist_concat_input",
         )
         score_candidate_concat_input = keras.Input(
             shape=(self.config.max_title_length + self.config.max_abstract_length + 2,),
-            dtype="int32", name="score_cand_concat_input"
+            dtype="int32",
+            name="score_cand_concat_input",
         )
 
         # Pass concatenated inputs directly to the scorer
-        scorer_output = self.scorer.score_single_candidate(score_history_concat_input, score_candidate_concat_input)
+        scorer_output = self.scorer.score_single_candidate(
+            score_history_concat_input, score_candidate_concat_input
+        )
 
         scorer_model = keras.Model(
             inputs=[score_history_concat_input, score_candidate_concat_input],
             outputs=scorer_output,
-            name="crown_scorer_model"
+            name="crown_scorer_model",
         )
 
         return training_model, scorer_model
@@ -1011,10 +1117,23 @@ class CROWN(BaseModel):
 
         if training:
             # Training mode expects multiple keys for history and candidates
-            required_hist_keys = {"hist_tokens", "hist_abstract_tokens", "hist_category", "hist_subcategory"}
-            required_cand_keys = {"cand_tokens", "cand_abstract_tokens", "cand_category", "cand_subcategory"}
+            required_hist_keys = {
+                "hist_tokens",
+                "hist_abstract_tokens",
+                "hist_category",
+                "hist_subcategory",
+            }
+            required_cand_keys = {
+                "cand_tokens",
+                "cand_abstract_tokens",
+                "cand_category",
+                "cand_subcategory",
+            }
 
-            if not (required_hist_keys.issubset(input_keys) and required_cand_keys.issubset(input_keys)):
+            if not (
+                required_hist_keys.issubset(input_keys)
+                and required_cand_keys.issubset(input_keys)
+            ):
                 raise ValueError(
                     f"Training mode requires history keys: {required_hist_keys} and candidate keys: {required_cand_keys}, "
                     f"but got keys: {list(input_keys)}"
@@ -1043,74 +1162,92 @@ class CROWN(BaseModel):
     def _handle_training(self, inputs):
         """Handle training batch scoring with softmax output only."""
         # Concatenate history inputs
-        history_concat = ops.concatenate([
-            inputs["hist_tokens"],
-            inputs["hist_abstract_tokens"],
-            ops.expand_dims(inputs["hist_category"], axis=-1),
-            ops.expand_dims(inputs["hist_subcategory"], axis=-1),
-        ], axis=-1)
+        history_concat = ops.concatenate(
+            [
+                inputs["hist_tokens"],
+                inputs["hist_abstract_tokens"],
+                ops.expand_dims(inputs["hist_category"], axis=-1),
+                ops.expand_dims(inputs["hist_subcategory"], axis=-1),
+            ],
+            axis=-1,
+        )
 
         # Concatenate candidate inputs
-        candidate_concat = ops.concatenate([
-            inputs["cand_tokens"],
-            inputs["cand_abstract_tokens"],
-            ops.expand_dims(inputs["cand_category"], axis=-1),
-            ops.expand_dims(inputs["cand_subcategory"], axis=-1),
-        ], axis=-1)
+        candidate_concat = ops.concatenate(
+            [
+                inputs["cand_tokens"],
+                inputs["cand_abstract_tokens"],
+                ops.expand_dims(inputs["cand_category"], axis=-1),
+                ops.expand_dims(inputs["cand_subcategory"], axis=-1),
+            ],
+            axis=-1,
+        )
 
         # Return only click scores for standard Keras training
         # Auxiliary loss will be handled through a custom training procedure
-        return self.scorer.score_training_batch(history_concat, candidate_concat, return_aux=False)
+        return self.scorer.score_training_batch(
+            history_concat, candidate_concat, return_aux=False
+        )
 
     def _handle_multiple_candidates(self, inputs):
         """Handle multiple candidate scoring with sigmoid scores."""
         # Concatenate history inputs
-        history_concat = ops.concatenate([
-            inputs["hist_tokens"],
-            inputs["hist_abstract_tokens"],
-            ops.expand_dims(inputs["hist_category"], axis=-1),
-            ops.expand_dims(inputs["hist_subcategory"], axis=-1),
-        ], axis=-1)
+        history_concat = ops.concatenate(
+            [
+                inputs["hist_tokens"],
+                inputs["hist_abstract_tokens"],
+                ops.expand_dims(inputs["hist_category"], axis=-1),
+                ops.expand_dims(inputs["hist_subcategory"], axis=-1),
+            ],
+            axis=-1,
+        )
 
         # Concatenate candidate inputs
-        candidate_concat = ops.concatenate([
-            inputs["cand_tokens"],
-            inputs["cand_abstract_tokens"],
-            ops.expand_dims(inputs["cand_category"], axis=-1),
-            ops.expand_dims(inputs["cand_subcategory"], axis=-1),
-        ], axis=-1)
+        candidate_concat = ops.concatenate(
+            [
+                inputs["cand_tokens"],
+                inputs["cand_abstract_tokens"],
+                ops.expand_dims(inputs["cand_category"], axis=-1),
+                ops.expand_dims(inputs["cand_subcategory"], axis=-1),
+            ],
+            axis=-1,
+        )
 
-        return self.scorer.score_multiple_candidates(history_concat, candidate_concat, training=False)
+        return self.scorer.score_multiple_candidates(
+            history_concat, candidate_concat, training=False
+        )
 
     def get_config(self):
         """Return configuration for serialization."""
         base_config = super().get_config()
-        base_config.update({
-            "embedding_size": self.config.embedding_size,
-            "intent_embedding_dim": self.config.intent_embedding_dim,
-            "category_embedding_dim": self.config.category_embedding_dim,
-            "subcategory_embedding_dim": self.config.subcategory_embedding_dim,
-            "attention_dim": self.config.attention_dim,
-            "intent_num": self.config.intent_num,
-            "alpha": self.config.alpha,
-            "num_heads": self.config.num_heads,
-            "head_dim": self.config.head_dim,
-            "feedforward_dim": self.config.feedforward_dim,
-            "num_layers": self.config.num_layers,
-            "gnn_type": self.config.gnn_type,
-            "graph_hidden_dim": self.config.graph_hidden_dim,
-            "graph_num_layers": self.config.graph_num_layers,
-            "gat_num_heads": self.config.gat_num_heads,
-            "gat_alpha": self.config.gat_alpha,
-            "gat_concat_heads": self.config.gat_concat_heads,
-            "sage_aggregator": self.config.sage_aggregator,
-            "sage_normalize": self.config.sage_normalize,
-            "dropout_rate": self.config.dropout_rate,
-            "seed": self.config.seed,
-            "max_title_length": self.config.max_title_length,
-            "max_abstract_length": self.config.max_abstract_length,
-            "max_history_length": self.config.max_history_length,
-            "max_impressions_length": self.config.max_impressions_length,
-            "process_user_id": self.config.process_user_id,
-        })
+        base_config.update(
+            {
+                "embedding_size": self.config.embedding_size,
+                "intent_embedding_dim": self.config.intent_embedding_dim,
+                "category_embedding_dim": self.config.category_embedding_dim,
+                "subcategory_embedding_dim": self.config.subcategory_embedding_dim,
+                "attention_dim": self.config.attention_dim,
+                "intent_num": self.config.intent_num,
+                "alpha": self.config.alpha,
+                "num_heads": self.config.num_heads,
+                "head_dim": self.config.head_dim,
+                "feedforward_dim": self.config.feedforward_dim,
+                "num_layers": self.config.num_layers,
+                "gnn_type": self.config.gnn_type,
+                "graph_hidden_dim": self.config.graph_hidden_dim,
+                "graph_num_layers": self.config.graph_num_layers,
+                "gat_num_heads": self.config.gat_num_heads,
+                "gat_alpha": self.config.gat_alpha,
+                "gat_concat_heads": self.config.gat_concat_heads,
+                "sage_aggregator": self.config.sage_aggregator,
+                "sage_normalize": self.config.sage_normalize,
+                "dropout_rate": self.config.dropout_rate,
+                "seed": self.config.seed,
+                "max_title_length": self.config.max_title_length,
+                "max_abstract_length": self.config.max_abstract_length,
+                "max_history_length": self.config.max_history_length,
+                "max_impressions_length": self.config.max_impressions_length,
+                "process_user_id": self.config.process_user_id,
+            }
+        )
         return base_config

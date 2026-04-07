@@ -2,6 +2,7 @@
 Simplified MIND Dataset class that inherits from NewsDatasetBase.
 This class only defines MIND-specific configurations.
 """
+
 import logging
 
 import pandas as pd
@@ -39,16 +40,16 @@ class MINDDataset(NewsDatasetBase):
 
         train_path = self.dataset_path / "train" / "behaviors.tsv"
         if not train_path.exists():
-            logger.warning(
-                "No training behaviors found — popularity features skipped."
-            )
+            logger.warning("No training behaviors found — popularity features skipped.")
             return
 
         logger.info(
             "Computing MIND popularity features (CTR, publish times, bucketed CTR)..."
         )
         df = pd.read_csv(
-            train_path, sep="\t", header=None,
+            train_path,
+            sep="\t",
+            header=None,
             names=["impression_id", "user_id", "time", "history", "impressions"],
         )
         news_ids_str = self.processed_news["news_ids_original_strings"]
@@ -77,37 +78,37 @@ class MINDDataset(NewsDatasetBase):
         )
 
     def __init__(
-            self,
-            name: str,
-            version: str,
-            urls: dict,
-            max_title_length: int,
-            max_abstract_length: int,
-            max_history_length: int,
-            max_impressions_length: int,
-            seed: int,
-            embedding_type: str = "glove",
-            embedding_size: int = 300,
-            sampling: DictConfig | None = None,
-            data_fraction_train: float = 1.0,
-            data_fraction_val: float = 1.0,
-            data_fraction_test: float = 1.0,
-            mode: str = "train",
-            use_knowledge_graph: bool = False,
-            random_train_samples: bool = False,
-            validation_split_strategy: str = "chronological",
-            validation_split_percentage: float = 0.05,
-            validation_split_seed: int | None = None,
-            word_threshold: int = 3,
-            process_title: bool = True,
-            process_abstract: bool = True,
-            process_category: bool = True,
-            process_subcategory: bool = True,
-            process_user_id: bool = False,
-            process_entities: bool = False,
-            max_entities: int = 1000,
-            max_relations: int = 500,
-            **kwargs
+        self,
+        name: str,
+        version: str,
+        urls: dict,
+        max_title_length: int,
+        max_abstract_length: int,
+        max_history_length: int,
+        max_impressions_length: int,
+        seed: int,
+        embedding_type: str = "glove",
+        embedding_size: int = 300,
+        sampling: DictConfig | None = None,
+        data_fraction_train: float = 1.0,
+        data_fraction_val: float = 1.0,
+        data_fraction_test: float = 1.0,
+        mode: str = "train",
+        use_knowledge_graph: bool = False,
+        random_train_samples: bool = False,
+        validation_split_strategy: str = "chronological",
+        validation_split_percentage: float = 0.05,
+        validation_split_seed: int | None = None,
+        word_threshold: int = 3,
+        process_title: bool = True,
+        process_abstract: bool = True,
+        process_category: bool = True,
+        process_subcategory: bool = True,
+        process_user_id: bool = False,
+        process_entities: bool = False,
+        max_entities: int = 1000,
+        max_relations: int = 500,
+        **kwargs,
     ):
         super().__init__(
             name=name,

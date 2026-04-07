@@ -462,7 +462,8 @@ class NRMS(BaseModel):
     def score_single(self, inputs, training=None):
         """Score a single candidate with sigmoid."""
         return self.scorer.score_single(
-            inputs["history_tokens"], inputs["single_candidate_tokens"],
+            inputs["history_tokens"],
+            inputs["single_candidate_tokens"],
             training=training,
         )
 

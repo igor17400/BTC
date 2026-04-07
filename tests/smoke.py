@@ -13,7 +13,7 @@ Usage:
 """
 
 import argparse
-import json
+import contextlib
 import subprocess
 import sys
 import time
@@ -103,10 +103,8 @@ def run_one(model: str, framework: str) -> dict:
                 if "=" in part:
                     k, _, v = part.partition("=")
                     if k in metric_keys:
-                        try:
+                        with contextlib.suppress(ValueError):
                             result[k] = f"{float(v):.4f}"
-                        except ValueError:
-                            pass
 
         result["status"] = "PASS"
 

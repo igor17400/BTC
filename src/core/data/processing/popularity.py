@@ -74,9 +74,7 @@ def compute_news_ctr_and_publish_times(
             if prev is None or ts < prev:
                 publish_times[idx] = ts
 
-    publish_time_arr = np.array(
-        [publish_times.get(i, pd.NaT) for i in range(num_news)]
-    )
+    publish_time_arr = np.array([publish_times.get(i, pd.NaT) for i in range(num_news)])
 
     # --- Second pass: aggregate counts + bucketed counts ---
     click_counts = np.zeros(num_news, dtype=np.float32)
@@ -115,7 +113,8 @@ def compute_news_ctr_and_publish_times(
     active_news = int((impression_counts > 0).sum())
     max_observed_bucket = (
         int((bucket_imps.sum(axis=0) > 0).nonzero()[0].max() + 1)
-        if bucket_imps.sum() > 0 else 0
+        if bucket_imps.sum() > 0
+        else 0
     )
     logger.info(
         f"Computed CTR for {active_news} news articles "
@@ -164,7 +163,9 @@ def save_popularity_cache(
     )
 
 
-def load_popularity_cache(cache_dir: Path) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
+def load_popularity_cache(
+    cache_dir: Path,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
     """Load cached popularity arrays if present, else return ``None``."""
     ctr_path = cache_dir / "news_ctr.npy"
     bucketed_path = cache_dir / "news_ctr_bucketed.npy"

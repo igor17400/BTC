@@ -106,7 +106,7 @@ NewsRex is a modular and extensible framework for news recommendation systems re
     Poetry will now install the project's dependencies into your `nrex_env`.
 
     ```bash
-    poetry install 
+    poetry install
     ```
 
 4.  **Activate Poetry's shell (optional but recommended for development):**
@@ -166,13 +166,12 @@ poetry run python src/train.py experiment=nrms_mind_small
 
 ```
 @misc{azevedo2025newsrexefficientapproachnews,
-      title={NewsReX: A More Efficient Approach to News Recommendation with Keras 3 and JAX}, 
+      title={NewsReX: A More Efficient Approach to News Recommendation with Keras 3 and JAX},
       author={Igor L. R. Azevedo and Toyotaro Suzumura and Yuichiro Yasui},
       year={2025},
       eprint={2508.21572},
       archivePrefix={arXiv},
       primaryClass={cs.IR},
-      url={https://arxiv.org/abs/2508.21572}, 
+      url={https://arxiv.org/abs/2508.21572},
 }
 ```
-

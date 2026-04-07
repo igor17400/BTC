@@ -26,7 +26,9 @@ def setup_device(
         torch.cuda.set_device(device)
         if memory_limit < 1.0:
             torch.cuda.set_per_process_memory_fraction(memory_limit, device_id)
-        console.log(f"PyTorch: using CUDA device {torch.cuda.get_device_name(device_id)}")
+        console.log(
+            f"PyTorch: using CUDA device {torch.cuda.get_device_name(device_id)}"
+        )
         return device
 
     if torch.cuda.is_available():

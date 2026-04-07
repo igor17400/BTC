@@ -34,8 +34,12 @@ def _build_train_features(dataset_provider) -> tuple:
     features = {}
 
     if dataset_provider.process_title:
-        features["hist_tokens"] = keras.ops.convert_to_numpy(data["history_news_tokens"])
-        features["cand_tokens"] = keras.ops.convert_to_numpy(data["candidate_news_tokens"])
+        features["hist_tokens"] = keras.ops.convert_to_numpy(
+            data["history_news_tokens"]
+        )
+        features["cand_tokens"] = keras.ops.convert_to_numpy(
+            data["candidate_news_tokens"]
+        )
     if dataset_provider.process_abstract:
         features["hist_abstract_tokens"] = keras.ops.convert_to_numpy(
             data["history_news_abstract_tokens"]
@@ -44,11 +48,19 @@ def _build_train_features(dataset_provider) -> tuple:
             data["candidate_news_abstract_tokens"]
         )
     if dataset_provider.process_category:
-        features["hist_category"] = keras.ops.convert_to_numpy(data["history_news_categories"])
-        features["cand_category"] = keras.ops.convert_to_numpy(data["candidate_news_categories"])
+        features["hist_category"] = keras.ops.convert_to_numpy(
+            data["history_news_categories"]
+        )
+        features["cand_category"] = keras.ops.convert_to_numpy(
+            data["candidate_news_categories"]
+        )
     if dataset_provider.process_subcategory:
-        features["hist_subcategory"] = keras.ops.convert_to_numpy(data["history_news_subcategories"])
-        features["cand_subcategory"] = keras.ops.convert_to_numpy(data["candidate_news_subcategories"])
+        features["hist_subcategory"] = keras.ops.convert_to_numpy(
+            data["history_news_subcategories"]
+        )
+        features["cand_subcategory"] = keras.ops.convert_to_numpy(
+            data["candidate_news_subcategories"]
+        )
     if dataset_provider.process_user_id:
         features["user_ids"] = keras.ops.convert_to_numpy(data["user_ids"])
 
@@ -111,7 +123,11 @@ def _setup(cfg: DictConfig):
 
     # Precision
     precision = getattr(cfg.device, "precision", "float32")
-    precision_map = {"float32": "float32", "float16": "mixed_float16", "bfloat16": "mixed_bfloat16"}
+    precision_map = {
+        "float32": "float32",
+        "float16": "mixed_float16",
+        "bfloat16": "mixed_bfloat16",
+    }
     policy_name = precision_map.get(precision, "float32")
     policy = keras.mixed_precision.Policy(policy_name)
     keras.mixed_precision.set_global_policy(policy)
@@ -124,7 +140,9 @@ def _setup(cfg: DictConfig):
 
     setup_device(
         gpu_ids=cfg.device.gpu_ids if hasattr(cfg.device, "gpu_ids") else [],
-        memory_limit=cfg.device.memory_limit if hasattr(cfg.device, "memory_limit") else 0.9,
+        memory_limit=cfg.device.memory_limit
+        if hasattr(cfg.device, "memory_limit")
+        else 0.9,
     )
 
 
@@ -200,11 +218,10 @@ def run(cfg: DictConfig):
     import hydra as _hydra
     import keras
 
+    from src.core.losses import get_loss
     from src.frameworks.keras.dataloaders import create_train_dataloader
     from src.frameworks.keras.evaluation import fast_evaluate
     from src.frameworks.keras.training import training_loop
-
-    from src.core.losses import get_loss
     from src.frameworks.keras.utils import LightweightNewsMetrics, create_news_metrics
 
     setup_wandb_session(cfg)
@@ -236,7 +253,9 @@ def run(cfg: DictConfig):
         LightweightNewsMetrics.create_training_metrics()
         if LightweightNewsMetrics.should_use_lightweight_metrics(cfg)
         else create_news_metrics(
-            NewsRecommenderMetrics(**cfg.metrics.params if hasattr(cfg.metrics, "params") else {})
+            NewsRecommenderMetrics(
+                **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
+            )
         )
     )
     model.compile(optimizer=optimizer, loss=loss_fn, metrics=training_metrics)
@@ -282,7 +301,9 @@ def run(cfg: DictConfig):
         if best_model_path.exists():
             model.load_weights(best_model_path)
         else:
-            console.log("[yellow]Best weights not found, using current weights.[/yellow]")
+            console.log(
+                "[yellow]Best weights not found, using current weights.[/yellow]"
+            )
         # Load test data (not loaded during mode="train" init)
         if not dataset_provider.test_behaviors_data:
             dataset_provider._load_data("test")

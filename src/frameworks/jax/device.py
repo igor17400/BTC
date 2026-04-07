@@ -30,11 +30,14 @@ def setup_device(
         gpu_devices = []
         for d in devices:
             dtype_str = str(type(d)).lower()
-            if "cuda" in dtype_str or "gpu" in dtype_str:
-                gpu_devices.append(d)
-            elif hasattr(d, "device_kind") and d.device_kind in ("cuda", "gpu"):
-                gpu_devices.append(d)
-            elif hasattr(d, "platform") and d.platform in ("cuda", "gpu"):
+            if (
+                "cuda" in dtype_str
+                or "gpu" in dtype_str
+                or hasattr(d, "device_kind")
+                and d.device_kind in ("cuda", "gpu")
+                or hasattr(d, "platform")
+                and d.platform in ("cuda", "gpu")
+            ):
                 gpu_devices.append(d)
 
         if not gpu_devices:

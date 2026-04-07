@@ -168,6 +168,7 @@ def training_loop(
     # ---- Loss function ---------------------------------------------------
     if loss_fn is None:
         from .losses import categorical_cross_entropy
+
         loss_fn = categorical_cross_entropy
 
     train_step = make_train_step(loss_fn)

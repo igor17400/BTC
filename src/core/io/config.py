@@ -56,7 +56,7 @@ def load_model_config(model_weights_path: Path) -> dict[str, Any]:
         )
 
     # Load configuration
-    with open(config_path, "r") as f:
+    with open(config_path) as f:
         config_dict = yaml.safe_load(f)
 
     console.log(f"Loaded model configuration from: {config_path}")

@@ -4,7 +4,6 @@ from pathlib import Path
 import hydra
 import plotly.io as pio
 from omegaconf import DictConfig
-
 from utils.analytics import NewsRecAnalytics
 
 logger = logging.getLogger(__name__)
@@ -42,7 +41,9 @@ def visualize(cfg: DictConfig) -> None:
 
     # Generate recommendation diversity analysis
     logger.info("Analyzing recommendation diversity...")
-    diversity_fig = analytics.plot_recommendation_diversity(dataset.get_recommendations())
+    diversity_fig = analytics.plot_recommendation_diversity(
+        dataset.get_recommendations()
+    )
     pio.write_html(diversity_fig, output_dir / "recommendation_diversity.html")
 
     # Generate user journeys

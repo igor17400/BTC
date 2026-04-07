@@ -60,8 +60,8 @@ def _create_glove_embeddings(
     embeddings_manager,
 ) -> np.ndarray:
     """Create embedding matrix using GloVe embeddings."""
-    glove_tensor_tf, glove_vocab_map = (
-        embeddings_manager.load_glove_embeddings(embedding_size)
+    glove_tensor_tf, glove_vocab_map = embeddings_manager.load_glove_embeddings(
+        embedding_size
     )
     if glove_tensor_tf is None or glove_vocab_map is None:
         raise ValueError("GloVe embeddings or vocab map could not be loaded.")
