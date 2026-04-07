@@ -9,9 +9,11 @@ from typing import Any
 import torch
 from rich.progress import Progress
 
+from src.frameworks.pytorch.models.base import BaseModel
+
 
 def fast_evaluate(
-    model: torch.nn.Module,
+    model: BaseModel,
     dataset_provider: Any,
     metrics_engine: Any,
     progress: Progress,
@@ -26,7 +28,7 @@ def fast_evaluate(
     Isomorphic with ``fast_evaluate`` in Keras and JAX evaluation modules.
 
     Args:
-        model: A PyTorch ``BaseModel`` subclass (NRMS / NAML / LSTUR).
+        model: A PyTorch ``BaseModel`` subclass (NRMS / NAML / LSTUR ).
         dataset_provider: Dict with ``user_hist_dataloader``,
             ``news_dataloader``, and ``impression_iterator`` keys.
         metrics_engine: Core metrics calculator.
@@ -70,7 +72,3 @@ def fast_evaluate(
         )
 
     return metrics
-
-
-# Keep old name as alias for backwards compatibility
-run_fast_evaluation = fast_evaluate

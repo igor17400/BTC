@@ -31,8 +31,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Frameworks — install only what you need
+# ----- Framework extras -----
+# Convention: bare name = CPU/portable default, "-cuda" suffix = NVIDIA GPU.
+# Compose with --extra dev for development tools.
+
 keras = ["keras>=3.10.0"]
+
+# JAX
 jax = [
   "keras>=3.10.0",
   "jax>=0.6.2",
@@ -41,21 +46,36 @@ jax = [
   "optax>=0.2.5",
 ]
 jax-cuda = ["newsrex[jax]", "jax-cuda12-plugin>=0.6.2"]
+
+# PyTorch
 pytorch = ["keras>=3.10.0", "torch>=2.6.0"]
-pytorch-cu126 = ["keras>=3.10.0", "torch>=2.6.0"]
+pytorch-cuda = ["keras>=3.10.0", "torch>=2.6.0"]
+
+# All frameworks (Keras + JAX + PyTorch)
 all = ["newsrex[jax]", "newsrex[pytorch]"]
-all-cu126 = ["newsrex[jax-cuda]", "newsrex[pytorch-cu126]"]
+all-cuda = [
+  "keras>=3.10.0",
+  "jax>=0.6.2",
+  "jaxlib>=0.6.2",
+  "flax>=0.10.0",
+  "optax>=0.2.5",
+  "jax-cuda12-plugin>=0.6.2",
+  "torch>=2.6.0",
+]
+
 # Hyperparameter search
 search = ["optuna>=3.6.0", "optuna-dashboard>=0.15.0"]
-# Development
+
+# Development tools — framework-agnostic. Compose with any framework extra:
+#   uv sync --extra dev --extra all        # CPU dev environment
+#   uv sync --extra dev --extra all-cuda   # GPU dev environment
 dev = [
-  "newsrex[all]",
-  "newsrex[search]",
   "pytest>=7.4.0",
+  "pytest-cov>=4.1.0",
   "ruff>=0.8.0",
   "mypy>=1.4.0",
-  "pytest-cov>=4.1.0",
   "pre-commit>=3.3.0",
+  "newsrex[search]",
 ]
 
 [build-system]
@@ -69,7 +89,7 @@ packages = ["src"]
 line-length = 88
 target-version = "py312"
 extend-exclude = [
-  "reference_codes",  # third-party reference implementations — keep verbatim
+  "reference_codes", # third-party reference implementations — keep verbatim
   "outputs",
   ".data",
 ]
@@ -104,16 +124,41 @@ ignore = [
 known-first-party = ["src"]
 
 [tool.uv]
-# Pin torch to cu126 index so `uv sync` doesn't pull the wrong CUDA version
+# Declare CPU and CUDA extras as mutually exclusive so uv doesn't try
+# to satisfy both in a single universal lockfile (the wheels don't coexist).
+conflicts = [
+  [
+    { extra = "pytorch" },
+    { extra = "pytorch-cuda" },
+  ],
+  [
+    { extra = "jax" },
+    { extra = "jax-cuda" },
+  ],
+  [
+    { extra = "all" },
+    { extra = "all-cuda" },
+  ],
+]
+
+# PyTorch wheel index for the CUDA 12.6 variant.
+# `explicit = true` means packages are only pulled from here when
+# specifically requested via [tool.uv.sources] — never as a fallback.
 [[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
 explicit = true
 
 [tool.uv.sources]
-torch = { index = "pytorch-cu126", marker = "extra == 'pytorch-cu126' or extra == 'all-cu126'" }
+# `torch` resolution: route to the CUDA 12.6 index when the user requests
+# the GPU extras. Otherwise (default), uv pulls torch from PyPI, which
+# yields the right wheel for the user's platform (CPU on Mac, etc.).
+torch = [
+  { index = "pytorch-cu126", extra = "pytorch-cuda" },
+  { index = "pytorch-cu126", extra = "all-cuda" },
+]
 
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 ignore_missing_imports = true
 disallow_untyped_defs = true
