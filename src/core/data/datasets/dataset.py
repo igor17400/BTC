@@ -98,6 +98,7 @@ class NewsDatasetBase(BaseNewsDataset):
         process_subcategory: bool = True,
         process_user_id: bool = False,
         process_entities: bool = False,
+        popularity_ctr_method: str = "age_bucketed",
         max_entities: int = 1000,
         max_relations: int = 500,
         download_if_missing: bool = True,
@@ -147,6 +148,7 @@ class NewsDatasetBase(BaseNewsDataset):
         self.process_subcategory = process_subcategory
         self.process_user_id = process_user_id
         self.process_entities = process_entities
+        self.popularity_ctr_method = popularity_ctr_method
 
         self.float_dtype = "float32"
 
@@ -523,6 +525,7 @@ class NewsDatasetBase(BaseNewsDataset):
             "process_user_id": self.process_user_id,
             "process_entities": self.process_entities,
             "max_entities": self.max_entities,
+            "popularity_ctr_method": self.popularity_ctr_method,
             "random_train_samples": self.random_train_samples,
             "validation_split_strategy": self.validation_split_strategy,
             "validation_split_percentage": self.validation_split_percentage,
@@ -688,6 +691,7 @@ class NewsDatasetBase(BaseNewsDataset):
             "process_user_id": self.process_user_id,
             "process_entities": self.process_entities,
             "max_entities": self.max_entities,
+            "popularity_ctr_method": self.popularity_ctr_method,
             "random_train_samples": self.random_train_samples,
             "validation_split_strategy": self.validation_split_strategy,
             "validation_split_percentage": self.validation_split_percentage,

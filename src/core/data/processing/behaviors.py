@@ -169,26 +169,51 @@ def process_behaviors(
     )
     news_ctr_bucketed = processed_news.get("news_ctr_bucketed")
     news_publish_time = processed_news.get("news_publish_time")
+    popularity_method = processed_news.get("popularity_ctr_method", "age_bucketed")
+    popularity_dataset_start = processed_news.get("popularity_dataset_start")
     BUCKET_HOURS = 2
     MAX_RECENCY = 1499  # NUM_BUCKETS - 1 in PPRecConfig
 
     def _compute_recency_and_ctr(news_int_idx: int, impression_time):
-        """Return (recency_bucket, time_aware_ctr) for one candidate."""
+        """Return (recency_bucket, ctr_val) for one news article.
+
+        - ``recency_bucket`` is ALWAYS computed as age in 2-hour units
+          (used by the model's recency embedding).
+        - ``ctr_val`` is computed via the configured popularity method:
+            * ``age_bucketed``: bucketed_ctr[news, age_bucket]
+            * ``wall_clock``  : bucketed_ctr[news, wall_bucket - 1] (causal)
+            * ``aggregate``   : aggregate news_ctr[news]
+        """
         if not has_time_ctr or news_publish_time is None:
             return 0, news_ctr_values.get(news_int_idx, 0.0)
-        # news_publish_time is indexed by row position, not news_int_id
         news_row = news_int_to_row.get(news_int_idx)
         if news_row is None:
             return 0, 0.0
         pub = news_publish_time[news_row]
         if pd.isna(pub) or pd.isna(impression_time):
             return 0, news_ctr_values.get(news_int_idx, 0.0)
-        delta = pd.Timestamp(impression_time) - pd.Timestamp(pub)
-        delta_hours = delta.total_seconds() / 3600.0
-        bucket = int(delta_hours / BUCKET_HOURS)
-        bucket = max(0, min(bucket, MAX_RECENCY))
-        ctr_val = float(news_ctr_bucketed[news_row, bucket])
-        return bucket, ctr_val
+
+        # Recency = age (always)
+        age_delta = pd.Timestamp(impression_time) - pd.Timestamp(pub)
+        age_hours = age_delta.total_seconds() / 3600.0
+        recency_bucket = max(0, min(int(age_hours / BUCKET_HOURS), MAX_RECENCY))
+
+        # CTR lookup depends on the popularity method
+        if popularity_method == "wall_clock" and popularity_dataset_start is not None:
+            wall_delta = (
+                pd.Timestamp(impression_time) - pd.Timestamp(popularity_dataset_start)
+            )
+            wall_hours = wall_delta.total_seconds() / 3600.0
+            wall_bucket = int(wall_hours / BUCKET_HOURS)
+            # Causal: use the previous bucket (strictly before current time)
+            ctr_bucket = max(0, min(wall_bucket - 1, MAX_RECENCY))
+            ctr_val = float(news_ctr_bucketed[news_row, ctr_bucket])
+        elif popularity_method == "aggregate":
+            ctr_val = float(news_ctr_values.get(news_int_idx, 0.0))
+        else:  # age_bucketed (default)
+            ctr_val = float(news_ctr_bucketed[news_row, recency_bucket])
+
+        return recency_bucket, ctr_val
 
     # Map news_int_id -> row index in processed_news arrays
     news_int_to_row: dict[int, int] = {nid: i for i, nid in enumerate(news_int_ids)}
@@ -300,6 +325,10 @@ def process_behaviors(
                 if h_idx in news_tokens:
                     history_nid_list.append(h_idx)
 
+            # Impression timestamp — used for both candidate and history CTR
+            # (history CTR uses impression_time as a proxy for the unknown click time)
+            impression_time = row["time"] if has_time_ctr and "time" in row else None
+
             curr_history_tokens = [news_tokens[h_idx] for h_idx in history_nid_list]
             curr_history_abstract_tokens = [
                 news_abstract_tokens[h_idx] for h_idx in history_nid_list
@@ -315,11 +344,22 @@ def process_behaviors(
                 if has_entities
                 else []
             )
-            curr_history_ctr = (
-                [news_ctr_values.get(h_idx, 0.0) for h_idx in history_nid_list]
-                if has_ctr
-                else []
-            )
+            if has_ctr:
+                # Time-aware CTR lookup for history items: use impression_time
+                # as a proxy for the (unknown) click time, same recency formula
+                # as candidates. Falls back to aggregate CTR if time-bucketed
+                # data isn't available.
+                if has_time_ctr and impression_time is not None:
+                    curr_history_ctr = [
+                        _compute_recency_and_ctr(h_idx, impression_time)[1]
+                        for h_idx in history_nid_list
+                    ]
+                else:
+                    curr_history_ctr = [
+                        news_ctr_values.get(h_idx, 0.0) for h_idx in history_nid_list
+                    ]
+            else:
+                curr_history_ctr = []
 
             # Pad history to max_history_length
             history_pad_length = max_history_length - len(history_nid_list)
@@ -350,9 +390,6 @@ def process_behaviors(
                 parse_news_id=parse_news_id,
                 available_news_ids=set(news_tokens.keys()),
             )
-
-            # Impression timestamp for time-aware CTR
-            impression_time = row["time"] if has_time_ctr and "time" in row else None
 
             if stage == "train":
                 for cand_nid_group, label_group in zip(

@@ -31,17 +31,40 @@ from src.frameworks.keras.models.base import BaseModel
 
 
 class PPRecNewsEncoder(keras.Model):
-    """Knowledge-aware news encoder for PP-Rec.
+    """Knowledge-aware news encoder for PP-Rec (paper ``co1`` variant).
 
-    Encodes a news article from its title tokens, entity indices, and category
-    index into a fixed-dimension news vector.
+    Encodes a news article from its title tokens, entity indices, and
+    category index. Implements bidirectional cross-attention (MHCA) between
+    word and entity embeddings, matching ``get_news_encoder_co1`` in the
+    official PP-Rec code (Encoders.py:168-217).
 
-    Architecture (paper variant 0 — standard):
-        title: word_emb -> Dropout -> MHSA(20,20) -> Dropout -> AdditiveAttn -> 400d
-        entity: entity_emb -> MHSA(20,20) -> AdditiveAttn -> 400d
-        category: Embedding(num_cat, 200) -> Dropout -> 200d
-        fusion: Concat[title, entity, category] -> Dense(news_dim) -> news_dim
+    Architecture::
+
+        word_emb  = WordEmb(title_tokens)        Dropout(0.2)
+        entity_emb = EntityEmb(entities)         (trainable)
+        cat_emb   = CategoryEmb(category)         Reshape -> Dropout
+
+        # Bidirectional MHCA on RAW embeddings (before MHSA)
+        title_co  = MHCA(5,40)([title_emb, entity_emb, entity_emb])   # 200d
+        entity_co = MHCA(5,40)([entity_emb, title_emb, title_emb])    # 200d
+
+        # MHSA + concat with co-attention output, project, pool
+        title_vecs  = MHSA(20,20)([title_emb])                        # 400d
+        title_vecs  = Concat([title_vecs, title_co])                  # 600d
+        title_vecs  = Dense(400)(title_vecs); Dropout(0.2)            # 400d
+        title_vec   = AdditiveAttention(title_vecs)                   # 400d
+
+        entity_vecs = MHSA(20,20)([entity_emb])                       # 400d
+        entity_vecs = Concat([entity_vecs, entity_co])                # 600d
+        entity_vecs = Dense(400)(entity_vecs); Dropout(0.2)           # 400d
+        entity_vec  = AdditiveAttention(entity_vecs)                  # 400d
+
+        news_vec    = Dense(400)(Concat([title_vec, entity_vec, cat_vec]))
     """
+
+    # Number of heads / per-head dim for the cross-attention. Paper uses 5x40.
+    CO_NUM_HEADS = 5
+    CO_HEAD_DIM = 40
 
     def __init__(
         self,
@@ -54,8 +77,11 @@ class PPRecNewsEncoder(keras.Model):
         super().__init__(name=name)
         self.config = config
 
-        # Word branch
         self.word_embedding = word_embedding_layer
+        self.entity_embedding = entity_embedding_layer
+        self.category_embedding = category_embedding_layer
+
+        # --- Word (title) branch ---
         self.word_dropout = layers.Dropout(config.dropout_rate, seed=config.seed)
         self.word_mhsa = layers.MultiHeadAttention(
             num_heads=config.num_heads,
@@ -64,6 +90,11 @@ class PPRecNewsEncoder(keras.Model):
             kernel_initializer=GlorotUniformMHA(),
             name=f"{name}_word_mhsa",
         )
+        self.word_proj = layers.Dense(
+            config.news_dim,
+            kernel_initializer=keras.initializers.GlorotUniform(),
+            name=f"{name}_word_proj",
+        )
         self.word_dropout2 = layers.Dropout(config.dropout_rate, seed=config.seed)
         self.word_attention = AdditiveAttention(
             query_vec_dim=config.attention_hidden_dim,
@@ -71,8 +102,7 @@ class PPRecNewsEncoder(keras.Model):
             name=f"{name}_word_additive",
         )
 
-        # Entity branch (optional)
-        self.entity_embedding = entity_embedding_layer
+        # --- Entity branch (optional) + bidirectional MHCA ---
         if entity_embedding_layer is not None:
             self.entity_mhsa = layers.MultiHeadAttention(
                 num_heads=config.num_heads,
@@ -81,20 +111,43 @@ class PPRecNewsEncoder(keras.Model):
                 kernel_initializer=GlorotUniformMHA(),
                 name=f"{name}_entity_mhsa",
             )
+            self.entity_proj = layers.Dense(
+                config.news_dim,
+                kernel_initializer=keras.initializers.GlorotUniform(),
+                name=f"{name}_entity_proj",
+            )
+            self.entity_dropout = layers.Dropout(
+                config.dropout_rate, seed=config.seed
+            )
             self.entity_attention = AdditiveAttention(
                 query_vec_dim=config.attention_hidden_dim,
                 seed=config.seed,
                 name=f"{name}_entity_additive",
             )
+            # Word-conditioned-on-entity cross-attention (Q=title, KV=entities)
+            self.title_mhca = layers.MultiHeadAttention(
+                num_heads=self.CO_NUM_HEADS,
+                key_dim=self.CO_HEAD_DIM,
+                dropout=config.dropout_rate,
+                kernel_initializer=GlorotUniformMHA(),
+                name=f"{name}_title_mhca",
+            )
+            # Entity-conditioned-on-word cross-attention (Q=entities, KV=title)
+            self.entity_mhca = layers.MultiHeadAttention(
+                num_heads=self.CO_NUM_HEADS,
+                key_dim=self.CO_HEAD_DIM,
+                dropout=config.dropout_rate,
+                kernel_initializer=GlorotUniformMHA(),
+                name=f"{name}_entity_mhca",
+            )
 
-        # Category branch (optional)
-        self.category_embedding = category_embedding_layer
+        # --- Category branch (optional) ---
         if category_embedding_layer is not None:
             self.category_dropout = layers.Dropout(
                 config.dropout_rate, seed=config.seed
             )
 
-        # Fusion
+        # --- Fusion: [title_vec, entity_vec, category_vec] -> Dense(news_dim) ---
         self.fusion_dense = layers.Dense(
             config.news_dim,
             kernel_initializer=keras.initializers.GlorotUniform(),
@@ -105,60 +158,86 @@ class PPRecNewsEncoder(keras.Model):
         """Encode news features into a news vector.
 
         Args:
-            inputs: Tensor of shape (batch, feature_dim) where features are
-                concatenated [title_tokens, entity_indices, category_index].
-                Or just title_tokens if no entity/category.
+            inputs: Tensor of shape ``(batch, feature_dim)`` where the
+                feature dim is the concatenation of
+                ``[title_tokens, entity_indices, category_index]`` (entity
+                and category are optional, controlled by the config).
 
         Returns:
-            News vector of shape (batch, news_dim).
+            News vector of shape ``(batch, news_dim)``.
         """
         offset = 0
         title_len = self.config.max_title_length
 
-        # --- Title branch ---
+        # --- Slice features ---
         title_tokens = inputs[:, offset : offset + title_len]
         offset += title_len
-
-        title_emb = self.word_embedding(title_tokens)
-        title_emb = self.word_dropout(title_emb, training=training)
         title_mask = ops.not_equal(title_tokens, 0)
-        title_emb = self.word_mhsa(
-            title_emb,
-            title_emb,
-            title_emb,
-            key_mask=title_mask,
-            value_mask=title_mask,
-            training=training,
-        )
-        title_emb = self.word_dropout2(title_emb, training=training)
-        title_vec = self.word_attention(title_emb, mask=title_mask)
 
-        vecs = [title_vec]
-
-        # --- Entity branch ---
-        if self.entity_embedding is not None and self.config.use_entity:
+        has_entity = self.entity_embedding is not None and self.config.use_entity
+        if has_entity:
             entity_len = self.config.max_entities
             entity_indices = inputs[:, offset : offset + entity_len]
             offset += entity_len
-
-            entity_emb = self.entity_embedding(entity_indices)
             entity_mask = ops.not_equal(entity_indices, 0)
-            entity_emb = self.entity_mhsa(
-                entity_emb,
-                entity_emb,
-                entity_emb,
-                key_mask=entity_mask,
-                value_mask=entity_mask,
+        else:
+            entity_indices = None
+            entity_mask = None
+
+        has_category = self.category_embedding is not None
+        if has_category:
+            category_idx = inputs[:, offset : offset + 1]
+            offset += 1
+        else:
+            category_idx = None
+
+        # --- Raw embeddings ---
+        title_emb = self.word_dropout(self.word_embedding(title_tokens), training=training)
+        if has_entity:
+            entity_emb = self.entity_embedding(entity_indices)
+
+        # --- Bidirectional MHCA on RAW embeddings (paper co1) ---
+        if has_entity:
+            title_co = self.title_mhca(
+                title_emb, entity_emb, entity_emb,
+                key_mask=entity_mask, value_mask=entity_mask,
                 training=training,
             )
-            entity_vec = self.entity_attention(entity_emb, mask=entity_mask)
+            entity_co = self.entity_mhca(
+                entity_emb, title_emb, title_emb,
+                key_mask=title_mask, value_mask=title_mask,
+                training=training,
+            )
+
+        # --- Title self-attention + concat with co-attention ---
+        title_vecs = self.word_mhsa(
+            title_emb, title_emb, title_emb,
+            key_mask=title_mask, value_mask=title_mask,
+            training=training,
+        )
+        if has_entity:
+            title_vecs = ops.concatenate([title_vecs, title_co], axis=-1)
+        title_vecs = self.word_proj(title_vecs)
+        title_vecs = self.word_dropout2(title_vecs, training=training)
+        title_vec = self.word_attention(title_vecs, mask=title_mask)
+
+        vecs = [title_vec]
+
+        # --- Entity self-attention + concat with co-attention ---
+        if has_entity:
+            entity_vecs = self.entity_mhsa(
+                entity_emb, entity_emb, entity_emb,
+                key_mask=entity_mask, value_mask=entity_mask,
+                training=training,
+            )
+            entity_vecs = ops.concatenate([entity_vecs, entity_co], axis=-1)
+            entity_vecs = self.entity_proj(entity_vecs)
+            entity_vecs = self.entity_dropout(entity_vecs, training=training)
+            entity_vec = self.entity_attention(entity_vecs, mask=entity_mask)
             vecs.append(entity_vec)
 
         # --- Category branch ---
-        if self.category_embedding is not None:
-            category_idx = inputs[:, offset : offset + 1]
-            offset += 1
-
+        if has_category:
             cat_vec = self.category_embedding(category_idx)
             cat_vec = ops.squeeze(cat_vec, axis=1)
             cat_vec = self.category_dropout(cat_vec, training=training)
@@ -169,8 +248,7 @@ class PPRecNewsEncoder(keras.Model):
             fused = ops.concatenate(vecs, axis=-1)
         else:
             fused = vecs[0]
-        news_vec = self.fusion_dense(fused)
-        return news_vec
+        return self.fusion_dense(fused)
 
     def compute_output_shape(self, input_shape):
         return (input_shape[0], self.config.news_dim)
@@ -566,7 +644,9 @@ class PPRec(BaseModel):
                 embeddings_initializer=keras.initializers.Constant(
                     pn["entity_embeddings"]
                 ),
-                trainable=False,
+                # trainable per the paper's co1 variant: entity embeddings
+                # are fine-tuned during PP-Rec training (Encoders.py:194).
+                trainable=True,
                 name="entity_embedding",
             )
 

@@ -24,50 +24,76 @@ class MINDDataset(NewsDatasetBase):
     def _compute_extra_features(self) -> None:
         """Compute MIND-specific popularity features (CTR + publish times).
 
-        Reads ``train/behaviors.tsv`` and computes aggregate CTR, per-news
-        publish times (proxied as the earliest impression timestamp), and
-        time-bucketed CTR. Used by PP-Rec.
+        Computes aggregate CTR, per-news publish times, and time-bucketed CTR
+        according to ``self.popularity_ctr_method``:
+
+        - ``"age_bucketed"`` — bucket = age since publish (current default).
+          Uses train behaviors only.
+        - ``"wall_clock"`` — bucket = wall-clock time since dataset start.
+          Uses train + valid behaviors (test labels are unavailable in MIND
+          so we can't use them; train+val is the maximum we can include).
+          Causal lookups at prediction time use the previous bucket.
+        - ``"aggregate"`` — single lifetime CTR per news, broadcast across
+          all buckets. Baseline.
         """
+        method = self.popularity_ctr_method
         cache_dir = self.dataset_path / "processed"
-        cached = load_popularity_cache(cache_dir)
+        cached = load_popularity_cache(cache_dir, method=method)
         if cached is not None:
-            logger.info("Loading cached popularity features...")
-            news_ctr, publish_time_arr, news_ctr_bucketed = cached
+            logger.info(f"Loading cached popularity features (method={method})...")
+            news_ctr, publish_time_arr, news_ctr_bucketed, dataset_start = cached
             self.processed_news["news_ctr"] = news_ctr
             self.processed_news["news_ctr_bucketed"] = news_ctr_bucketed
             self.processed_news["news_publish_time"] = publish_time_arr
+            self.processed_news["popularity_ctr_method"] = method
+            if dataset_start is not None:
+                self.processed_news["popularity_dataset_start"] = dataset_start
             return
 
         train_path = self.dataset_path / "train" / "behaviors.tsv"
+        valid_path = self.dataset_path / "valid" / "behaviors.tsv"
         if not train_path.exists():
             logger.warning("No training behaviors found — popularity features skipped.")
             return
 
         logger.info(
-            "Computing MIND popularity features (CTR, publish times, bucketed CTR)..."
+            f"Computing MIND popularity features "
+            f"(method={method}, CTR/publish/bucketed)..."
         )
-        df = pd.read_csv(
-            train_path,
-            sep="\t",
-            header=None,
-            names=["impression_id", "user_id", "time", "history", "impressions"],
-        )
+        # For wall_clock we can include validation behaviors safely (the
+        # causal lookup at prediction time uses the previous bucket only).
+        # For age_bucketed and aggregate we keep using train only to match
+        # the previous behavior.
+        col_names = ["impression_id", "user_id", "time", "history", "impressions"]
+        df = pd.read_csv(train_path, sep="\t", header=None, names=col_names)
+        if method == "wall_clock" and valid_path.exists():
+            df_val = pd.read_csv(valid_path, sep="\t", header=None, names=col_names)
+            df = pd.concat([df, df_val], ignore_index=True)
+            logger.info(
+                f"wall_clock: combined train + valid behaviors "
+                f"({len(df):,} rows total)"
+            )
+
         news_ids_str = self.processed_news["news_ids_original_strings"]
         news_str_to_idx = {nid: i for i, nid in enumerate(news_ids_str)}
 
-        news_ctr, publish_time_arr, news_ctr_bucketed = (
+        news_ctr, publish_time_arr, news_ctr_bucketed, dataset_start = (
             compute_news_ctr_and_publish_times(
                 behaviors_df=df,
                 news_str_to_idx=news_str_to_idx,
                 num_news=len(news_ids_str),
                 bucket_hours=2,
                 max_buckets=1500,
+                method=method,
             )
         )
 
         self.processed_news["news_ctr"] = news_ctr
         self.processed_news["news_ctr_bucketed"] = news_ctr_bucketed
         self.processed_news["news_publish_time"] = publish_time_arr
+        self.processed_news["popularity_ctr_method"] = method
+        if method == "wall_clock":
+            self.processed_news["popularity_dataset_start"] = dataset_start
 
         save_popularity_cache(
             cache_dir=cache_dir,
@@ -75,6 +101,8 @@ class MINDDataset(NewsDatasetBase):
             publish_time_arr=publish_time_arr,
             news_ctr_bucketed=news_ctr_bucketed,
             news_str_to_idx=news_str_to_idx,
+            method=method,
+            dataset_start=dataset_start,
         )
 
     def __init__(
@@ -108,6 +136,7 @@ class MINDDataset(NewsDatasetBase):
         process_entities: bool = False,
         max_entities: int = 1000,
         max_relations: int = 500,
+        popularity_ctr_method: str = "age_bucketed",
         **kwargs,
     ):
         super().__init__(
@@ -141,6 +170,7 @@ class MINDDataset(NewsDatasetBase):
             process_user_id=process_user_id,
             process_entities=process_entities,
             max_entities=max_entities,
+            popularity_ctr_method=popularity_ctr_method,
             max_relations=max_relations,
             download_if_missing=True,
             id_prefix="N",  # MIND uses "N" prefix for news IDs

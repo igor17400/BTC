@@ -56,3 +56,7 @@ process_category: false
 process_subcategory: false
 process_user_id: false
 process_entities: false
+
+# CTR computation method for popularity features (PP-Rec).
+# Options: aggregate, age_bucketed, wall_clock
+popularity_ctr_method: age_bucketed
