@@ -284,12 +284,13 @@ class LSTUR(BaseModel):
         inputs: dict[str, torch.Tensor],
         training: bool = True,
     ) -> torch.Tensor:
-        if training:
-            return self._score_training(inputs, training)
-        elif "single_candidate_tokens" in inputs:
-            return self._score_single(inputs)
-        else:
-            return self._score_multi(inputs)
+        """Forward pass for training. Returns raw logits.
+
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
+        """
+        return self._score_training(inputs, training)
 
     # ----- helpers --------------------------------------------------------
 
@@ -330,33 +331,3 @@ class LSTUR(BaseModel):
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
         return scores  # raw logits; loss applies log-softmax internally
 
-    def _score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        history_tokens = self._maybe_concat_cat(
-            inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
-        )
-        candidate_tokens = inputs["single_candidate_tokens"]
-        user_ids = inputs.get("user_ids", inputs.get("user_indices"))
-
-        user_repr = self.user_encoder([history_tokens, user_ids], training=False)
-        cand_repr = self.news_encoder(candidate_tokens, training=False)
-
-        score = torch.sum(cand_repr * user_repr, dim=-1, keepdim=True)
-        return torch.sigmoid(score)
-
-    def _score_multi(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        history_tokens = self._maybe_concat_cat(
-            inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
-        )
-        candidate_tokens = self._maybe_concat_cat(
-            inputs["cand_tokens"], inputs, "cand_category", "cand_subcategory"
-        )
-        user_ids = inputs.get("user_ids", inputs.get("user_indices"))
-
-        user_repr = self.user_encoder([history_tokens, user_ids], training=False)
-
-        B, C, T = candidate_tokens.shape
-        flat_cand = candidate_tokens.reshape(B * C, T)
-        cand_repr = self.news_encoder(flat_cand, training=False).reshape(B, C, -1)
-
-        scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
-        return torch.sigmoid(scores)

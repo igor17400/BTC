@@ -181,24 +181,13 @@ class NRMS(BaseModel):
         inputs: dict[str, torch.Tensor],
         training: bool = True,
     ) -> torch.Tensor:
-        """Main forward pass.
+        """Forward pass for training. Returns raw logits.
 
-        Args:
-            inputs: Dictionary with keys depending on mode:
-                Training:   ``hist_tokens``, ``cand_tokens``
-                Inference:  ``hist_tokens``, ``cand_tokens`` (multi) or
-                            ``history_tokens``, ``single_candidate_tokens`` (single)
-            training: Whether in training mode.
-
-        Returns:
-            Scores tensor.
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
         """
-        if training:
-            return self.score_training_batch(inputs)
-        elif "single_candidate_tokens" in inputs:
-            return self.score_single(inputs)
-        else:
-            return self.score_candidates(inputs)
+        return self.score_training_batch(inputs)
 
     # ----- scoring helpers ------------------------------------------------
 
@@ -224,25 +213,3 @@ class NRMS(BaseModel):
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)  # (B, C)
         return scores
 
-    def score_single(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Score a single candidate with sigmoid."""
-        user_repr = self.user_encoder(inputs["history_tokens"], training=False)
-        cand_repr = self.news_encoder(inputs["single_candidate_tokens"], training=False)
-        score = torch.sum(cand_repr * user_repr, dim=-1, keepdim=True)
-        return torch.sigmoid(score)
-
-    def score_candidates(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        """Score multiple candidates with sigmoid (evaluation)."""
-        history_tokens = inputs["hist_tokens"]
-        candidate_tokens = inputs["cand_tokens"]
-
-        user_repr = self.user_encoder(history_tokens, training=False)
-
-        # Same TimeDistributed reshape trick (see _score_training)
-        B, C, T = candidate_tokens.shape
-        flat_cand = candidate_tokens.reshape(B * C, T)
-        cand_repr = self.news_encoder(flat_cand, training=False)
-        cand_repr = cand_repr.reshape(B, C, -1)
-
-        scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
-        return torch.sigmoid(scores)

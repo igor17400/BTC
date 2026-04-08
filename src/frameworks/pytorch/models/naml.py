@@ -301,10 +301,13 @@ class NAML(BaseModel):
         inputs: dict[str, torch.Tensor],
         training: bool = True,
     ) -> torch.Tensor:
-        if training:
-            return self._score_training(inputs)
-        else:
-            return self._score_multi(inputs)
+        """Forward pass for training. Returns raw logits.
+
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
+        """
+        return self._score_training(inputs)
 
     # ----- helpers --------------------------------------------------------
 
@@ -344,15 +347,3 @@ class NAML(BaseModel):
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
         return scores  # raw logits; loss applies log-softmax internally
 
-    def _score_multi(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
-        hist_concat = self._concat_features(inputs, "hist")
-        cand_concat = self._concat_features(inputs, "cand")
-
-        user_repr = self.user_encoder(hist_concat, training=False)
-
-        B, C, F = cand_concat.shape
-        flat_cand = cand_concat.reshape(B * C, F)
-        cand_repr = self.news_encoder(flat_cand, training=False).reshape(B, C, -1)
-
-        scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
-        return torch.sigmoid(scores)
