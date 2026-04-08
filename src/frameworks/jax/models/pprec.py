@@ -35,10 +35,6 @@ class PPRecNewsEncoder(nnx.Module):
         Concat[title, entity, category] -> Dense(news_dim)
     """
 
-    CO_NUM_HEADS = 5
-    CO_HEAD_DIM = 40
-    CO_OUT_DIM = CO_NUM_HEADS * CO_HEAD_DIM  # 200
-
     def __init__(
         self,
         config: PPRecConfig,
@@ -49,6 +45,7 @@ class PPRecNewsEncoder(nnx.Module):
         rngs: nnx.Rngs,
     ):
         self.config = config
+        co_out_dim = config.co_num_heads * config.co_head_dim
         self.word_embedding = word_embedding_layer
         self.entity_embedding = entity_embedding_layer
         self.category_embedding = category_embedding_layer
@@ -65,7 +62,7 @@ class PPRecNewsEncoder(nnx.Module):
         # Flax NNX MHA has out_features = in_features by default (NOT qkv_features),
         # so the MHSA output stays at embedding_size, not num_heads*head_dim.
         word_concat_dim = config.embedding_size + (
-            self.CO_OUT_DIM if entity_embedding_layer is not None else 0
+            co_out_dim if entity_embedding_layer is not None else 0
         )
         self.word_proj = nnx.Linear(
             word_concat_dim, config.news_dim, rngs=rngs
@@ -86,7 +83,7 @@ class PPRecNewsEncoder(nnx.Module):
                 decode=False,
                 rngs=rngs,
             )
-            entity_concat_dim = config.entity_embedding_dim + self.CO_OUT_DIM
+            entity_concat_dim = config.entity_embedding_dim + co_out_dim
             self.entity_proj = nnx.Linear(
                 entity_concat_dim, config.news_dim, rngs=rngs
             )
@@ -100,28 +97,28 @@ class PPRecNewsEncoder(nnx.Module):
             # Cross-attention requires Q and K/V to share input dim in Flax NNX,
             # so pre-project both modalities to a common 200-d cross-attention dim.
             self.title_q_proj = nnx.Linear(
-                config.embedding_size, self.CO_OUT_DIM, rngs=rngs
+                config.embedding_size, co_out_dim, rngs=rngs
             )
             self.entity_kv_proj = nnx.Linear(
-                config.entity_embedding_dim, self.CO_OUT_DIM, rngs=rngs
+                config.entity_embedding_dim, co_out_dim, rngs=rngs
             )
             self.entity_q_proj = nnx.Linear(
-                config.entity_embedding_dim, self.CO_OUT_DIM, rngs=rngs
+                config.entity_embedding_dim, co_out_dim, rngs=rngs
             )
             self.title_kv_proj = nnx.Linear(
-                config.embedding_size, self.CO_OUT_DIM, rngs=rngs
+                config.embedding_size, co_out_dim, rngs=rngs
             )
             self.title_mhca = nnx.MultiHeadAttention(
-                num_heads=self.CO_NUM_HEADS,
-                in_features=self.CO_OUT_DIM,
-                qkv_features=self.CO_OUT_DIM,
+                num_heads=config.co_num_heads,
+                in_features=co_out_dim,
+                qkv_features=co_out_dim,
                 decode=False,
                 rngs=rngs,
             )
             self.entity_mhca = nnx.MultiHeadAttention(
-                num_heads=self.CO_NUM_HEADS,
-                in_features=self.CO_OUT_DIM,
-                qkv_features=self.CO_OUT_DIM,
+                num_heads=config.co_num_heads,
+                in_features=co_out_dim,
+                qkv_features=co_out_dim,
                 decode=False,
                 rngs=rngs,
             )
@@ -234,27 +231,30 @@ class PopularityPredictor(nnx.Module):
     def __init__(self, config: PPRecConfig, *, rngs: nnx.Rngs):
         self.config = config
 
-        self.content_dense1 = nnx.Linear(config.news_dim, 256, rngs=rngs)
-        self.content_dense2 = nnx.Linear(256, 256, rngs=rngs)
-        self.content_dense3 = nnx.Linear(256, 128, rngs=rngs)
-        self.content_out = nnx.Linear(128, 1, use_bias=False, rngs=rngs)
+        c1, c2, c3 = config.pop_content_dims
+        self.content_dense1 = nnx.Linear(config.news_dim, c1, rngs=rngs)
+        self.content_dense2 = nnx.Linear(c1, c2, rngs=rngs)
+        self.content_dense3 = nnx.Linear(c2, c3, rngs=rngs)
+        self.content_out = nnx.Linear(c3, 1, use_bias=False, rngs=rngs)
 
         if config.use_recency:
+            r1, r2 = config.pop_recency_dims
+            g1, g2 = config.pop_gate_dims
             self.recency_embedding = nnx.Embed(
                 num_embeddings=config.recency_embedding_bins,
                 features=config.recency_embedding_dim,
                 rngs=rngs,
             )
             self.recency_dense1 = nnx.Linear(
-                config.recency_embedding_dim, 64, rngs=rngs
+                config.recency_embedding_dim, r1, rngs=rngs
             )
-            self.recency_dense2 = nnx.Linear(64, 64, rngs=rngs)
-            self.recency_out = nnx.Linear(64, 1, use_bias=False, rngs=rngs)
+            self.recency_dense2 = nnx.Linear(r1, r2, rngs=rngs)
+            self.recency_out = nnx.Linear(r2, 1, use_bias=False, rngs=rngs)
 
             gate_in = config.news_dim + config.recency_embedding_dim
-            self.gate_dense1 = nnx.Linear(gate_in, 128, rngs=rngs)
-            self.gate_dense2 = nnx.Linear(128, 64, rngs=rngs)
-            self.gate_out = nnx.Linear(64, 1, rngs=rngs)
+            self.gate_dense1 = nnx.Linear(gate_in, g1, rngs=rngs)
+            self.gate_dense2 = nnx.Linear(g1, g2, rngs=rngs)
+            self.gate_out = nnx.Linear(g2, 1, rngs=rngs)
 
         if config.use_ctr:
             self.ctr_scaler = nnx.Linear(1, 1, use_bias=False, rngs=rngs)
@@ -371,8 +371,9 @@ class ActivityGater(nnx.Module):
     """Per-user gate balancing relevance vs popularity."""
 
     def __init__(self, config: PPRecConfig, *, rngs: nnx.Rngs):
-        self.dense1 = nnx.Linear(config.news_dim, 64, rngs=rngs)
-        self.dense2 = nnx.Linear(64, 1, rngs=rngs)
+        h = config.activity_gate_hidden_dim
+        self.dense1 = nnx.Linear(config.news_dim, h, rngs=rngs)
+        self.dense2 = nnx.Linear(h, 1, rngs=rngs)
 
     def __call__(self, user_vec: jax.Array) -> jax.Array:
         x = jnp.tanh(self.dense1(user_vec))

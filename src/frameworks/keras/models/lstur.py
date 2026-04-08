@@ -323,7 +323,9 @@ class UserEncoder(keras.Model):
         )
 
         # Bernoulli masking on user embeddings during training (paper §3.2)
-        self.user_embedding_dropout = layers.Dropout(0.5, name="user_emb_dropout")
+        self.user_embedding_dropout = layers.Dropout(
+            self.config.user_embedding_dropout_rate, name="user_emb_dropout"
+        )
 
         # TimeDistributed layer for processing history
         self.time_distributed = layers.TimeDistributed(

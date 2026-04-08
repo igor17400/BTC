@@ -19,6 +19,8 @@ model:
   category_embedding_dim: 100
   subcategory_embedding_dim: 100
   dropout_rate: 0.2
+  # Bernoulli mask on long-term user embeddings during training (paper §3.2)
+  user_embedding_dropout_rate: 0.5
   seed: 42
 
 inputs:

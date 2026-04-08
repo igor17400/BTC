@@ -6,6 +6,10 @@ model:
       news_dim: 400
       num_heads: 20
       head_dim: 20
+      # Bidirectional cross-attention (paper "co1" encoder, MHCA between
+      # title words and entities). Paper uses 5 heads x 40 dim = 200 total.
+      co_num_heads: 5
+      co_head_dim: 40
       attention_hidden_dim: 200
       entity_embedding_dim: 100
       category_embedding_dim: 200
@@ -19,6 +23,11 @@ model:
     recency_embedding_bins: 1500
     recency_embedding_dim: 100
     ctr_scaler_init: 19.0
+    # PopularityPredictor MLP widths (paper PP-Rec official code)
+    pop_content_dims: [256, 256, 128]   # news_dim -> 256 -> 256 -> 128 -> 1
+    pop_recency_dims: [64, 64]          # recency_emb -> 64 -> 64 -> 1
+    pop_gate_dims: [128, 64]            # concat[news, rec] -> 128 -> 64 -> 1 (sigmoid)
+    activity_gate_hidden_dim: 64        # ActivityGater: news_dim -> 64 -> 1 (sigmoid)
   embedding:
     size: 300
     trainable: true

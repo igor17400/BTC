@@ -57,6 +57,9 @@ class LSTURConfig:
     gru_unit: int = 300
     type: str = "ini"  # "ini" or "con" for different user encoder types
     dropout_rate: float = 0.2
+    # Bernoulli mask on long-term user embeddings (paper §3.2). Distinct from
+    # the regular dropout_rate so we can disable it during fine-tuning.
+    user_embedding_dropout_rate: float = 0.5
     seed: int = 42
     max_title_length: int = 50
     max_history_length: int = 50
@@ -131,9 +134,13 @@ class PPRecConfig:
     entity_embedding_dim: int = 100
     category_embedding_dim: int = 200
 
-    # Multi-head attention
+    # Multi-head self-attention (title MHSA, entity MHSA)
     num_heads: int = 20
     head_dim: int = 20
+    # Cross-attention between title words and entities (paper "co1" encoder).
+    # Paper uses 5 heads x 40 dim = 200 total.
+    co_num_heads: int = 5
+    co_head_dim: int = 40
     attention_hidden_dim: int = 200
 
     # Popularity embeddings
@@ -142,6 +149,16 @@ class PPRecConfig:
     recency_embedding_bins: int = 1500
     recency_embedding_dim: int = 100
     ctr_scaler_init: float = 19.0
+
+    # PopularityPredictor MLP widths (paper PP-Rec official code).
+    # content scorer: news_dim -> dims[0] -> dims[1] -> dims[2] -> 1
+    pop_content_dims: tuple[int, int, int] = (256, 256, 128)
+    # recency scorer: recency_emb_dim -> dims[0] -> dims[1] -> 1
+    pop_recency_dims: tuple[int, int] = (64, 64)
+    # gate MLP: concat[news, recency_emb] -> dims[0] -> dims[1] -> 1 (sigmoid)
+    pop_gate_dims: tuple[int, int] = (128, 64)
+    # ActivityGater hidden width: news_dim -> hidden -> 1 (sigmoid)
+    activity_gate_hidden_dim: int = 64
 
     # Feature flags
     use_entity: bool = True

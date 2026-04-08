@@ -37,9 +37,6 @@ class PPRecNewsEncoder(nn.Module):
         Concat -> Dense(news_dim) -> news vector
     """
 
-    CO_NUM_HEADS = 5
-    CO_HEAD_DIM = 40
-
     def __init__(
         self,
         config: PPRecConfig,
@@ -49,6 +46,7 @@ class PPRecNewsEncoder(nn.Module):
     ):
         super().__init__()
         self.config = config
+        co_out_dim = config.co_num_heads * config.co_head_dim
         self.word_embedding = word_embedding_layer
         self.entity_embedding = entity_embedding_layer
         self.category_embedding = category_embedding_layer
@@ -62,9 +60,9 @@ class PPRecNewsEncoder(nn.Module):
             batch_first=True,
         )
         # Title MHSA produces (B,T,embed_dim). After concat with title_co
-        # (B,T,CO_NUM_HEADS*CO_HEAD_DIM=200), project back to news_dim.
+        # (B,T,co_num_heads*co_head_dim=200), project back to news_dim.
         word_concat_dim = config.embedding_size + (
-            self.CO_NUM_HEADS * self.CO_HEAD_DIM if entity_embedding_layer is not None else 0
+            co_out_dim if entity_embedding_layer is not None else 0
         )
         self.word_proj = nn.Linear(word_concat_dim, config.news_dim)
         self.word_dropout2 = nn.Dropout(config.dropout_rate)
@@ -82,7 +80,7 @@ class PPRecNewsEncoder(nn.Module):
                 batch_first=True,
             )
             entity_concat_dim = config.entity_embedding_dim + (
-                self.CO_NUM_HEADS * self.CO_HEAD_DIM
+                co_out_dim
             )
             self.entity_proj = nn.Linear(entity_concat_dim, config.news_dim)
             self.entity_dropout = nn.Dropout(config.dropout_rate)
@@ -96,26 +94,26 @@ class PPRecNewsEncoder(nn.Module):
             # to allow different dims. embed_dim is the QUERY dim, kdim/vdim are
             # the K/V dims. Output is num_heads * head_dim = 200d.
             self.title_mhca = nn.MultiheadAttention(
-                embed_dim=self.CO_NUM_HEADS * self.CO_HEAD_DIM,  # 200, output dim
-                num_heads=self.CO_NUM_HEADS,
+                embed_dim=co_out_dim,  # 200, output dim
+                num_heads=config.co_num_heads,
                 dropout=config.dropout_rate,
                 kdim=config.entity_embedding_dim,
                 vdim=config.entity_embedding_dim,
                 batch_first=True,
             )
             self.title_query_proj = nn.Linear(
-                config.embedding_size, self.CO_NUM_HEADS * self.CO_HEAD_DIM
+                config.embedding_size, co_out_dim
             )
             self.entity_mhca = nn.MultiheadAttention(
-                embed_dim=self.CO_NUM_HEADS * self.CO_HEAD_DIM,  # 200, output dim
-                num_heads=self.CO_NUM_HEADS,
+                embed_dim=co_out_dim,  # 200, output dim
+                num_heads=config.co_num_heads,
                 dropout=config.dropout_rate,
                 kdim=config.embedding_size,
                 vdim=config.embedding_size,
                 batch_first=True,
             )
             self.entity_query_proj = nn.Linear(
-                config.entity_embedding_dim, self.CO_NUM_HEADS * self.CO_HEAD_DIM
+                config.entity_embedding_dim, co_out_dim
             )
 
         # --- Category branch ---
@@ -271,23 +269,26 @@ class PopularityPredictor(nn.Module):
         super().__init__()
         self.config = config
 
-        # Content scorer
-        self.content_dense1 = nn.Linear(config.news_dim, 256)
-        self.content_dense2 = nn.Linear(256, 256)
-        self.content_dense3 = nn.Linear(256, 128)
-        self.content_out = nn.Linear(128, 1, bias=False)
+        # Content scorer: news_dim -> pop_content_dims -> 1
+        c1, c2, c3 = config.pop_content_dims
+        self.content_dense1 = nn.Linear(config.news_dim, c1)
+        self.content_dense2 = nn.Linear(c1, c2)
+        self.content_dense3 = nn.Linear(c2, c3)
+        self.content_out = nn.Linear(c3, 1, bias=False)
 
         if config.use_recency:
+            r1, r2 = config.pop_recency_dims
+            g1, g2 = config.pop_gate_dims
             self.recency_embedding = nn.Embedding(
                 config.recency_embedding_bins, config.recency_embedding_dim
             )
-            self.recency_dense1 = nn.Linear(config.recency_embedding_dim, 64)
-            self.recency_dense2 = nn.Linear(64, 64)
-            self.recency_out = nn.Linear(64, 1, bias=False)
+            self.recency_dense1 = nn.Linear(config.recency_embedding_dim, r1)
+            self.recency_dense2 = nn.Linear(r1, r2)
+            self.recency_out = nn.Linear(r2, 1, bias=False)
             gate_in = config.news_dim + config.recency_embedding_dim
-            self.gate_dense1 = nn.Linear(gate_in, 128)
-            self.gate_dense2 = nn.Linear(128, 64)
-            self.gate_out = nn.Linear(64, 1)
+            self.gate_dense1 = nn.Linear(gate_in, g1)
+            self.gate_dense2 = nn.Linear(g1, g2)
+            self.gate_out = nn.Linear(g2, 1)
 
         if config.use_ctr:
             self.ctr_scaler = nn.Linear(1, 1, bias=False)
@@ -426,8 +427,9 @@ class ActivityGater(nn.Module):
 
     def __init__(self, config: PPRecConfig):
         super().__init__()
-        self.dense1 = nn.Linear(config.news_dim, 64)
-        self.dense2 = nn.Linear(64, 1)
+        h = config.activity_gate_hidden_dim
+        self.dense1 = nn.Linear(config.news_dim, h)
+        self.dense2 = nn.Linear(h, 1)
 
     def forward(self, user_vec: torch.Tensor) -> torch.Tensor:
         x = torch.tanh(self.dense1(user_vec))

@@ -11,6 +11,19 @@ from src.core.models.configs import NAMLConfig
 from ..layers import AdditiveAttention
 from .base import BaseModel
 
+
+def _get_activation(name: str):
+    """Resolve a string activation name to a torch.nn.functional callable.
+
+    Centralised so all sub-encoders honour ``NAMLConfig.activation`` instead
+    of hardcoding ``F.relu``.
+    """
+    fn = getattr(F, name, None)
+    if fn is None:
+        raise ValueError(f"Unknown activation '{name}' for torch.nn.functional")
+    return fn
+
+
 # ------------------------------------------------------------------
 # Sub-encoders
 # ------------------------------------------------------------------
@@ -23,6 +36,7 @@ class TitleEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.embedding_layer = embedding_layer
+        self.activation = _get_activation(config.activation)
 
         self.dropout1 = nn.Dropout(config.dropout_rate)
         # PyTorch Conv1d: (batch, channels, length)
@@ -52,7 +66,7 @@ class TitleEncoder(nn.Module):
 
         # Conv1d expects (B, C, T), transpose and back
         y = y.transpose(1, 2)  # (B, E, T)
-        y = F.relu(self.cnn(y))  # (B, F, T)
+        y = self.activation(self.cnn(y))  # (B, F, T)
         y = y.transpose(1, 2)  # (B, T, F)
         y = self.dropout2(y)
 
@@ -67,6 +81,7 @@ class AbstractEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.embedding_layer = embedding_layer
+        self.activation = _get_activation(config.activation)
 
         self.dropout1 = nn.Dropout(config.dropout_rate)
         self.cnn = nn.Conv1d(
@@ -86,7 +101,7 @@ class AbstractEncoder(nn.Module):
         y = self.dropout1(embedded)
 
         y = y.transpose(1, 2)
-        y = F.relu(self.cnn(y))
+        y = self.activation(self.cnn(y))
         y = y.transpose(1, 2)
         y = self.dropout2(y)
 
@@ -103,6 +118,7 @@ class CategoryEncoder(nn.Module):
         self.projection = nn.Linear(
             config.category_embedding_dim, config.cnn_filter_num
         )
+        self.activation = _get_activation(config.activation)
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         """Encode category ids.
@@ -114,7 +130,7 @@ class CategoryEncoder(nn.Module):
             (batch, cnn_filter_num) category representation.
         """
         embedded = self.embedding(inputs)  # (B, 1, cat_dim)
-        projected = F.relu(self.projection(embedded))  # (B, 1, cnn_filter_num)
+        projected = self.activation(self.projection(embedded))  # (B, 1, cnn_filter_num)
         return projected.squeeze(1)  # (B, cnn_filter_num)
 
 
@@ -129,10 +145,11 @@ class SubcategoryEncoder(nn.Module):
         self.projection = nn.Linear(
             config.subcategory_embedding_dim, config.cnn_filter_num
         )
+        self.activation = _get_activation(config.activation)
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         embedded = self.embedding(inputs)
-        projected = F.relu(self.projection(embedded))
+        projected = self.activation(self.projection(embedded))
         return projected.squeeze(1)
 
 

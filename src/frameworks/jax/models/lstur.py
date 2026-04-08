@@ -205,7 +205,9 @@ class UserEncoder(nnx.Module):
         )
 
         # Bernoulli masking on user embeddings during training (paper §3.2)
-        self.user_embedding_dropout = nnx.Dropout(rate=0.5, rngs=rngs)
+        self.user_embedding_dropout = nnx.Dropout(
+            rate=config.user_embedding_dropout_rate, rngs=rngs
+        )
 
         # Compute news encoder output dim for GRU input size
         news_out_dim = config.cnn_filter_num

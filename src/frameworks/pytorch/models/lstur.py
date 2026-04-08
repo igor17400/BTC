@@ -169,7 +169,7 @@ class UserEncoder(nn.Module):
         nn.init.zeros_(self.user_embedding.weight)
 
         # Bernoulli masking on user embeddings during training (paper §3.2)
-        self.user_embedding_dropout = nn.Dropout(p=0.5)
+        self.user_embedding_dropout = nn.Dropout(p=config.user_embedding_dropout_rate)
 
         self.gru = nn.GRU(
             input_size=gru_input_size,
