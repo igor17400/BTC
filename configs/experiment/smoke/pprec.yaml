@@ -1,0 +1,63 @@
+# @package _global_
+#
+# Smoke test: PP-Rec on synthetic data (1 epoch, tiny batch).
+# Usage: uv run python -m src.train experiment=smoke/pprec framework=jax
+#
+# Verifies the entire PP-Rec training + evaluation pipeline (entity branch,
+# CTR scaler, recency popularity, activity gate) works end-to-end on
+# synthetic in-memory data. Should complete in <1 minute per framework.
+
+defaults:
+  - /spec: pprec
+  - /dataset: synthetic
+  - /sampling: base
+  - _self_
+
+name: smoke_pprec
+model_name: PPRec
+seed: 42
+
+dataset:
+  max_title_length: ${spec.inputs.title.max_length}
+  max_history_length: ${spec.inputs.history.max_length}
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  max_entities: ${spec.inputs.max_entities}
+  embedding_size: ${spec.model.embedding.size}
+  process_title: ${spec.inputs.process_title}
+  process_abstract: ${spec.inputs.process_abstract}
+  process_category: ${spec.inputs.process_category}
+  process_subcategory: ${spec.inputs.process_subcategory}
+  process_user_id: ${spec.inputs.process_user_id}
+  process_entities: true
+
+train:
+  batch_size: 8
+  num_epochs: 2
+  learning_rate: 0.0001
+  early_stopping:
+    patience: 1
+    min_improvement: 0.01
+
+eval:
+  fast_evaluation: true
+  batch_size: 64
+  run_initial_eval: false
+  run_test_after_training: true
+  save_predictions: false
+
+sampling:
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  strategy: random
+  random:
+    replace: false
+
+logging:
+  enable_wandb: false
+
+metrics:
+  params: {}
+
+device:
+  gpu_ids: [0]
+  precision: float32
+  keras_backend: jax

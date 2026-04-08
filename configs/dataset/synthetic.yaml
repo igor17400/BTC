@@ -11,11 +11,14 @@ max_history_length: 50
 max_impressions_length: 5
 embedding_size: 300
 
+max_entities: 5
+
 # Processing flags (overridden by experiment configs via spec bridge)
 process_title: false
 process_abstract: false
 process_category: false
 process_subcategory: false
 process_user_id: false
+process_entities: false
 
 seed: 42
