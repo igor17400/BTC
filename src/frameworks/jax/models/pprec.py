@@ -490,26 +490,16 @@ class PPRec(BaseModel):
 
         return scores
 
-    def score_candidates(self, inputs: dict[str, jax.Array]) -> jax.Array:
-        hist_features = inputs["hist_tokens"]
-        cand_features = inputs["cand_tokens"]
-        hist_ctr = inputs.get("hist_ctr")
-
-        user_vec = self.user_encoder(hist_features, hist_ctr, training=False)
-
-        B, C, F = cand_features.shape
-        flat_cand = cand_features.reshape(B * C, F)
-        rel_cand_vecs = self.news_encoder(flat_cand, training=False).reshape(B, C, -1)
-
-        scores = jnp.sum(rel_cand_vecs * user_vec[:, None, :], axis=-1)
-        return jax.nn.sigmoid(scores)
-
     def __call__(
         self,
         inputs: dict[str, jax.Array],
         *,
         training: bool = False,
     ) -> jax.Array:
-        if training:
-            return self.score_training_batch(inputs, training=True)
-        return self.score_candidates(inputs)
+        """Forward pass for training. Returns raw logits.
+
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
+        """
+        return self.score_training_batch(inputs, training=training)

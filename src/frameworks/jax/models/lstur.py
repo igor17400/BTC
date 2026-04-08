@@ -363,23 +363,6 @@ class LSTUR(BaseModel):
         scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)
         return scores  # raw logits; loss handles softmax
 
-    def score_multiple_candidates(
-        self,
-        hist_tokens: jax.Array,
-        user_ids: jax.Array,
-        cand_tokens: jax.Array,
-    ) -> jax.Array:
-        """Score multiple candidates at inference (sigmoid)."""
-        user_repr = self.user_encoder(hist_tokens, user_ids, training=False)
-
-        B, C, T = cand_tokens.shape
-        flat_cands = cand_tokens.reshape(B * C, T)
-        flat_vecs = self.news_encoder(flat_cands, training=False)
-        cand_repr = flat_vecs.reshape(B, C, -1)
-
-        scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)
-        return jax.nn.sigmoid(scores)
-
     # ---- Helpers for concatenated category/subcategory inputs -----------
 
     def _maybe_concat_category(
@@ -409,19 +392,15 @@ class LSTUR(BaseModel):
         *,
         training: bool = False,
     ) -> jax.Array:
-        """Unified forward pass.
+        """Forward pass for training. Returns raw logits.
 
-        Expects ``hist_tokens``, ``cand_tokens``, ``user_ids``.
-        Optionally: ``hist_category``, ``hist_subcategory``,
-        ``cand_category``, ``cand_subcategory``.
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
         """
         hist_tokens = self._maybe_concat_category(inputs, "hist", "hist_tokens")
         cand_tokens = self._maybe_concat_category(inputs, "cand", "cand_tokens")
         user_ids = inputs.get("user_ids", inputs.get("user_indices"))
-
-        if training:
-            return self.score_training_batch(
-                hist_tokens, user_ids, cand_tokens, training=True
-            )
-        else:
-            return self.score_multiple_candidates(hist_tokens, user_ids, cand_tokens)
+        return self.score_training_batch(
+            hist_tokens, user_ids, cand_tokens, training=training
+        )

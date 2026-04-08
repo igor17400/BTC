@@ -357,22 +357,6 @@ class NAML(BaseModel):
         scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)
         return scores  # raw logits; loss handles softmax
 
-    def score_multiple_candidates(
-        self,
-        hist_concat: jax.Array,
-        cand_concat: jax.Array,
-    ) -> jax.Array:
-        """Score multiple candidates at inference (sigmoid)."""
-        user_repr = self.user_encoder(hist_concat, training=False)
-
-        B, C, F = cand_concat.shape
-        flat_cands = cand_concat.reshape(B * C, F)
-        flat_vecs = self.news_encoder(flat_cands, training=False)
-        cand_repr = flat_vecs.reshape(B, C, -1)
-
-        scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)
-        return jax.nn.sigmoid(scores)
-
     # ---- Helpers to build concatenated inputs ---------------------------
 
     @staticmethod
@@ -404,15 +388,12 @@ class NAML(BaseModel):
         *,
         training: bool = False,
     ) -> jax.Array:
-        """Unified forward pass.
+        """Forward pass for training. Returns raw logits.
 
-        Training mode: expects hist/cand feature dicts with tokens, abstract,
-        category, subcategory.  Inference: same structure without dropout.
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
         """
         hist_concat = self.concatenate_features(inputs, "hist")
         cand_concat = self.concatenate_features(inputs, "cand")
-
-        if training:
-            return self.score_training_batch(hist_concat, cand_concat, training=True)
-        else:
-            return self.score_multiple_candidates(hist_concat, cand_concat)
+        return self.score_training_batch(hist_concat, cand_concat, training=training)

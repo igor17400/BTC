@@ -1,74 +1,21 @@
-"""Fast evaluation with precomputed vectors for PyTorch models.
+"""PyTorch-specific binding of the shared fast evaluation pipeline.
 
-Provides a standalone ``fast_evaluate`` function isomorphic with the
-Keras and JAX evaluation modules.
+The actual evaluation algorithm lives in :mod:`src.core.models.evaluation`
+and is shared by Keras, PyTorch, and JAX. This module simply pre-binds
+the :class:`PyTorchAdapter` so the runner can call ``fast_evaluate(...)``
+without thinking about adapters.
 """
 
-from typing import Any
+from __future__ import annotations
 
-import torch
-from rich.progress import Progress
+from functools import partial
 
-from src.frameworks.pytorch.models.base import BaseModel
+from src.core.models.evaluation import fast_evaluate as _shared_fast_evaluate
+from src.frameworks.pytorch.models.adapter import PyTorchAdapter
 
+#: Pre-bound :func:`src.core.models.evaluation.fast_evaluate` with the
+#: PyTorch adapter. The runner imports this name and calls it like the
+#: JAX/Keras runners; the adapter parameter is invisible to callers.
+fast_evaluate = partial(_shared_fast_evaluate, adapter=PyTorchAdapter())
 
-def fast_evaluate(
-    model: BaseModel,
-    dataset_provider: Any,
-    metrics_engine: Any,
-    progress: Progress,
-    cfg: Any,
-    mode: str = "validate",
-    save_predictions_path: str | None = None,
-    epoch: int | None = None,
-    int_to_news_id_map: dict | None = None,
-) -> dict[str, float]:
-    """Run fast evaluation using precomputed news and user vectors.
-
-    Isomorphic with ``fast_evaluate`` in Keras and JAX evaluation modules.
-
-    Args:
-        model: A PyTorch ``BaseModel`` subclass (NRMS / NAML / LSTUR ).
-        dataset_provider: Dict with ``user_hist_dataloader``,
-            ``news_dataloader``, and ``impression_iterator`` keys.
-        metrics_engine: Core metrics calculator.
-        progress: Rich progress bar manager.
-        cfg: Configuration object.
-        mode: ``"validate"`` or ``"test"``.
-        save_predictions_path: Optional path to save predictions.
-        epoch: Current epoch number.
-        int_to_news_id_map: Optional mapping from int news ids to string ids.
-
-    Returns:
-        Dictionary of metric name -> float value.
-    """
-    model.eval()
-
-    eval_mode = "val" if mode == "validate" else mode
-    batch_size = getattr(cfg.eval, "batch_size", 64)
-
-    with torch.no_grad():
-        if isinstance(dataset_provider, dict):
-            user_hist_dl = dataset_provider["user_hist_dataloader"]
-            news_dl = dataset_provider["news_dataloader"]
-            impression_iter = dataset_provider["impression_iterator"]
-        else:
-            user_hist_dl = dataset_provider.user_history_dataloader(
-                mode=eval_mode, batch_size=batch_size
-            )
-            news_dl = dataset_provider.news_dataloader(batch_size=batch_size)
-            impression_iter = dataset_provider.impression_dataloader(mode=eval_mode)
-
-        metrics = model.fast_evaluate(
-            user_hist_dataloader=user_hist_dl,
-            news_dataloader=news_dl,
-            impression_iterator=impression_iter,
-            metrics_calculator=metrics_engine,
-            progress=progress,
-            mode=mode,
-            save_predictions_path=save_predictions_path,
-            epoch=epoch,
-            int_to_news_id_map=int_to_news_id_map,
-        )
-
-    return metrics
+__all__ = ["fast_evaluate"]

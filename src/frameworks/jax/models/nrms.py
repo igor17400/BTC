@@ -225,50 +225,6 @@ class NRMS(BaseModel):
         scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)  # (B, C)
         return scores  # raw logits; loss handles softmax
 
-    def score_single(
-        self,
-        hist_tokens: jax.Array,
-        cand_tokens: jax.Array,
-    ) -> jax.Array:
-        """Score a single candidate with sigmoid.
-
-        Args:
-            hist_tokens: ``(B, H, T)`` user history.
-            cand_tokens: ``(B, T)`` single candidate news.
-
-        Returns:
-            ``(B, 1)`` sigmoid score.
-        """
-        user_repr = self.user_encoder(hist_tokens, training=False)
-        cand_repr = self.news_encoder(cand_tokens, training=False)
-        score = jnp.sum(cand_repr * user_repr, axis=-1, keepdims=True)
-        return jax.nn.sigmoid(score)
-
-    def score_candidates(
-        self,
-        hist_tokens: jax.Array,
-        cand_tokens: jax.Array,
-    ) -> jax.Array:
-        """Score multiple candidates with sigmoid (evaluation).
-
-        Args:
-            hist_tokens: ``(B, H, T)`` user history.
-            cand_tokens: ``(B, C, T)`` candidate news.
-
-        Returns:
-            ``(B, C)`` sigmoid scores.
-        """
-        user_repr = self.user_encoder(hist_tokens, training=False)
-
-        # Same TimeDistributed reshape trick (see score_training_batch)
-        B, C, T = cand_tokens.shape
-        flat_cands = cand_tokens.reshape(B * C, T)
-        flat_vecs = self.news_encoder(flat_cands, training=False)
-        cand_repr = flat_vecs.reshape(B, C, -1)
-
-        scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)
-        return jax.nn.sigmoid(scores)
-
     # ---- Unified call ---------------------------------------------------
 
     def __call__(
@@ -277,15 +233,12 @@ class NRMS(BaseModel):
         *,
         training: bool = False,
     ) -> jax.Array:
-        """Unified forward pass dispatching on input keys.
+        """Forward pass for training. Returns raw logits.
 
-        Training expects ``{"hist_tokens": ..., "cand_tokens": ...}``.
-        Inference expects the same keys but runs without dropout.
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
         """
-        hist = inputs["hist_tokens"]
-        cand = inputs["cand_tokens"]
-
-        if training:
-            return self.score_training_batch(hist, cand, training=True)
-        else:
-            return self.score_candidates(hist, cand)
+        return self.score_training_batch(
+            inputs["hist_tokens"], inputs["cand_tokens"], training=training
+        )

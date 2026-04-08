@@ -230,15 +230,19 @@ def run(cfg: DictConfig):
 
     def eval_fn(model):
         val_provider = _build_eval_dataloaders(dataset_provider, cfg, mode="val")
-        return fast_evaluate(
-            model=model,
-            dataset_provider=val_provider,
-            metrics_engine=metrics_engine,
-            progress=Progress(transient=True),
-            cfg=cfg,
-            mode="validate",
-            int_to_news_id_map=int_to_news_id_map,
-        )
+        with Progress(transient=True) as progress:
+            return fast_evaluate(
+                news_encoder=model.news_encoder,
+                user_encoder=model.user_encoder,
+                user_hist_dataloader=val_provider["user_hist_dataloader"],
+                news_dataloader=val_provider["news_dataloader"],
+                impression_iterator=val_provider["impression_iterator"],
+                metrics_calculator=metrics_engine,
+                progress=progress,
+                process_user_id=getattr(model, "process_user_id", False),
+                int_to_news_id_map=int_to_news_id_map,
+                mode="validate",
+            )
 
     # Loss function from config
     loss_fn = get_loss(
@@ -276,15 +280,19 @@ def run(cfg: DictConfig):
             dataset_provider._load_data("test")
 
         test_provider = _build_eval_dataloaders(dataset_provider, cfg, mode="test")
-        test_metrics = fast_evaluate(
-            model=model,
-            dataset_provider=test_provider,
-            metrics_engine=metrics_engine,
-            progress=Progress(transient=True),
-            cfg=cfg,
-            mode="test",
-            int_to_news_id_map=int_to_news_id_map,
-        )
+        with Progress(transient=True) as progress:
+            test_metrics = fast_evaluate(
+                news_encoder=model.news_encoder,
+                user_encoder=model.user_encoder,
+                user_hist_dataloader=test_provider["user_hist_dataloader"],
+                news_dataloader=test_provider["news_dataloader"],
+                impression_iterator=test_provider["impression_iterator"],
+                metrics_calculator=metrics_engine,
+                progress=progress,
+                process_user_id=getattr(model, "process_user_id", False),
+                int_to_news_id_map=int_to_news_id_map,
+                mode="test",
+            )
         if test_metrics:
             log_test_results(test_metrics)
 
