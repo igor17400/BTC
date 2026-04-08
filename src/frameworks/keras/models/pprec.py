@@ -547,84 +547,41 @@ class PPRec(BaseModel):
     def __init__(
         self,
         processed_news: dict[str, Any],
-        embedding_size: int = 300,
-        news_dim: int = 400,
-        entity_embedding_dim: int = 100,
-        category_embedding_dim: int = 200,
-        num_heads: int = 20,
-        head_dim: int = 20,
-        co_num_heads: int = 5,
-        co_head_dim: int = 40,
-        attention_hidden_dim: int = 200,
-        popularity_embedding_bins: int = 200,
-        popularity_embedding_dim: int = 400,
-        recency_embedding_bins: int = 1500,
-        recency_embedding_dim: int = 100,
-        ctr_scaler_init: float = 19.0,
-        pop_content_dims: tuple = (256, 256, 128),
-        pop_recency_dims: tuple = (64, 64),
-        pop_gate_dims: tuple = (128, 64),
-        activity_gate_hidden_dim: int = 64,
-        use_entity: bool = True,
-        use_recency: bool = True,
-        use_ctr: bool = True,
-        use_activity_gate: bool = True,
-        dropout_rate: float = 0.2,
-        seed: int = 42,
-        max_title_length: int = 30,
-        max_history_length: int = 50,
-        max_impressions_length: int = 2,
-        max_entities: int = 5,
-        process_user_id: bool = False,
+        config: PPRecConfig | None = None,
         name: str = "pprec",
-        **kwargs,
+        **config_overrides,
     ):
-        super().__init__(name=name, **kwargs)
+        """Build a PP-Rec model.
 
-        self.config = PPRecConfig(
-            embedding_size=embedding_size,
-            news_dim=news_dim,
-            entity_embedding_dim=entity_embedding_dim,
-            category_embedding_dim=category_embedding_dim,
-            num_heads=num_heads,
-            head_dim=head_dim,
-            co_num_heads=co_num_heads,
-            co_head_dim=co_head_dim,
-            attention_hidden_dim=attention_hidden_dim,
-            popularity_embedding_bins=popularity_embedding_bins,
-            popularity_embedding_dim=popularity_embedding_dim,
-            recency_embedding_bins=recency_embedding_bins,
-            recency_embedding_dim=recency_embedding_dim,
-            ctr_scaler_init=ctr_scaler_init,
-            pop_content_dims=tuple(pop_content_dims),
-            pop_recency_dims=tuple(pop_recency_dims),
-            pop_gate_dims=tuple(pop_gate_dims),
-            activity_gate_hidden_dim=activity_gate_hidden_dim,
-            use_entity=use_entity,
-            use_recency=use_recency,
-            use_ctr=use_ctr,
-            use_activity_gate=use_activity_gate,
-            dropout_rate=dropout_rate,
-            seed=seed,
-            max_title_length=max_title_length,
-            max_history_length=max_history_length,
-            max_impressions_length=max_impressions_length,
-            max_entities=max_entities,
-            process_user_id=process_user_id,
-        )
+        Args:
+            processed_news: Dataset's processed news dict (vocab_size,
+                embeddings, num_categories, optionally entity_embeddings,
+                ...).
+            config: Optional pre-built PPRecConfig. If ``None``, one is
+                constructed from ``config_overrides``.
+            name: Keras layer name.
+            **config_overrides: Field overrides forwarded to PPRecConfig
+                when ``config`` is None. Used by ``build_model_from_spec``
+                which dumps every config field as a kwarg.
+        """
+        super().__init__(name=name)
+
+        if config is None:
+            config = PPRecConfig(**config_overrides)
+        self.config = config
 
         self.processed_news = processed_news
         self._validate_processed_news()
-        self.process_user_id = process_user_id
+        self.process_user_id = config.process_user_id
 
         # Compute news feature dimension for concatenated inputs
-        self._news_feature_dim = max_title_length
-        if use_entity and "entity_indices" in processed_news:
-            self._news_feature_dim += max_entities
+        self._news_feature_dim = config.max_title_length
+        if config.use_entity and "entity_indices" in processed_news:
+            self._news_feature_dim += config.max_entities
         if "num_categories" in processed_news:
             self._news_feature_dim += 1  # category index
 
-        # Will be set in build
+        # Will be set in build()
         self.news_encoder = None
         self.bias_news_encoder = None
         self.user_encoder = None
@@ -708,10 +665,13 @@ class PPRec(BaseModel):
         super().build(input_shape)
 
     def call(self, inputs, training=None):
-        if training:
-            return self.score_training_batch(inputs, training=training)
-        else:
-            return self.score_candidates(inputs, training=False)
+        """Forward pass for training. Returns raw logits (B, C).
+
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
+        """
+        return self.score_training_batch(inputs, training=training)
 
     def score_training_batch(self, inputs, training=None):
         """Score a training batch.
@@ -779,24 +739,6 @@ class PPRec(BaseModel):
             scores = rel_scores + pop_scores
 
         return scores
-
-    def score_candidates(self, inputs, training=False):
-        """Score multiple candidates (evaluation)."""
-        hist_features = inputs["hist_tokens"]
-        cand_features = inputs["cand_tokens"]
-        hist_ctr = inputs.get("hist_ctr")
-
-        if hist_ctr is not None:
-            user_vec = self.user_encoder([hist_features, hist_ctr], training=training)
-        else:
-            user_vec = self.user_encoder(hist_features, training=training)
-
-        rel_cand_vecs = self._td_rel(cand_features, training=training)
-
-        user_expanded = ops.expand_dims(user_vec, axis=1)
-        scores = ops.sum(rel_cand_vecs * user_expanded, axis=-1)
-
-        return ops.sigmoid(scores)
 
     def get_config(self):
         base_config = super().get_config()

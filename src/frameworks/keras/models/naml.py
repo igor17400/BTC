@@ -480,12 +480,9 @@ class NAMLScorer(keras.Model):
         self.news_encoder = news_encoder
         self.user_encoder = user_encoder
 
-        # Store TimeDistributed layers for candidate processing
+        # TimeDistributed wrapper for candidate processing during training.
         self.candidate_encoder_train = layers.TimeDistributed(
             self.news_encoder, name="td_news_encoder_candidates"
-        )
-        self.candidate_encoder_eval = layers.TimeDistributed(
-            self.news_encoder, name="td_news_encoder_eval"
         )
 
     def build(self, input_shape):
@@ -495,86 +492,21 @@ class NAMLScorer(keras.Model):
         """Score training batch (raw logits — loss handles softmax).
 
         Args:
-            history_inputs: Concatenated history tensor (batch_size, history_length, feature_size)
-            candidate_inputs: Concatenated candidates tensor (batch_size, num_candidates, feature_size)
-            training: Whether in training mode
+            history_inputs: Concatenated history tensor
+                ``(batch_size, history_length, feature_size)``
+            candidate_inputs: Concatenated candidates tensor
+                ``(batch_size, num_candidates, feature_size)``
+            training: Whether in training mode.
 
         Returns:
-            Raw logit scores (batch_size, num_candidates)
+            Raw logit scores ``(batch_size, num_candidates)``.
         """
-        # Get user representation from concatenated history
-        # Always use training=True for training batch
-        user_repr = self.user_encoder(history_inputs, training=True)
-
-        # Get representations for all candidates using stored TimeDistributed layer
-        candidate_reprs = self.candidate_encoder_train(candidate_inputs, training=True)
-        # Result: (batch_size, num_candidates, cnn_filter_num)
-
-        # Expand user representation for broadcasting
-        user_repr_expanded = ops.expand_dims(
-            user_repr, axis=1
-        )  # (batch_size, 1, cnn_filter_num)
-
-        # Calculate scores using dot product (raw logits)
-        scores = ops.sum(
-            candidate_reprs * user_repr_expanded, axis=-1
-        )  # (batch_size, num_candidates)
-
-        return scores
-
-    def score_single_candidate(self, history_inputs, candidate_inputs, training=None):
-        """Score single candidate with sigmoid output.
-
-        Args:
-            history_inputs: Concatenated history tensor (batch_size, history_length, feature_size)
-            candidate_inputs: Concatenated candidate tensor (batch_size, feature_size)
-            training: Whether in training mode
-
-        Returns:
-            Sigmoid scores (batch_size, 1)
-        """
-        # Get user representation from concatenated history
-        user_repr = self.user_encoder(history_inputs, training=False)
-
-        # Get candidate representation from concatenated input
-        candidate_repr = self.news_encoder(candidate_inputs, training=False)
-
-        # Calculate score using dot product
-        score = ops.sum(candidate_repr * user_repr, axis=-1, keepdims=True)
-
-        # Apply sigmoid for probability
-        output = ops.sigmoid(score)
-        return output
-
-    def score_multiple_candidates(
-        self, history_inputs, candidate_inputs, training=None
-    ):
-        """Score multiple candidates with sigmoid activation.
-
-        Args:
-            history_inputs: Concatenated history tensor (batch_size, history_length, feature_size)
-            candidate_inputs: Concatenated candidates tensor (batch_size, num_candidates, feature_size)
-            training: Whether in training mode
-
-        Returns:
-            Sigmoid scores (batch_size, num_candidates)
-        """
-        # Get user representation from concatenated history
-        user_repr = self.user_encoder(history_inputs, training=False)
-
-        # Get representations for all candidates using stored TimeDistributed layer
-        candidate_reprs = self.candidate_encoder_eval(candidate_inputs, training=False)
-        # Result: (batch_size, num_candidates, cnn_filter_num)
-
-        # Expand user representation for broadcasting
+        user_repr = self.user_encoder(history_inputs, training=training)
+        candidate_reprs = self.candidate_encoder_train(
+            candidate_inputs, training=training
+        )
         user_repr_expanded = ops.expand_dims(user_repr, axis=1)
-
-        # Calculate scores using dot product
-        scores = ops.sum(candidate_reprs * user_repr_expanded, axis=-1)
-
-        # Apply sigmoid activation for consistency with single candidate scoring
-        output = ops.sigmoid(scores)
-        return output
+        return ops.sum(candidate_reprs * user_repr_expanded, axis=-1)
 
 
 class NAML(BaseModel):
@@ -596,72 +528,67 @@ class NAML(BaseModel):
     def __init__(
         self,
         processed_news: dict[str, Any],
-        max_title_length: int = 30,
-        max_abstract_length: int = 50,
-        embedding_size: int = 300,
-        category_embedding_dim: int = 100,
-        subcategory_embedding_dim: int = 100,
-        cnn_filter_num: int = 400,
-        cnn_kernel_size: int = 3,
-        word_attention_query_dim: int = 200,
-        view_attention_query_dim: int = 200,
-        user_attention_query_dim: int = 200,
-        dropout_rate: float = 0.2,
-        activation: str = "relu",
-        max_history_length: int = 50,
-        max_impressions_length: int = 5,
-        process_user_id: bool = False,
-        seed: int = 42,
+        config: NAMLConfig | None = None,
         name: str = "naml",
-        **kwargs,
+        **config_overrides,
     ):
-        super().__init__(name=name, **kwargs)
+        """Build a NAML model.
 
-        # Create configuration object
-        self.config = NAMLConfig(
-            max_title_length=max_title_length,
-            max_abstract_length=max_abstract_length,
-            embedding_size=embedding_size,
-            category_embedding_dim=category_embedding_dim,
-            subcategory_embedding_dim=subcategory_embedding_dim,
-            cnn_filter_num=cnn_filter_num,
-            cnn_kernel_size=cnn_kernel_size,
-            word_attention_query_dim=word_attention_query_dim,
-            view_attention_query_dim=view_attention_query_dim,
-            user_attention_query_dim=user_attention_query_dim,
-            dropout_rate=dropout_rate,
-            activation=activation,
-            max_history_length=max_history_length,
-            max_impressions_length=max_impressions_length,
-            process_user_id=process_user_id,
-            seed=seed,
-        )
+        Args:
+            processed_news: Dataset's processed news dict (vocab_size,
+                embeddings, num_categories, num_subcategories, ...).
+            config: Optional pre-built NAMLConfig. If ``None``, one is
+                constructed from ``config_overrides``.
+            name: Keras layer name.
+            **config_overrides: Field overrides forwarded to NAMLConfig
+                when ``config`` is None. Used by ``build_model_from_spec``
+                which dumps every config field as a kwarg.
+        """
+        super().__init__(name=name)
 
-        # Store processed news data
+        if config is None:
+            config = NAMLConfig(**config_overrides)
+        self.config = config
+
+        # Store processed news data and validate
         self.processed_news = processed_news
         self._validate_processed_news()
 
-        # Set BaseModel attributes for fast evaluation (required by BaseModel)
-        self.process_user_id = process_user_id
+        # BaseModel contract — set at __init__ time so build() can rely on it
+        self.process_user_id = config.process_user_id
 
-        # Initialize model components (will be created in build)
+        # Components are created in build()
         self.embedding_layer = None
         self.news_encoder = None
         self.user_encoder = None
         self.scorer = None
-        self.training_model = None
-        self.scorer_model = None
 
         # Build the model immediately with dummy input shape
         dummy_input_shape = {
-            "hist_tokens": (None, max_history_length, max_title_length),
-            "cand_tokens": (None, max_impressions_length, max_title_length),
-            "hist_abstract_tokens": (None, max_history_length, max_abstract_length),
-            "cand_abstract_tokens": (None, max_impressions_length, max_abstract_length),
-            "hist_category": (None, max_history_length, 1),
-            "hist_subcategory": (None, max_history_length, 1),
-            "cand_category": (None, max_impressions_length, 1),
-            "cand_subcategory": (None, max_impressions_length, 1),
+            "hist_tokens": (
+                None,
+                config.max_history_length,
+                config.max_title_length,
+            ),
+            "cand_tokens": (
+                None,
+                config.max_impressions_length,
+                config.max_title_length,
+            ),
+            "hist_abstract_tokens": (
+                None,
+                config.max_history_length,
+                config.max_abstract_length,
+            ),
+            "cand_abstract_tokens": (
+                None,
+                config.max_impressions_length,
+                config.max_abstract_length,
+            ),
+            "hist_category": (None, config.max_history_length, 1),
+            "hist_subcategory": (None, config.max_history_length, 1),
+            "cand_category": (None, config.max_impressions_length, 1),
+            "cand_subcategory": (None, config.max_impressions_length, 1),
         }
         self.build(dummy_input_shape)
 
@@ -703,148 +630,16 @@ class NAML(BaseModel):
         # Create scorer
         self.scorer = NAMLScorer(self.config, self.news_encoder, self.user_encoder)
 
-        # Build training and scorer models for compatibility
-        self.training_model, self.scorer_model = self._build_compatibility_models()
-
         super().build(input_shape)
 
-    def _build_compatibility_models(self) -> tuple[keras.Model, keras.Model]:
-        """Build training and scorer models for backward compatibility."""
-        # ----- Training model -----
-        # Create concatenated inputs that match the expected format
-        history_concat_input = keras.Input(
-            shape=(
-                self.config.max_history_length,
-                self.config.max_title_length + self.config.max_abstract_length + 2,
-            ),
-            dtype="int32",
-            name="hist_concat_input",
-        )
-        candidate_concat_input = keras.Input(
-            shape=(
-                self.config.max_impressions_length,
-                self.config.max_title_length + self.config.max_abstract_length + 2,
-            ),
-            dtype="int32",
-            name="cand_concat_input",
-        )
-
-        # Pass concatenated inputs directly to the scorer
-        training_output = self.scorer.score_training_batch(
-            history_concat_input, candidate_concat_input
-        )
-
-        training_model = keras.Model(
-            inputs=[history_concat_input, candidate_concat_input],
-            outputs=training_output,
-            name="naml_training_model",
-        )
-
-        # ----- Scorer model -----
-        # Create concatenated inputs for scorer model
-        score_history_concat_input = keras.Input(
-            shape=(
-                self.config.max_history_length,
-                self.config.max_title_length + self.config.max_abstract_length + 2,
-            ),
-            dtype="int32",
-            name="score_hist_concat_input",
-        )
-        score_candidate_concat_input = keras.Input(
-            shape=(self.config.max_title_length + self.config.max_abstract_length + 2,),
-            dtype="int32",
-            name="score_cand_concat_input",
-        )
-
-        # Pass concatenated inputs directly to the scorer
-        scorer_output = self.scorer.score_single_candidate(
-            score_history_concat_input, score_candidate_concat_input
-        )
-
-        scorer_model = keras.Model(
-            inputs=[score_history_concat_input, score_candidate_concat_input],
-            outputs=scorer_output,
-            name="naml_scorer_model",
-        )
-
-        return training_model, scorer_model
-
-    def _build_newsencoder(self) -> keras.Model:
-        """Legacy method for backward compatibility - returns news encoder."""
-        return self.news_encoder
-
-    def _build_userencoder(self) -> keras.Model:
-        """Legacy method for backward compatibility - returns user encoder."""
-        return self.user_encoder
-
-    def _build_graph_models(self) -> tuple[keras.Model, keras.Model]:
-        """Legacy method for backward compatibility - returns training and scorer models."""
-        return self.training_model, self.scorer_model
-
-    def _validate_inputs(self, inputs: dict, training: bool = None) -> None:
-        """Validate input format and shapes based on mode."""
-        if not isinstance(inputs, dict):
-            raise TypeError("Inputs must be a dictionary")
-
-        input_keys = set(inputs.keys())
-
-        if training:
-            # Training mode expects multiple keys for history and candidates
-            required_hist_keys = {
-                "hist_tokens",
-                "hist_abstract_tokens",
-                "hist_category",
-                "hist_subcategory",
-            }
-            required_cand_keys = {
-                "cand_tokens",
-                "cand_abstract_tokens",
-                "cand_category",
-                "cand_subcategory",
-            }
-
-            if not (
-                required_hist_keys.issubset(input_keys)
-                and required_cand_keys.issubset(input_keys)
-            ):
-                raise ValueError(
-                    f"Training mode requires history keys: {required_hist_keys} and candidate keys: {required_cand_keys}, "
-                    f"but got keys: {list(input_keys)}"
-                )
-        else:
-            # Inference mode - check for different valid combinations
-            # Add validation logic for inference mode if needed
-            pass
-
     def call(self, inputs, training=None):
-        """Main forward pass of the NAML model.
+        """Forward pass for training. Returns raw logits (B, C).
 
-        Routes to appropriate methods based on training mode and input format.
-
-        Args:
-            inputs: Dictionary with input tensors
-            training: Whether in training mode
-
-        Returns:
-            Model predictions based on mode and input format
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
         """
-        self._validate_inputs(inputs, training)
-
-        if training:
-            # Training mode: always use training format
-            return self._handle_training(inputs)
-        else:
-            # Inference mode: route based on input format
-            if "hist_tokens" in inputs and "cand_tokens" in inputs:
-                # Multiple candidates format
-                return self._handle_multiple_candidates(inputs)
-            else:
-                # Add other inference modes as needed
-                raise ValueError("Invalid input format for inference mode")
-
-    def _handle_training(self, inputs):
-        """Handle training batch scoring (raw logits)."""
-        # Concatenate history inputs
+        # Concatenate history inputs (title + abstract + category + subcategory)
         history_concat = ops.concatenate(
             [
                 inputs["hist_tokens"],
@@ -854,7 +649,6 @@ class NAML(BaseModel):
             ],
             axis=-1,
         )
-
         # Concatenate candidate inputs
         candidate_concat = ops.concatenate(
             [
@@ -865,34 +659,9 @@ class NAML(BaseModel):
             ],
             axis=-1,
         )
-
-        return self.scorer.score_training_batch(history_concat, candidate_concat)
-
-    def _handle_multiple_candidates(self, inputs):
-        """Handle multiple candidate scoring with sigmoid scores."""
-        # Concatenate history inputs
-        history_concat = ops.concatenate(
-            [
-                inputs["hist_tokens"],
-                inputs["hist_abstract_tokens"],
-                ops.expand_dims(inputs["hist_category"], axis=-1),
-                ops.expand_dims(inputs["hist_subcategory"], axis=-1),
-            ],
-            axis=-1,
+        return self.scorer.score_training_batch(
+            history_concat, candidate_concat, training=training
         )
-
-        # Concatenate candidate inputs
-        candidate_concat = ops.concatenate(
-            [
-                inputs["cand_tokens"],
-                inputs["cand_abstract_tokens"],
-                ops.expand_dims(inputs["cand_category"], axis=-1),
-                ops.expand_dims(inputs["cand_subcategory"], axis=-1),
-            ],
-            axis=-1,
-        )
-
-        return self.scorer.score_multiple_candidates(history_concat, candidate_concat)
 
     def get_config(self):
         """Returns the configuration of the NAML model for serialization."""

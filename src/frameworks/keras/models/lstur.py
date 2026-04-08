@@ -436,12 +436,9 @@ class LSTURScorer(keras.Model):
         self.news_encoder = news_encoder
         self.user_encoder = user_encoder
 
-        # Store TimeDistributed layers for candidate processing
+        # TimeDistributed wrapper for candidate processing during training.
         self.candidate_encoder_train = layers.TimeDistributed(
             self.news_encoder, name="td_news_encoder_candidates"
-        )
-        self.candidate_encoder_eval = layers.TimeDistributed(
-            self.news_encoder, name="td_news_encoder_eval"
         )
 
     def build(self, input_shape):
@@ -453,89 +450,25 @@ class LSTURScorer(keras.Model):
         """Score training batch (raw logits — loss handles softmax).
 
         Args:
-            history_inputs: History tensor (batch_size, history_length, title_length)
-            user_indices: User indices (batch_size, 1)
-            candidate_inputs: Candidates tensor (batch_size, num_candidates, title_length)
-            training: Whether in training mode
+            history_inputs: History tensor
+                ``(batch_size, history_length, title_length)``
+            user_indices: User indices ``(batch_size, 1)``
+            candidate_inputs: Candidates tensor
+                ``(batch_size, num_candidates, title_length)``
+            training: Whether in training mode.
 
         Returns:
-            Raw logit scores (batch_size, num_candidates)
+            Raw logit scores ``(batch_size, num_candidates)``.
         """
-        # Get user representation
-        user_repr = self.user_encoder([history_inputs, user_indices], training=training)
-
-        # Get representations for all candidates
+        user_repr = self.user_encoder(
+            [history_inputs, user_indices], training=training
+        )
         candidate_reprs = self.candidate_encoder_train(
             candidate_inputs, training=training
         )
-        # Result: (batch_size, num_candidates, cnn_filter_num)
-
-        # Calculate scores using dot product (raw logits)
-        scores = layers.Dot(axes=-1, name="dot_product_train")(
+        return layers.Dot(axes=-1, name="dot_product_train")(
             [candidate_reprs, user_repr]
         )
-
-        return scores
-
-    def score_single_candidate(
-        self, history_inputs, user_indices, candidate_inputs, training=None
-    ):
-        """Score single candidate with sigmoid output.
-
-        Args:
-            history_inputs: History tensor (batch_size, history_length, title_length)
-            user_indices: User indices (batch_size, 1)
-            candidate_inputs: Candidate tensor (batch_size, title_length)
-            training: Whether in training mode
-
-        Returns:
-            Sigmoid scores (batch_size, 1)
-        """
-        # Get user representation
-        user_repr = self.user_encoder([history_inputs, user_indices], training=training)
-
-        # Get candidate representation
-        candidate_repr = self.news_encoder(candidate_inputs, training=training)
-
-        # Calculate score using dot product
-        score = layers.Dot(axes=-1, name="dot_product_single")(
-            [candidate_repr, user_repr]
-        )
-
-        # Apply sigmoid for probability
-        return layers.Activation("sigmoid", name="sigmoid_activation")(score)
-
-    def score_multiple_candidates(
-        self, history_inputs, user_indices, candidate_inputs, training=False
-    ):
-        """Score multiple candidates with sigmoid activation.
-
-        Args:
-            history_inputs: History tensor (batch_size, history_length, title_length)
-            user_indices: User indices (batch_size, 1)
-            candidate_inputs: Candidates tensor (batch_size, num_candidates, title_length)
-            training: Whether in training mode
-
-        Returns:
-            Sigmoid scores (batch_size, num_candidates)
-        """
-        # Get user representation
-        user_repr = self.user_encoder([history_inputs, user_indices], training=training)
-
-        # Get representations for all candidates
-        candidate_reprs = self.candidate_encoder_eval(
-            candidate_inputs, training=training
-        )
-        # Result: (batch_size, num_candidates, cnn_filter_num)
-
-        # Expand user representation for broadcasting
-        user_repr_expanded = ops.expand_dims(user_repr, axis=1)
-
-        # Calculate scores using dot product
-        scores = ops.sum(candidate_reprs * user_repr_expanded, axis=-1)
-
-        # Apply sigmoid activation for consistency with single candidate scoring
-        return ops.sigmoid(scores)
 
 
 class LSTUR(BaseModel):
@@ -558,75 +491,60 @@ class LSTUR(BaseModel):
         self,
         processed_news: dict[str, Any],
         num_users: int,
-        embedding_size: int = 300,
-        cnn_filter_num: int = 300,
-        cnn_kernel_size: int = 3,
-        cnn_activation: str = "relu",
-        attention_hidden_dim: int = 200,
-        gru_unit: int = 300,
-        type: str = "ini",
-        dropout_rate: float = 0.2,
-        user_embedding_dropout_rate: float = 0.5,
-        seed: int = 42,
-        max_title_length: int = 50,
-        max_history_length: int = 50,
-        max_impressions_length: int = 5,
-        process_user_id: bool = True,
-        use_category: bool = False,
-        use_subcategory: bool = False,
-        category_embedding_dim: int = 100,
-        subcategory_embedding_dim: int = 100,
+        config: LSTURConfig | None = None,
         name: str = "lstur",
-        **kwargs,
+        **config_overrides,
     ):
-        super().__init__(name=name, **kwargs)
+        """Build an LSTUR model.
 
-        # Create configuration object
-        self.config = LSTURConfig(
-            embedding_size=embedding_size,
-            cnn_filter_num=cnn_filter_num,
-            cnn_kernel_size=cnn_kernel_size,
-            cnn_activation=cnn_activation,
-            attention_hidden_dim=attention_hidden_dim,
-            gru_unit=gru_unit,
-            type=type,
-            dropout_rate=dropout_rate,
-            user_embedding_dropout_rate=user_embedding_dropout_rate,
-            seed=seed,
-            max_title_length=max_title_length,
-            max_history_length=max_history_length,
-            max_impressions_length=max_impressions_length,
-            process_user_id=process_user_id,
-            use_category=use_category,
-            use_subcategory=use_subcategory,
-            category_embedding_dim=category_embedding_dim,
-            subcategory_embedding_dim=subcategory_embedding_dim,
-        )
+        Args:
+            processed_news: Dataset's processed news dict (vocab_size,
+                embeddings, num_categories, num_subcategories, ...).
+            num_users: Number of unique users in the dataset (used for
+                the long-term user embedding table).
+            config: Optional pre-built LSTURConfig. If ``None``, one is
+                constructed from ``config_overrides``.
+            name: Keras layer name.
+            **config_overrides: Field overrides forwarded to LSTURConfig
+                when ``config`` is None. Used by ``build_model_from_spec``
+                which dumps every config field as a kwarg.
+        """
+        super().__init__(name=name)
+
+        if config is None:
+            config = LSTURConfig(**config_overrides)
+        self.config = config
 
         # Store processed news data and num_users
         self.processed_news = processed_news
         self.num_users = num_users
         self._validate_processed_news()
 
-        # Set BaseModel attributes for fast evaluation (required by BaseModel)
-        self.process_user_id = process_user_id
+        # BaseModel contract — set at __init__ time so build() can rely on it
+        self.process_user_id = config.process_user_id
 
-        # Initialize model components (will be created in build)
+        # Components are created in build()
         self.embedding_layer = None
         self.news_encoder = None
         self.user_encoder = None
         self.scorer = None
-        self.training_model = None
-        self.scorer_model = None
 
         # Build the model immediately with dummy input shape
         dummy_input_shape = {
-            "hist_tokens": (None, max_history_length, max_title_length),
-            "cand_tokens": (None, max_impressions_length, max_title_length),
-            "hist_category": (None, max_history_length, 1),
-            "hist_subcategory": (None, max_history_length, 1),
-            "cand_category": (None, max_impressions_length, 1),
-            "cand_subcategory": (None, max_impressions_length, 1),
+            "hist_tokens": (
+                None,
+                config.max_history_length,
+                config.max_title_length,
+            ),
+            "cand_tokens": (
+                None,
+                config.max_impressions_length,
+                config.max_title_length,
+            ),
+            "hist_category": (None, config.max_history_length, 1),
+            "hist_subcategory": (None, config.max_history_length, 1),
+            "cand_category": (None, config.max_impressions_length, 1),
+            "cand_subcategory": (None, config.max_impressions_length, 1),
         }
         self.build(dummy_input_shape)
 
@@ -668,146 +586,26 @@ class LSTUR(BaseModel):
         self.user_encoder = UserEncoder(self.config, self.news_encoder, self.num_users)
         self.scorer = LSTURScorer(self.config, self.news_encoder, self.user_encoder)
 
-        # Build training and scorer models for compatibility
-        self.training_model, self.scorer_model = self._build_compatibility_models()
-
         super().build(input_shape)
 
-    def _build_compatibility_models(self) -> tuple[keras.Model, keras.Model]:
-        """Build training and scorer models for backward compatibility."""
-        # ----- Training model -----
-        history_input = keras.Input(
-            shape=(self.config.max_history_length, self.config.max_title_length),
-            dtype="int32",
-            name="hist_tokens",
-        )
-        user_indices_input = keras.Input(shape=(1,), dtype="int32", name="user_indices")
-        candidates_input = keras.Input(
-            shape=(self.config.max_impressions_length, self.config.max_title_length),
-            dtype="int32",
-            name="cand_tokens",
-        )
-
-        training_output = self.scorer.score_training_batch(
-            history_input, user_indices_input, candidates_input
-        )
-        training_model = keras.Model(
-            inputs=[history_input, user_indices_input, candidates_input],
-            outputs=training_output,
-            name="lstur_training_model",
-        )
-
-        # ----- Scorer model -----
-        history_input_score = keras.Input(
-            shape=(self.config.max_history_length, self.config.max_title_length),
-            dtype="int32",
-            name="history_tokens_score",
-        )
-        user_indices_input_score = keras.Input(
-            shape=(1,), dtype="int32", name="user_indices_score"
-        )
-        single_candidate_input = keras.Input(
-            shape=(self.config.max_title_length,),
-            dtype="int32",
-            name="single_candidate_tokens_score",
-        )
-
-        scorer_output = self.scorer.score_single_candidate(
-            history_input_score, user_indices_input_score, single_candidate_input
-        )
-        scorer_model = keras.Model(
-            inputs=[
-                history_input_score,
-                user_indices_input_score,
-                single_candidate_input,
-            ],
-            outputs=scorer_output,
-            name="lstur_scorer_model",
-        )
-
-        return training_model, scorer_model
-
-    def _build_newsencoder(self) -> keras.Model:
-        """Legacy method for backward compatibility - returns news encoder."""
-        return self.news_encoder
-
-    def _build_userencoder(self) -> keras.Model:
-        """Legacy method for backward compatibility - returns user encoder."""
-        return self.user_encoder
-
-    def _build_graph_models(self) -> tuple[keras.Model, keras.Model]:
-        """Legacy method for backward compatibility - returns training and scorer models."""
-        return self.training_model, self.scorer_model
-
-    def _validate_inputs(self, inputs: dict, training: bool = None) -> None:
-        """Validate input format and shapes based on mode."""
-        if not isinstance(inputs, dict):
-            raise TypeError("Inputs must be a dictionary")
-
-        input_keys = set(inputs.keys())
-
-        if training:
-            # Training mode expects hist_tokens, user_ids, and cand_tokens
-            # Note: user_ids is the key used by the dataloader
-            required_keys = {"hist_tokens", "user_ids", "cand_tokens"}
-            if not required_keys.issubset(input_keys):
-                raise ValueError(
-                    f"Training mode requires keys: {required_keys}, "
-                    f"but got keys: {list(input_keys)}"
-                )
-        else:
-            # Inference mode - check for different valid combinations
-            # Add validation logic for inference mode if needed
-            pass
-
     def call(self, inputs, training=None):
-        """Main forward pass of the LSTUR model.
+        """Forward pass for training. Returns raw logits (B, C).
 
-        Routes to appropriate methods based on training mode and input format.
-
-        Args:
-            inputs: Dictionary with input tensors
-            training: Whether in training mode
-
-        Returns:
-            Model predictions based on mode and input format
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
         """
-        self._validate_inputs(inputs, training)
-
-        if training:
-            # Training mode: always use training format
-            return self._handle_training(inputs, training)
-        else:
-            # Inference mode: route based on input format
-            if "hist_tokens" in inputs and "cand_tokens" in inputs:
-                # Multiple candidates format
-                return self._handle_multiple_candidates(inputs)
-            elif "hist_tokens" in inputs and "single_candidate_tokens" in inputs:
-                # Single candidate format
-                return self._handle_single_candidate(inputs)
-            else:
-                # Add other inference modes as needed
-                raise ValueError("Invalid input format for inference mode")
-
-    def _handle_training(self, inputs, training=None):
-        """Handle training batch scoring (raw logits)."""
-        # Extract the inputs - note that dataloader uses "user_ids" not "user_indices"
         history_tokens = inputs["hist_tokens"]
-        user_ids = inputs.get(
-            "user_ids", inputs.get("user_indices")
-        )  # Handle both keys
+        user_ids = inputs.get("user_ids", inputs.get("user_indices"))
         candidate_tokens = inputs["cand_tokens"]
 
-        # Check if we have category/subcategory data
+        # Optionally concatenate category/subcategory into the token tensors
         if "hist_category" in inputs and "hist_subcategory" in inputs:
-            # Concatenate history inputs: title + category + subcategory
             hist_category = ops.expand_dims(inputs["hist_category"], axis=-1)
             hist_subcategory = ops.expand_dims(inputs["hist_subcategory"], axis=-1)
             history_tokens = ops.concatenate(
                 [history_tokens, hist_category, hist_subcategory], axis=-1
             )
-
-            # Concatenate candidate inputs: title + category + subcategory
             cand_category = ops.expand_dims(inputs["cand_category"], axis=-1)
             cand_subcategory = ops.expand_dims(inputs["cand_subcategory"], axis=-1)
             candidate_tokens = ops.concatenate(
@@ -816,66 +614,6 @@ class LSTUR(BaseModel):
 
         return self.scorer.score_training_batch(
             history_tokens, user_ids, candidate_tokens, training=training
-        )
-
-    def _handle_multiple_candidates(self, inputs):
-        """Handle multiple candidate scoring with sigmoid scores."""
-        # Extract the inputs - handle both user_ids and user_indices keys
-        history_tokens = inputs["hist_tokens"]
-        user_ids = inputs.get("user_ids", inputs.get("user_indices"))
-        candidate_tokens = inputs["cand_tokens"]
-
-        # Check if we have category/subcategory data
-        if "hist_category" in inputs and "hist_subcategory" in inputs:
-            # Concatenate history inputs: title + category + subcategory
-            hist_category = ops.expand_dims(inputs["hist_category"], axis=-1)
-            hist_subcategory = ops.expand_dims(inputs["hist_subcategory"], axis=-1)
-            history_tokens = ops.concatenate(
-                [history_tokens, hist_category, hist_subcategory], axis=-1
-            )
-
-            # Concatenate candidate inputs: title + category + subcategory
-            cand_category = ops.expand_dims(inputs["cand_category"], axis=-1)
-            cand_subcategory = ops.expand_dims(inputs["cand_subcategory"], axis=-1)
-            candidate_tokens = ops.concatenate(
-                [candidate_tokens, cand_category, cand_subcategory], axis=-1
-            )
-
-        return self.scorer.score_multiple_candidates(
-            history_tokens, user_ids, candidate_tokens, training=False
-        )
-
-    def _handle_single_candidate(self, inputs):
-        """Handle single candidate scoring with sigmoid scores."""
-        # Extract the inputs - handle both user_ids and user_indices keys
-        history_tokens = inputs["hist_tokens"]
-        user_ids = inputs.get("user_ids", inputs.get("user_indices"))
-        candidate_tokens = inputs["single_candidate_tokens"]
-
-        # Check if we have category/subcategory data
-        if "hist_category" in inputs and "hist_subcategory" in inputs:
-            # Concatenate history inputs: title + category + subcategory
-            hist_category = ops.expand_dims(inputs["hist_category"], axis=-1)
-            hist_subcategory = ops.expand_dims(inputs["hist_subcategory"], axis=-1)
-            history_tokens = ops.concatenate(
-                [history_tokens, hist_category, hist_subcategory], axis=-1
-            )
-
-            # Concatenate single candidate inputs: title + category + subcategory
-            if "single_cand_category" in inputs and "single_cand_subcategory" in inputs:
-                single_cand_category = ops.expand_dims(
-                    inputs["single_cand_category"], axis=-1
-                )
-                single_cand_subcategory = ops.expand_dims(
-                    inputs["single_cand_subcategory"], axis=-1
-                )
-                candidate_tokens = ops.concatenate(
-                    [candidate_tokens, single_cand_category, single_cand_subcategory],
-                    axis=-1,
-                )
-
-        return self.scorer.score_single_candidate(
-            history_tokens, user_ids, candidate_tokens, training=False
         )
 
     def get_config(self):

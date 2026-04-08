@@ -194,9 +194,6 @@ class NRMSScorer(keras.Model):
         self.candidate_encoder_train = layers.TimeDistributed(
             self.news_encoder, name="td_news_encoder_candidates"
         )
-        self.candidate_encoder_eval = layers.TimeDistributed(
-            self.news_encoder, name="td_news_encoder_eval"
-        )
 
     def build(self, input_shape):
         super().build(input_shape)
@@ -217,43 +214,6 @@ class NRMSScorer(keras.Model):
 
         return scores
 
-    def score_single(self, history_tokens, candidate_tokens, training=None):
-        """Score a single candidate with sigmoid."""
-        user_repr = self.user_encoder(history_tokens, training=training)
-        candidate_repr = self.news_encoder(candidate_tokens, training=training)
-
-        # Calculate score using dot product
-        score = layers.Dot(axes=-1, name="dot_product_single")(
-            [candidate_repr, user_repr]
-        )
-
-        # Apply sigmoid for probability
-        return layers.Activation("sigmoid", name="sigmoid_activation")(score)
-
-    def score_candidates(self, history_tokens, candidate_tokens, training=False):
-        """Score multiple candidates with sigmoid (evaluation)."""
-        # Get user representations for all items in batch
-        user_repr = self.user_encoder(
-            history_tokens, training=training
-        )  # (batch_size, embedding_dim)
-
-        # Process all candidates using TimeDistributed layer
-        candidate_repr = self.candidate_encoder_eval(
-            candidate_tokens, training=training
-        )  # (batch_size, num_candidates, embedding_dim)
-
-        # Vectorized dot product: expand user_repr to match candidate dimensions
-        user_repr_expanded = ops.expand_dims(
-            user_repr, axis=1
-        )  # (batch_size, 1, embedding_dim)
-
-        # Calculate scores using vectorized dot product
-        scores = ops.sum(
-            candidate_repr * user_repr_expanded, axis=-1
-        )  # (batch_size, num_candidates)
-
-        # Apply sigmoid activation for consistency with single candidate scoring
-        return ops.sigmoid(scores)
 
 
 class NRMS(BaseModel):
@@ -266,54 +226,53 @@ class NRMS(BaseModel):
     def __init__(
         self,
         processed_news: dict[str, Any],
-        embedding_size: int = 300,
-        multiheads: int = 16,
-        head_dim: int = 16,
-        attention_hidden_dim: int = 200,
-        dropout_rate: float = 0.2,
-        seed: int = 42,
-        max_title_length: int = 50,
-        max_history_length: int = 50,
-        max_impressions_length: int = 5,
-        process_user_id: bool = False,
+        config: NRMSConfig | None = None,
         name: str = "nrms",
-        **kwargs,
+        **config_overrides,
     ):
-        super().__init__(name=name, **kwargs)
+        """Build an NRMS model.
 
-        # Create configuration object
-        self.config = NRMSConfig(
-            embedding_size=embedding_size,
-            multiheads=multiheads,
-            head_dim=head_dim,
-            attention_hidden_dim=attention_hidden_dim,
-            dropout_rate=dropout_rate,
-            seed=seed,
-            max_title_length=max_title_length,
-            max_history_length=max_history_length,
-            max_impressions_length=max_impressions_length,
-            process_user_id=process_user_id,
-        )
+        Args:
+            processed_news: Dataset's processed news dict (vocab_size,
+                embeddings, num_categories, ...).
+            config: Optional pre-built NRMSConfig. If ``None``, one is
+                constructed from ``config_overrides``.
+            name: Keras layer name.
+            **config_overrides: Field overrides forwarded to NRMSConfig
+                when ``config`` is None. Used by ``build_model_from_spec``
+                which dumps every config field as a kwarg.
+        """
+        super().__init__(name=name)
 
-        # Store processed news data
+        if config is None:
+            config = NRMSConfig(**config_overrides)
+        self.config = config
+
+        # Store processed news data and validate
         self.processed_news = processed_news
         self._validate_processed_news()
 
-        # Set BaseModel attributes for fast evaluation (required by BaseModel)
-        self.process_user_id = process_user_id
+        # BaseModel contract — set at __init__ time so build() can rely on it
+        self.process_user_id = config.process_user_id
 
-        # Initialize model components (will be created in build)
+        # Components are created in build()
         self.embedding_layer = None
         self.news_encoder = None
         self.user_encoder = None
         self.scorer = None
-        self.training_model = None
-        self.scorer_model = None
 
         # Build the model immediately with dummy input shape
         dummy_input_shape = {
-            "hist_tokens": (None, max_history_length, max_title_length),
-            "cand_tokens": (None, max_impressions_length, max_title_length),
+            "hist_tokens": (
+                None,
+                config.max_history_length,
+                config.max_title_length,
+            ),
+            "cand_tokens": (
+                None,
+                config.max_impressions_length,
+                config.max_title_length,
+            ),
         }
         self.build(dummy_input_shape)
 
@@ -335,141 +294,16 @@ class NRMS(BaseModel):
         self.user_encoder = UserEncoder(self.config, self.news_encoder)
         self.scorer = NRMSScorer(self.config, self.news_encoder, self.user_encoder)
 
-        # Build training and scorer models for compatibility
-        self.training_model, self.scorer_model = self._build_compatibility_models()
-
         super().build(input_shape)
 
-    def _build_compatibility_models(self) -> tuple[keras.Model, keras.Model]:
-        """Build training and scorer models for backward compatibility."""
-        # ----- Training model -----
-        history_input = keras.Input(
-            shape=(self.config.max_history_length, self.config.max_title_length),
-            dtype="int32",
-            name="hist_tokens",
-        )
-        candidates_input = keras.Input(
-            shape=(self.config.max_impressions_length, self.config.max_title_length),
-            dtype="int32",
-            name="cand_tokens",
-        )
-
-        training_output = self.scorer.score_training_batch(
-            history_input, candidates_input
-        )
-        training_model = keras.Model(
-            inputs=[history_input, candidates_input],
-            outputs=training_output,
-            name="nrms_training_model",
-        )
-
-        # ----- Scorer model -----
-        history_input_score = keras.Input(
-            shape=(self.config.max_history_length, self.config.max_title_length),
-            dtype="int32",
-            name="history_tokens_score",
-        )
-        single_candidate_input = keras.Input(
-            shape=(self.config.max_title_length,),
-            dtype="int32",
-            name="single_candidate_tokens_score",
-        )
-
-        scorer_output = self.scorer.score_single(
-            history_input_score, single_candidate_input
-        )
-        scorer_model = keras.Model(
-            inputs=[history_input_score, single_candidate_input],
-            outputs=scorer_output,
-            name="nrms_scorer_model",
-        )
-
-        return training_model, scorer_model
-
-    def _build_newsencoder(self) -> keras.Model:
-        """Legacy method for backward compatibility - returns news encoder."""
-        return self.news_encoder
-
-    def _build_userencoder(self) -> keras.Model:
-        """Legacy method for backward compatibility - returns user encoder."""
-        return self.user_encoder
-
-    def _build_graph_models(self) -> tuple[keras.Model, keras.Model]:
-        """Legacy method for backward compatibility - returns training and scorer models."""
-        return self.training_model, self.scorer_model
-
-    def _validate_inputs(self, inputs: dict, training: bool = None) -> None:
-        """Validate input format and shapes based on mode."""
-        if not isinstance(inputs, dict):
-            raise TypeError("Inputs must be a dictionary")
-
-        input_keys = set(inputs.keys())
-
-        if training:
-            # Training mode expects hist_tokens and cand_tokens
-            required_keys = {"hist_tokens", "cand_tokens"}
-            if not required_keys.issubset(input_keys):
-                raise ValueError(
-                    f"Training mode requires keys: {required_keys}, "
-                    f"but got keys: {list(input_keys)}"
-                )
-        else:
-            # Inference mode can have different formats
-            valid_combinations = [
-                {"hist_tokens", "cand_tokens"},  # Training format for validation
-                {
-                    "history_tokens",
-                    "single_candidate_tokens",
-                },  # Single candidate scoring
-            ]
-
-            if not any(
-                combination.issubset(input_keys) for combination in valid_combinations
-            ):
-                raise ValueError(
-                    f"Inference mode expects one of: {valid_combinations}, "
-                    f"but got keys: {list(input_keys)}"
-                )
-
     def call(self, inputs, training=None):
-        """Main forward pass — dispatches to scoring methods.
+        """Forward pass for training. Returns raw logits (B, C).
 
-        Args:
-            inputs: Dictionary with input tensors.
-                Training:  ``hist_tokens``, ``cand_tokens``
-                Inference: ``hist_tokens``, ``cand_tokens`` (multi) or
-                           ``history_tokens``, ``single_candidate_tokens`` (single)
-            training: Whether in training mode.
-
-        Returns:
-            Scores tensor.
+        Inference uses ``self.news_encoder`` and ``self.user_encoder``
+        directly via the shared evaluator (see
+        :mod:`src.core.models.evaluation`), not this method.
         """
-        if training:
-            return self.score_training_batch(inputs)
-        elif "single_candidate_tokens" in inputs:
-            return self.score_single(inputs)
-        else:
-            return self.score_candidates(inputs)
-
-    # ----- scoring helpers (delegate to scorer) ---------------------------
-
-    def score_training_batch(self, inputs, training=None):
-        """Score a training batch with softmax over candidates."""
         return self.scorer.score_training_batch(
-            inputs["hist_tokens"], inputs["cand_tokens"], training=training
-        )
-
-    def score_single(self, inputs, training=None):
-        """Score a single candidate with sigmoid."""
-        return self.scorer.score_single(
-            inputs["history_tokens"],
-            inputs["single_candidate_tokens"],
-            training=training,
-        )
-
-    def score_candidates(self, inputs, training=False):
-        """Score multiple candidates with sigmoid (evaluation)."""
-        return self.scorer.score_candidates(
             inputs["hist_tokens"], inputs["cand_tokens"], training=training
         )
 
