@@ -160,6 +160,7 @@ class NewsBatchDataloader:
         process_abstract: bool = True,
         process_category: bool = True,
         process_subcategory: bool = True,
+        news_entity_indices: np.ndarray | None = None,
     ):
         self.news_ids = news_ids
         self.batch_size = batch_size
@@ -171,6 +172,8 @@ class NewsBatchDataloader:
             parts.append(np.asarray(news_tokens))
         if process_abstract and news_abstract_tokens is not None:
             parts.append(np.asarray(news_abstract_tokens))
+        if news_entity_indices is not None:
+            parts.append(np.asarray(news_entity_indices))
         if process_category and news_category_indices is not None:
             cat = np.asarray(news_category_indices)
             if cat.ndim == 1:
@@ -220,6 +223,7 @@ class UserHistoryBatchDataloader:
         process_abstract: bool = True,
         process_category: bool = True,
         process_subcategory: bool = True,
+        history_entity_indices: np.ndarray | None = None,
     ):
         self.impression_ids = np.asarray(impression_ids)
         self.user_ids = np.asarray(user_ids) if user_ids is not None else None
@@ -232,6 +236,8 @@ class UserHistoryBatchDataloader:
         if process_abstract and history_abstract_tokens is not None:
             cat_arr = np.asarray(history_abstract_tokens)
             parts.append(cat_arr)
+        if history_entity_indices is not None:
+            parts.append(np.asarray(history_entity_indices))
         if process_category and history_category is not None:
             cat_arr = np.asarray(history_category)
             if cat_arr.ndim == 2:

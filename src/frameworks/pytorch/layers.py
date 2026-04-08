@@ -74,6 +74,59 @@ class AdditiveAttention(nn.Module):
         return weighted_input.sum(dim=1)  # (batch, features)
 
 
+class AttentivePoolingQKY(nn.Module):
+    """Attentive pooling where attention keys differ from values (PyTorch).
+
+    Computes attention weights from ``key_input`` (e.g. concatenated
+    content + popularity embeddings) but returns a weighted sum of
+    ``value_input`` (e.g. content embeddings only).
+
+    Used in PP-Rec's Content-Popularity Joint Attention (CPJA), where:
+        key_input  = concat(user_news_vecs, popularity_embedding)  -- 800d
+        value_input = user_news_vecs                                -- 400d
+
+    Args:
+        key_dim: Last dimension of ``key_input``.
+        query_vec_dim: Hidden dimension of the attention MLP.
+    """
+
+    def __init__(self, key_dim: int, query_vec_dim: int = 200):
+        super().__init__()
+        self.W = nn.Parameter(torch.empty(key_dim, query_vec_dim))
+        self.b = nn.Parameter(torch.zeros(query_vec_dim))
+        self.q = nn.Parameter(torch.empty(query_vec_dim, 1))
+        nn.init.xavier_uniform_(self.W)
+        nn.init.xavier_uniform_(self.q)
+
+    def forward(
+        self,
+        key_input: torch.Tensor,
+        value_input: torch.Tensor,
+        mask: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Forward pass.
+
+        Args:
+            key_input:   ``(batch, seq_len, key_dim)``  used for attention weights.
+            value_input: ``(batch, seq_len, val_dim)``  weighted by attention.
+            mask:        ``(batch, seq_len)`` bool, ``True`` keeps.
+
+        Returns:
+            ``(batch, val_dim)`` weighted sum.
+        """
+        attention_hidden = torch.tanh(torch.matmul(key_input, self.W) + self.b)
+        attention_scores = torch.matmul(attention_hidden, self.q).squeeze(-1)
+
+        attention = torch.exp(attention_scores)
+        if mask is not None:
+            attention = attention * mask.float()
+        attention_weights = attention / (attention.sum(dim=-1, keepdim=True) + 1e-7)
+
+        attention_weights_expanded = attention_weights.unsqueeze(-1)
+        weighted_input = value_input * attention_weights_expanded
+        return weighted_input.sum(dim=1)
+
+
 class ComputeMasking(nn.Module):
     """Produce a boolean mask where ``inputs != 0``."""
 

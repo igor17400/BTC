@@ -101,12 +101,16 @@ class NewsBatchDataloader:
         process_abstract: bool = True,
         process_category: bool = True,
         process_subcategory: bool = True,
+        news_entity_indices: np.ndarray | None = None,
     ):
         self.news_ids = news_ids
         self.news_tokens = np.asarray(news_tokens)
         self.news_abstract_tokens = np.asarray(news_abstract_tokens)
         self.news_category_indices = np.asarray(news_category_indices)
         self.news_subcategory_indices = np.asarray(news_subcategory_indices)
+        self.news_entity_indices = (
+            np.asarray(news_entity_indices) if news_entity_indices is not None else None
+        )
         self.batch_size = batch_size
         self.device = device or torch.device("cpu")
         self.num_news = len(news_ids)
@@ -126,6 +130,9 @@ class NewsBatchDataloader:
                 parts.append(self.news_tokens[i:end])
             if self.process_abstract:
                 parts.append(self.news_abstract_tokens[i:end])
+            # Entity indices (between title/abstract and category, matching model input order)
+            if self.news_entity_indices is not None:
+                parts.append(self.news_entity_indices[i:end])
             if self.process_category:
                 cat = self.news_category_indices[i:end]
                 if cat.ndim == 1:
@@ -165,11 +172,17 @@ class UserHistoryBatchDataloader:
         process_abstract: bool = True,
         process_category: bool = True,
         process_subcategory: bool = True,
+        history_entity_indices: Any = None,
     ):
         self.history_tokens = np.asarray(history_tokens)
         self.history_abstract_tokens = np.asarray(history_abstract_tokens)
         self.history_category = np.asarray(history_category)
         self.history_subcategory = np.asarray(history_subcategory)
+        self.history_entity_indices = (
+            np.asarray(history_entity_indices)
+            if history_entity_indices is not None
+            else None
+        )
         self.impression_ids = np.asarray(impression_ids)
         self.user_ids = np.asarray(user_ids) if user_ids is not None else None
         self.batch_size = batch_size
@@ -198,6 +211,9 @@ class UserHistoryBatchDataloader:
                 parts.append(self.history_tokens[i:end])
             if self.process_abstract:
                 parts.append(self.history_abstract_tokens[i:end])
+            # Entity indices (matching model input order: title -> entity -> category)
+            if self.history_entity_indices is not None:
+                parts.append(self.history_entity_indices[i:end])
             if self.process_category:
                 cat = self.history_category[i:end]
                 if cat.ndim == 2:

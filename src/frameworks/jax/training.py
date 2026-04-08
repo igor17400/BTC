@@ -60,7 +60,7 @@ def make_train_step(loss_fn):
             return loss_fn(batch_labels, preds)
 
         loss, grads = nnx.value_and_grad(_loss)(model)
-        optimizer.update(grads)
+        optimizer.update(model, grads)
         return loss
 
     return train_step

@@ -196,11 +196,13 @@ _MODEL_CLASS_PATHS = {
         "nrms": "src.frameworks.pytorch.models.nrms.NRMS",
         "naml": "src.frameworks.pytorch.models.naml.NAML",
         "lstur": "src.frameworks.pytorch.models.lstur.LSTUR",
+        "pprec": "src.frameworks.pytorch.models.pprec.PPRec",
     },
     "jax": {
         "nrms": "src.frameworks.jax.models.nrms.NRMS",
         "naml": "src.frameworks.jax.models.naml.NAML",
         "lstur": "src.frameworks.jax.models.lstur.LSTUR",
+        "pprec": "src.frameworks.jax.models.pprec.PPRec",
     },
 }
 

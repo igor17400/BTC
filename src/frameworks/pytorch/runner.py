@@ -50,6 +50,41 @@ def _build_train_features(dataset_provider) -> tuple:
     if dataset_provider.process_user_id:
         features["user_ids"] = np.asarray(data["user_ids"])
 
+    # PP-Rec: concatenate entity and category into hist_tokens/cand_tokens
+    if "history_news_entities" in data and dataset_provider.process_entities:
+        hist_ent = np.asarray(data["history_news_entities"])
+        cand_ent = np.asarray(data["candidate_news_entities"])
+        if "hist_tokens" in features:
+            features["hist_tokens"] = np.concatenate(
+                [features["hist_tokens"], hist_ent], axis=-1
+            )
+            features["cand_tokens"] = np.concatenate(
+                [features["cand_tokens"], cand_ent], axis=-1
+            )
+    if dataset_provider.process_category and getattr(
+        dataset_provider, "process_entities", False
+    ):
+        hist_cat = np.asarray(data["history_news_categories"])
+        cand_cat = np.asarray(data["candidate_news_categories"])
+        if "hist_tokens" in features:
+            features["hist_tokens"] = np.concatenate(
+                [features["hist_tokens"], np.expand_dims(hist_cat, axis=-1)],
+                axis=-1,
+            )
+            features["cand_tokens"] = np.concatenate(
+                [features["cand_tokens"], np.expand_dims(cand_cat, axis=-1)],
+                axis=-1,
+            )
+
+    # PP-Rec CTR features
+    if "history_news_ctr" in data:
+        ctr = np.asarray(data["history_news_ctr"])
+        # Discretize history CTR for embedding lookup: ceil(ctr * 200), capped at 199
+        features["hist_ctr"] = np.minimum(np.ceil(ctr * 200).astype(np.int32), 199)
+        features["cand_ctr"] = np.asarray(data["candidate_news_ctr"])
+    if "candidate_news_recency" in data:
+        features["cand_recency"] = np.asarray(data["candidate_news_recency"])
+
     labels = np.asarray(data["labels"])
     return features, labels
 
@@ -85,6 +120,7 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
         process_abstract=dataset_provider.process_abstract,
         process_category=dataset_provider.process_category,
         process_subcategory=dataset_provider.process_subcategory,
+        news_entity_indices=pn.get("entity_indices"),
     )
 
     user_dl = UserHistoryBatchDataloader(
@@ -105,6 +141,7 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
         process_abstract=dataset_provider.process_abstract,
         process_category=dataset_provider.process_category,
         process_subcategory=dataset_provider.process_subcategory,
+        history_entity_indices=data.get("history_news_entities"),
     )
 
     imp_iter = ImpressionIterator(
