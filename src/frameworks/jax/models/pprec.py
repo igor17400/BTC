@@ -15,7 +15,7 @@ from flax import nnx
 
 from src.core.models.configs import PPRecConfig
 
-from ..layers import AdditiveAttention, AttentivePoolingQKY
+from ..layers import AdditiveAttention, AttentivePoolingQKY, CrossAttention
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -89,30 +89,23 @@ class PPRecNewsEncoder(nnx.Module):
                 rngs=rngs,
             )
 
-            # Cross-attention requires Q and K/V to share input dim in Flax NNX,
-            # so pre-project both modalities to a common 200-d cross-attention dim.
-            self.title_q_proj = nnx.Linear(config.embedding_size, co_out_dim, rngs=rngs)
-            self.entity_kv_proj = nnx.Linear(
-                config.entity_embedding_dim, co_out_dim, rngs=rngs
-            )
-            self.entity_q_proj = nnx.Linear(
-                config.entity_embedding_dim, co_out_dim, rngs=rngs
-            )
-            self.title_kv_proj = nnx.Linear(
-                config.embedding_size, co_out_dim, rngs=rngs
-            )
-            self.title_mhca = nnx.MultiHeadAttention(
+            # Bidirectional cross-attention (paper co1). CrossAttention
+            # handles different Q/KV dims natively — no pre-projection
+            # needed, matching the Keras/PyTorch architecture exactly.
+            self.title_mhca = CrossAttention(
+                q_dim=config.embedding_size,
+                kv_dim=config.entity_embedding_dim,
                 num_heads=config.co_num_heads,
-                in_features=co_out_dim,
-                qkv_features=co_out_dim,
-                decode=False,
+                head_dim=config.co_head_dim,
+                dropout_rate=config.dropout_rate,
                 rngs=rngs,
             )
-            self.entity_mhca = nnx.MultiHeadAttention(
+            self.entity_mhca = CrossAttention(
+                q_dim=config.entity_embedding_dim,
+                kv_dim=config.embedding_size,
                 num_heads=config.co_num_heads,
-                in_features=co_out_dim,
-                qkv_features=co_out_dim,
-                decode=False,
+                head_dim=config.co_head_dim,
+                dropout_rate=config.dropout_rate,
                 rngs=rngs,
             )
 
@@ -155,23 +148,19 @@ class PPRecNewsEncoder(nnx.Module):
         if has_entity:
             entity_emb = self.entity_embedding(entity_indices)
 
-        # --- Bidirectional MHCA on RAW embeddings ---
+        # --- Bidirectional MHCA on RAW embeddings (paper co1) ---
         if has_entity:
-            # Q=title, KV=entity → output 200d
-            title_q = self.title_q_proj(title_emb)  # (B, T, 200)
-            entity_kv = self.entity_kv_proj(entity_emb)  # (B, E, 200)
             entity_kv_mask = entity_keep[:, None, None, :]  # (B, 1, 1, E)
             title_co = self.title_mhca(
-                title_q, entity_kv, mask=entity_kv_mask, deterministic=not training
-            )
+                title_emb, entity_emb,
+                mask=entity_kv_mask, deterministic=not training,
+            )  # (B, T, co_out_dim)
 
-            # Q=entity, KV=title → output 200d
-            entity_q = self.entity_q_proj(entity_emb)  # (B, E, 200)
-            title_kv = self.title_kv_proj(title_emb)  # (B, T, 200)
             title_kv_mask = title_keep[:, None, None, :]  # (B, 1, 1, T)
             entity_co = self.entity_mhca(
-                entity_q, title_kv, mask=title_kv_mask, deterministic=not training
-            )
+                entity_emb, title_emb,
+                mask=title_kv_mask, deterministic=not training,
+            )  # (B, E, co_out_dim)
 
         # --- Title self-attention + concat ---
         title_self_mask = title_keep[:, None, None, :]

@@ -51,3 +51,44 @@ class JAXAdapter:
         else:
             vec = encoder(features, training=False)
         return np.asarray(vec)
+
+    def run_activity_gater(
+        self, gater: Any, user_vecs: Any
+    ) -> np.ndarray:
+        """Run the ActivityGater on a batch of user vectors.
+
+        Args:
+            gater: Framework-native ActivityGater module.
+            user_vecs: ``(B, news_dim)`` user vectors.
+
+        Returns:
+            ``(B,)`` numpy array of gate values (eta) in [0, 1].
+        """
+        user_jnp = jnp.asarray(user_vecs)
+        return np.asarray(gater(user_jnp))
+
+    def run_popularity_predictor(
+        self,
+        predictor: Any,
+        bias_vecs: Any,
+        recency: Any | None,
+        ctr: Any | None,
+    ) -> np.ndarray:
+        """Run the PopularityPredictor with full inputs (bias + recency + CTR).
+
+        Args:
+            predictor: Framework-native PopularityPredictor module.
+            bias_vecs: ``(C, news_dim)`` bias news vectors.
+            recency: Optional ``(C,)`` int recency bucket indices.
+            ctr: Optional ``(C,)`` float CTR values.
+
+        Returns:
+            ``(C,)`` numpy array of popularity scores.
+        """
+        bias_jnp = jnp.asarray(bias_vecs)
+        recency_jnp = jnp.asarray(recency).astype(jnp.int32) if recency is not None else None
+        ctr_jnp = jnp.asarray(ctr).astype(jnp.float32) if ctr is not None else None
+        pop_scores = predictor(
+            bias_jnp, recency_indices=recency_jnp, ctr_values=ctr_jnp
+        )
+        return np.asarray(pop_scores)

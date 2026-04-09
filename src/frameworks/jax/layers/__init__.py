@@ -7,6 +7,7 @@ Re-exports from sub-modules so callers can use
 from .attention_layers import (
     AdditiveAttention,
     AttentivePoolingQKY,
+    CrossAttention,
     compute_mask,
     overwrite_mask,
 )

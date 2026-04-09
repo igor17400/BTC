@@ -279,11 +279,32 @@ def run(cfg: DictConfig):
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
     # Evaluation function (isomorphic with JAX/PyTorch)
+    from src.core.models.evaluation import pprec_fast_evaluate
+    from src.frameworks.keras.models.adapter import KerasAdapter
+
+    is_pprec = spec.model.name.lower() == "pprec"
+
     def eval_fn(model, mode="val"):
         news_dl, user_dl, imp_iter = _build_eval_dataloaders(
             dataset_provider, cfg, mode=mode
         )
+        behaviors_data = (
+            dataset_provider.val_behaviors_data if mode == "val"
+            else dataset_provider.test_behaviors_data
+        )
         with Progress(transient=True) as progress:
+            if is_pprec:
+                return pprec_fast_evaluate(
+                    model=model,
+                    news_dataloader=news_dl,
+                    user_hist_dataloader=user_dl,
+                    impression_iterator=imp_iter,
+                    behaviors_data=behaviors_data,
+                    metrics_calculator=metrics_engine,
+                    progress=progress,
+                    adapter=KerasAdapter(),
+                    int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
+                )
             return fast_evaluate(
                 news_encoder=model.news_encoder,
                 user_encoder=model.user_encoder,

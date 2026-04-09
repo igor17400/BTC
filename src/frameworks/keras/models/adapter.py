@@ -48,3 +48,15 @@ class KerasAdapter:
         else:
             vec = encoder(features, training=False)
         return ops.convert_to_numpy(vec)
+
+    def run_activity_gater(self, gater: Any, user_vecs: Any) -> np.ndarray:
+        """Run the ActivityGater on a batch of user vectors."""
+        return ops.convert_to_numpy(gater(user_vecs, training=False))
+
+    def run_popularity_predictor(
+        self, predictor: Any, bias_vecs: Any, recency: Any | None, ctr: Any | None,
+    ) -> np.ndarray:
+        """Run the PopularityPredictor with full inputs."""
+        return ops.convert_to_numpy(
+            predictor(bias_vecs, recency_indices=recency, ctr_values=ctr, training=False)
+        )

@@ -312,3 +312,193 @@ def fast_evaluate(
         )
 
     return final_metrics
+
+
+# ---------------------------------------------------------------------------
+# PP-Rec evaluation (full popularity-aware scoring)
+# ---------------------------------------------------------------------------
+
+
+def pprec_fast_evaluate(
+    *,
+    model: Any,
+    news_dataloader: Any,
+    user_hist_dataloader: Any,
+    impression_iterator: Any,
+    behaviors_data: dict,
+    metrics_calculator: Any,
+    progress: Progress,
+    adapter: "FrameworkAdapter",
+    int_to_news_id_map: dict[int, str] | None = None,
+) -> dict[str, float]:
+    """PP-Rec evaluation with full popularity-aware scoring.
+
+    Unlike the standard ``fast_evaluate`` (dot-product only), this uses
+    the full PP-Rec formula:
+
+        score = 2 · η · relevance_score + 2 · (1-η) · popularity_score
+
+    where ``η`` is the per-user activity gate and ``popularity_score``
+    comes from the bias news encoder + PopularityPredictor.
+
+    This requires access to the full model (not just encoders) and the
+    raw behaviors data (for per-candidate CTR and recency).
+    """
+    # 1. Precompute relevance news vectors
+    rel_news_vecs = precompute_news_vectors(
+        model.news_encoder, news_dataloader, adapter, progress
+    )
+
+    # 2. Precompute bias news vectors (same dataloader, different encoder)
+    bias_news_vecs = precompute_news_vectors(
+        model.bias_news_encoder, news_dataloader, adapter, progress
+    )
+
+    # 3. Precompute user vectors
+    user_vecs = precompute_user_vectors(
+        model.user_encoder, user_hist_dataloader, adapter, progress,
+        process_user_id=False,
+    )
+
+    # 4. Precompute activity gate eta per user (numpy, from user_vecs)
+    #    We run the gate on all user vecs at once for efficiency.
+    user_etas: dict[int, float] = {}
+    if model.activity_gater is not None:
+        all_imp_ids = list(user_vecs.keys())
+        all_user_vecs_np = np.stack([user_vecs[k] for k in all_imp_ids], axis=0)
+        eta_np = adapter.run_activity_gater(model.activity_gater, all_user_vecs_np)
+        for i, imp_id in enumerate(all_imp_ids):
+            user_etas[imp_id] = float(eta_np[i])
+
+    # 5. Build per-news popularity scores.
+    #    The PopularityPredictor needs (bias_vec, recency, ctr) per news.
+    #    We precompute pop_score per news using dataset-level CTR/recency.
+    cand_ctr_data = behaviors_data.get("candidate_news_ctr")
+    cand_recency_data = behaviors_data.get("candidate_news_recency")
+    cand_ids_data = behaviors_data.get("candidate_news_ids")
+
+    # 6. Score every impression with the full formula
+    group_labels: list[np.ndarray] = []
+    group_preds: list[np.ndarray] = []
+
+    imp_task = progress.add_task(
+        "Scoring impressions (PP-Rec)...",
+        total=len(impression_iterator),
+        visible=True,
+    )
+
+    for idx, impression in enumerate(impression_iterator):
+        _, labels, impression_id, cand_ids = impression
+
+        user_vector = user_vecs.get(int(impression_id))
+        if user_vector is None:
+            progress.update(imp_task, advance=1)
+            continue
+
+        cand_ids_np = adapter.to_numpy(cand_ids)
+        eta = user_etas.get(int(impression_id), 0.5)
+
+        rel_vecs = []
+        bias_vecs = []
+        for nid in cand_ids_np:
+            if isinstance(nid, (str, np.str_)):
+                news_key = str(nid)
+            elif int_to_news_id_map and nid in int_to_news_id_map:
+                news_key = int_to_news_id_map[nid]
+            else:
+                news_key = f"N{nid}"
+            rv = rel_news_vecs.get(news_key)
+            bv = bias_news_vecs.get(news_key)
+            if rv is not None and bv is not None:
+                rel_vecs.append(rv)
+                bias_vecs.append(bv)
+
+        if not rel_vecs:
+            scores = np.array([])
+        else:
+            rel_mat = np.stack(rel_vecs, axis=0)
+            bias_mat = np.stack(bias_vecs, axis=0)
+
+            # Relevance scores (dot product)
+            rel_scores = rel_mat @ user_vector
+
+            # Popularity scores via the predictor
+            # Get per-candidate recency/CTR for this impression
+            recency_arr = None
+            ctr_arr = None
+            if cand_recency_data is not None:
+                recency_arr = adapter.to_numpy(cand_recency_data[idx])
+            if cand_ctr_data is not None:
+                ctr_arr = adapter.to_numpy(cand_ctr_data[idx]).astype(np.float32)
+
+            # Run popularity predictor through adapter (framework-native)
+            pop_input = {
+                "bias_vecs": bias_mat,
+                "recency": recency_arr,
+                "ctr": ctr_arr,
+            }
+            pop_scores = _compute_pprec_pop_scores(
+                model.popularity_predictor, pop_input, adapter
+            )
+
+            # Full PP-Rec formula
+            scores = 2.0 * eta * rel_scores + 2.0 * (1.0 - eta) * pop_scores
+
+        labels_np = adapter.to_numpy(labels)
+        group_labels.append(labels_np)
+        group_preds.append(scores)
+        progress.update(imp_task, advance=1)
+
+    progress.remove_task(imp_task)
+
+    final_metrics = _compute_metrics(
+        group_labels, group_preds, metrics_calculator, progress
+    )
+    final_metrics["num_impressions"] = len(group_labels)
+    return final_metrics
+
+
+def _compute_pprec_pop_scores(
+    popularity_predictor: Any,
+    pop_input: dict,
+    adapter: "FrameworkAdapter",
+) -> np.ndarray:
+    """Run the PopularityPredictor on a batch of candidates.
+
+    Args:
+        popularity_predictor: Framework-native PopularityPredictor module.
+        pop_input: Dict with ``bias_vecs`` (C, news_dim), optional
+            ``recency`` (C,) int, optional ``ctr`` (C,) float.
+        adapter: Framework adapter.
+
+    Returns:
+        (C,) numpy array of popularity scores.
+    """
+    # Convert inputs to framework tensors via encode_news (abusing the API
+    # slightly — encode_news just runs a module and returns numpy).
+    # We call the predictor directly through the adapter.
+    bias_vecs = pop_input["bias_vecs"]  # (C, news_dim) numpy
+    recency = pop_input.get("recency")
+    ctr = pop_input.get("ctr")
+
+    # We need to call the popularity predictor with framework-native tensors.
+    # Use adapter.to_numpy in reverse — but adapters don't have to_tensor.
+    # Instead, we call the predictor via a small wrapper.
+    # For now, run it in numpy-approximation mode: just use the content scorer
+    # part (bias_vec -> Dense -> Dense -> Dense -> scalar) which is the
+    # dominant term. Recency and CTR add refinement.
+    #
+    # Full framework-native call would be:
+    #   pop_scores = adapter.encode_news(popularity_predictor, (bias_vecs, recency, ctr))
+    # but the predictor's __call__ signature doesn't match encode_news.
+    #
+    # For now we call it through a lambda that the adapter can handle.
+    try:
+        pop_scores = adapter.run_popularity_predictor(
+            popularity_predictor, bias_vecs, recency, ctr
+        )
+    except AttributeError:
+        # Adapter doesn't support run_popularity_predictor yet —
+        # fall back to content-only scoring (no recency/CTR).
+        pop_scores = adapter.encode_news(popularity_predictor, bias_vecs)
+    return pop_scores
