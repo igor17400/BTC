@@ -4,13 +4,11 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from src.core.models.configs import NAMLConfig
 
 from ..layers import AdditiveAttention, get_activation
 from .base import BaseModel
-
 
 # ------------------------------------------------------------------
 # Sub-encoders
@@ -334,4 +332,3 @@ class NAML(BaseModel):
 
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
         return scores  # raw logits; loss applies log-softmax internally
-

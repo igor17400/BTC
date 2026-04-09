@@ -220,7 +220,7 @@ def run(cfg: DictConfig):
 
     from src.core.losses import get_loss
     from src.frameworks.keras.dataloaders import create_train_dataloader
-    from src.frameworks.keras.evaluation import fast_evaluate
+    from src.frameworks.keras.evaluation import get_evaluator
     from src.frameworks.keras.training import training_loop
     from src.frameworks.keras.utils import LightweightNewsMetrics, create_news_metrics
 
@@ -279,41 +279,26 @@ def run(cfg: DictConfig):
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
     # Evaluation function (isomorphic with JAX/PyTorch)
-    from src.core.models.evaluation import pprec_fast_evaluate
-    from src.frameworks.keras.models.adapter import KerasAdapter
-
-    is_pprec = spec.model.name.lower() == "pprec"
+    evaluate = get_evaluator(spec)
 
     def eval_fn(model, mode="val"):
         news_dl, user_dl, imp_iter = _build_eval_dataloaders(
             dataset_provider, cfg, mode=mode
         )
         behaviors_data = (
-            dataset_provider.val_behaviors_data if mode == "val"
+            dataset_provider.val_behaviors_data
+            if mode == "val"
             else dataset_provider.test_behaviors_data
         )
         with Progress(transient=True) as progress:
-            if is_pprec:
-                return pprec_fast_evaluate(
-                    model=model,
-                    news_dataloader=news_dl,
-                    user_hist_dataloader=user_dl,
-                    impression_iterator=imp_iter,
-                    behaviors_data=behaviors_data,
-                    metrics_calculator=metrics_engine,
-                    progress=progress,
-                    adapter=KerasAdapter(),
-                    int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
-                )
-            return fast_evaluate(
-                news_encoder=model.news_encoder,
-                user_encoder=model.user_encoder,
-                user_hist_dataloader=user_dl,
+            return evaluate(
+                model=model,
                 news_dataloader=news_dl,
+                user_hist_dataloader=user_dl,
                 impression_iterator=imp_iter,
+                behaviors_data=behaviors_data,
                 metrics_calculator=metrics_engine,
                 progress=progress,
-                process_user_id=getattr(model, "process_user_id", False),
                 int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
             )
 

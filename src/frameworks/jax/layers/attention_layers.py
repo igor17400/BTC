@@ -106,9 +106,7 @@ class AttentivePoolingQKY(nnx.Module):
         Returns:
             ``(batch, val_dim)`` weighted sum.
         """
-        attention_hidden = jnp.tanh(
-            jnp.matmul(key_input, self.W.value) + self.b.value
-        )
+        attention_hidden = jnp.tanh(jnp.matmul(key_input, self.W.value) + self.b.value)
         attention_scores = jnp.squeeze(
             jnp.matmul(attention_hidden, self.q.value), axis=-1
         )
@@ -199,9 +197,13 @@ class CrossAttention(nnx.Module):
         H = self.num_heads
         D = self.head_dim
 
-        Q = self.W_q(query).reshape(B, Sq, H, D).transpose(0, 2, 1, 3)   # (B, H, Sq, D)
-        K = self.W_k(key_value).reshape(B, Skv, H, D).transpose(0, 2, 1, 3)  # (B, H, Skv, D)
-        V = self.W_v(key_value).reshape(B, Skv, H, D).transpose(0, 2, 1, 3)  # (B, H, Skv, D)
+        Q = self.W_q(query).reshape(B, Sq, H, D).transpose(0, 2, 1, 3)  # (B, H, Sq, D)
+        K = (
+            self.W_k(key_value).reshape(B, Skv, H, D).transpose(0, 2, 1, 3)
+        )  # (B, H, Skv, D)
+        V = (
+            self.W_v(key_value).reshape(B, Skv, H, D).transpose(0, 2, 1, 3)
+        )  # (B, H, Skv, D)
 
         scores = jnp.matmul(Q, K.transpose(0, 1, 3, 2)) / jnp.sqrt(
             jnp.float32(D)

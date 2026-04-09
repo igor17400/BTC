@@ -9,6 +9,7 @@ Layers used exclusively by the CROWN news recommendation model:
 import keras
 from keras import layers, ops
 
+
 class GraphSAGELayer(layers.Layer):
     """GraphSAGE layer implementation for CROWN paper.
 

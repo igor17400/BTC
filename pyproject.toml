@@ -158,6 +158,16 @@ torch = [
   { index = "pytorch-cu126", extra = "all-cuda" },
 ]
 
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+reportAttributeAccessIssue = false
+reportPossiblyUnbound = false
+reportArgumentType = false
+reportOptionalCall = false
+reportOptionalSubscript = false
+reportOptionalMemberAccess = false
+
 [tool.mypy]
 python_version = "3.12"
 ignore_missing_imports = true

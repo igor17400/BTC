@@ -744,7 +744,7 @@ class PPRec(BaseModel):
         if self.config.use_activity_gate and self.activity_gater is not None:
             eta = self.activity_gater(user_vec, training=training)
             eta = ops.expand_dims(eta, axis=-1)
-            scores = 2.0 * eta * rel_scores + 2.0 * (1.0 - eta) * pop_scores
+            scores = eta * rel_scores + (1.0 - eta) * pop_scores
         else:
             scores = rel_scores + pop_scores
 

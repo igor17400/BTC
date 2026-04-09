@@ -64,5 +64,6 @@ training:
 
 evaluation:
   mode: fast
+  evaluator: pp_rec
   metrics: [auc, mrr, ndcg@5, ndcg@10]
   batch_size: 256

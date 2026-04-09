@@ -560,9 +560,7 @@ class LSTUR(BaseModel):
                 [candidate_tokens, cand_category, cand_subcategory], axis=-1
             )
 
-        user_repr = self.user_encoder(
-            [history_tokens, user_ids], training=training
-        )
+        user_repr = self.user_encoder([history_tokens, user_ids], training=training)
 
         B = ops.shape(candidate_tokens)[0]
         C = ops.shape(candidate_tokens)[1]

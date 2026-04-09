@@ -262,9 +262,7 @@ class LSTUR(BaseModel):
         category_encoder = None
         subcategory_encoder = None
         if config.use_category:
-            category_encoder = CategoryEncoder(
-                config, processed_news["num_categories"]
-            )
+            category_encoder = CategoryEncoder(config, processed_news["num_categories"])
         if config.use_subcategory:
             subcategory_encoder = SubcategoryEncoder(
                 config, processed_news["num_subcategories"]
@@ -330,4 +328,3 @@ class LSTUR(BaseModel):
 
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)
         return scores  # raw logits; loss applies log-softmax internally
-

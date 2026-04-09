@@ -207,4 +207,3 @@ class NRMS(BaseModel):
         # Dot-product scores (raw logits — loss function handles softmax)
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)  # (B, C)
         return scores
-

@@ -151,10 +151,8 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
 
 def run(cfg: DictConfig):
     """Run training with JAX/Flax NNX framework."""
-    from src.core.models.evaluation import pprec_fast_evaluate
     from src.frameworks.jax.dataloaders import create_train_dataloader
-    from src.frameworks.jax.evaluation import fast_evaluate
-    from src.frameworks.jax.models.adapter import JAXAdapter
+    from src.frameworks.jax.evaluation import get_evaluator
     from src.frameworks.jax.training import training_loop
 
     start_time = time.time()
@@ -199,34 +197,26 @@ def run(cfg: DictConfig):
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
     # Evaluation function (called at end of each epoch)
-    is_pprec = spec.model.name.lower() == "pprec"
+    evaluate = get_evaluator(spec)
 
-    def eval_fn(model, **kwargs):
+    def eval_fn(model, mode="val", **kwargs):
         news_dl, user_dl, imp_iter = _build_eval_dataloaders(
-            dataset_provider, cfg, mode="val"
+            dataset_provider, cfg, mode=mode
+        )
+        behaviors_data = (
+            dataset_provider.val_behaviors_data
+            if mode == "val"
+            else dataset_provider.test_behaviors_data
         )
         with Progress(transient=True) as progress:
-            if is_pprec:
-                return pprec_fast_evaluate(
-                    model=model,
-                    news_dataloader=news_dl,
-                    user_hist_dataloader=user_dl,
-                    impression_iterator=imp_iter,
-                    behaviors_data=dataset_provider.val_behaviors_data,
-                    metrics_calculator=metrics_engine,
-                    progress=progress,
-                    adapter=JAXAdapter(),
-                    int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
-                )
-            return fast_evaluate(
-                news_encoder=model.news_encoder,
-                user_encoder=model.user_encoder,
-                user_hist_dataloader=user_dl,
+            return evaluate(
+                model=model,
                 news_dataloader=news_dl,
+                user_hist_dataloader=user_dl,
                 impression_iterator=imp_iter,
+                behaviors_data=behaviors_data,
                 metrics_calculator=metrics_engine,
                 progress=progress,
-                process_user_id=getattr(model, "process_user_id", False),
                 int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
             )
 
@@ -258,34 +248,7 @@ def run(cfg: DictConfig):
         # Load test data (not loaded during mode="train" init)
         if not dataset_provider.test_behaviors_data:
             dataset_provider._load_data("test")
-        news_dl, user_dl, imp_iter = _build_eval_dataloaders(
-            dataset_provider, cfg, mode="test"
-        )
-        with Progress(transient=True) as progress:
-            if is_pprec:
-                test_metrics = pprec_fast_evaluate(
-                    model=model,
-                    news_dataloader=news_dl,
-                    user_hist_dataloader=user_dl,
-                    impression_iterator=imp_iter,
-                    behaviors_data=dataset_provider.test_behaviors_data,
-                    metrics_calculator=metrics_engine,
-                    progress=progress,
-                    adapter=JAXAdapter(),
-                    int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
-                )
-            else:
-                test_metrics = fast_evaluate(
-                    news_encoder=model.news_encoder,
-                    user_encoder=model.user_encoder,
-                    user_hist_dataloader=user_dl,
-                    news_dataloader=news_dl,
-                    impression_iterator=imp_iter,
-                    metrics_calculator=metrics_engine,
-                    progress=progress,
-                    process_user_id=getattr(model, "process_user_id", False),
-                    int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
-                )
+        test_metrics = eval_fn(model, mode="test")
         log_test_results(test_metrics)
 
     log_training_complete(cfg.model_name, "jax", time.time() - start_time)

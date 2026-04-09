@@ -10,6 +10,8 @@ Usage:
 
     # With Keras backends
     uv run python tests/smoke.py --models nrms --frameworks jax pytorch keras+jax keras+torch
+
+Logs are saved to tests/.smoke_logs/<model>_<framework>.log for inspection.
 """
 
 import argparse
@@ -17,15 +19,17 @@ import contextlib
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 
 from rich.console import Console
 from rich.table import Table
 
 PROJECT_ROOT = Path(__file__).parent.parent
+LOGS_DIR = Path(__file__).parent / ".smoke_logs"
 console = Console()
 
-ALL_MODELS = ["nrms", "naml", "lstur"]
+ALL_MODELS = ["nrms", "naml", "lstur", "pprec"]
 ALL_FRAMEWORKS = ["jax", "pytorch", "keras+jax", "keras+torch"]
 
 
@@ -42,6 +46,7 @@ def run_one(model: str, framework: str) -> dict:
         "ndcg@10": "-",
         "time": "-",
         "error": None,
+        "log_file": None,
     }
 
     # Build the train.py command with Hydra overrides
@@ -61,7 +66,13 @@ def run_one(model: str, framework: str) -> dict:
     else:
         cmd.append(f"framework={framework}")
 
+    # Log file for this run
+    log_name = f"{model}_{framework.replace('+', '_')}.log"
+    log_path = LOGS_DIR / log_name
+    result["log_file"] = str(log_path)
+
     start = time.time()
+    console.print(f"  Running {model.upper()}/{framework}...", end=" ")
 
     try:
         proc = subprocess.run(
@@ -75,6 +86,18 @@ def run_one(model: str, framework: str) -> dict:
         elapsed = time.time() - start
         result["time"] = f"{elapsed:.1f}s"
 
+        # Save full output to log file
+        full_output = proc.stdout + "\n" + proc.stderr
+        log_path.write_text(
+            f"# {model.upper()} / {framework}\n"
+            f"# Command: {' '.join(cmd)}\n"
+            f"# Date: {datetime.now().isoformat()}\n"
+            f"# Exit code: {proc.returncode}\n"
+            f"# Elapsed: {elapsed:.1f}s\n\n"
+            f"--- STDOUT ---\n{proc.stdout}\n\n"
+            f"--- STDERR ---\n{proc.stderr}\n"
+        )
+
         if proc.returncode != 0:
             # Extract last meaningful error line
             stderr_lines = proc.stderr.strip().split("\n")
@@ -84,19 +107,15 @@ def run_one(model: str, framework: str) -> dict:
                 if "ERROR" in line or "Error" in line:
                     error_msg = line.strip()
             result["error"] = error_msg
-            console.print(f"[red]  FAIL: {error_msg}[/red]")
+            console.print(f"[red]FAIL[/red] ({elapsed:.1f}s)")
             return result
 
         # Parse metrics from combined output
-        # All frameworks use: "Test results: loss=1.63  auc=0.47  ..."
-        # Rich may wrap lines, so join all output and search for key=value pairs
         metric_keys = {"loss", "auc", "mrr", "ndcg@5", "ndcg@10"}
-        full_output = proc.stdout + "\n" + proc.stderr
 
         # Find the test results section and parse all key=value after it
         if "Test results:" in full_output:
             after_test = full_output.split("Test results:")[-1]
-            # Take everything until the next log line (starts with timestamp or ---)
             for part in after_test.split():
                 if part.startswith("---") or part.startswith("["):
                     break
@@ -107,13 +126,16 @@ def run_one(model: str, framework: str) -> dict:
                             result[k] = f"{float(v):.4f}"
 
         result["status"] = "PASS"
+        console.print(f"[green]PASS[/green] ({elapsed:.1f}s)")
 
     except subprocess.TimeoutExpired:
         result["error"] = "Timeout (120s)"
-        console.print("[red]  TIMEOUT[/red]")
+        log_path.write_text(f"# {model.upper()} / {framework}\n# TIMEOUT after 120s\n")
+        console.print("[red]TIMEOUT[/red]")
     except Exception as e:
         result["error"] = str(e)
-        console.print(f"[red]  ERROR: {e}[/red]")
+        log_path.write_text(f"# {model.upper()} / {framework}\n# ERROR: {e}\n")
+        console.print("[red]ERROR[/red]")
 
     return result
 
@@ -160,6 +182,9 @@ def print_results_table(results: list[dict]) -> None:
         for r in results:
             if r["status"] == "FAIL":
                 console.print(f"  {r['model']}/{r['framework']}: {r['error']}")
+                console.print(f"    Log: {r['log_file']}")
+
+    console.print(f"\n[dim]Full logs: {LOGS_DIR}/[/dim]")
 
 
 def main():
@@ -180,14 +205,18 @@ def main():
     )
     args = parser.parse_args()
 
+    # Create logs directory
+    LOGS_DIR.mkdir(exist_ok=True)
+
+    total = len(args.models) * len(args.frameworks)
     console.print(
-        f"[bold]Running smoke tests: {args.models} × {args.frameworks}[/bold]\n"
+        f"[bold]Running {total} smoke tests: {args.models} × {args.frameworks}[/bold]"
     )
+    console.print(f"[dim]Logs will be saved to {LOGS_DIR}/[/dim]\n")
 
     results = []
     for model in args.models:
         for framework in args.frameworks:
-            console.rule(f"{model.upper()} / {framework}")
             result = run_one(model, framework)
             results.append(result)
 

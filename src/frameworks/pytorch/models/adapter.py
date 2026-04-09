@@ -17,7 +17,6 @@ from typing import Any
 
 import numpy as np
 import torch
-import torch.nn as nn
 
 
 class PyTorchAdapter:
@@ -82,15 +81,28 @@ class PyTorchAdapter:
             return gater(user_t).detach().cpu().numpy()
 
     def run_popularity_predictor(
-        self, predictor: Any, bias_vecs: Any, recency: Any | None, ctr: Any | None,
+        self,
+        predictor: Any,
+        bias_vecs: Any,
+        recency: Any | None,
+        ctr: Any | None,
     ) -> np.ndarray:
         """Run the PopularityPredictor with full inputs."""
         predictor.eval()
         device = next(predictor.parameters()).device
         bias_t = torch.as_tensor(bias_vecs, dtype=torch.float32).to(device)
-        recency_t = torch.as_tensor(recency).long().to(device) if recency is not None else None
-        ctr_t = torch.as_tensor(ctr, dtype=torch.float32).to(device) if ctr is not None else None
+        recency_t = (
+            torch.as_tensor(recency).long().to(device) if recency is not None else None
+        )
+        ctr_t = (
+            torch.as_tensor(ctr, dtype=torch.float32).to(device)
+            if ctr is not None
+            else None
+        )
         with torch.no_grad():
-            return predictor(
-                bias_t, recency_indices=recency_t, ctr_values=ctr_t
-            ).detach().cpu().numpy()
+            return (
+                predictor(bias_t, recency_indices=recency_t, ctr_values=ctr_t)
+                .detach()
+                .cpu()
+                .numpy()
+            )

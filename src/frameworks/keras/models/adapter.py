@@ -54,9 +54,15 @@ class KerasAdapter:
         return ops.convert_to_numpy(gater(user_vecs, training=False))
 
     def run_popularity_predictor(
-        self, predictor: Any, bias_vecs: Any, recency: Any | None, ctr: Any | None,
+        self,
+        predictor: Any,
+        bias_vecs: Any,
+        recency: Any | None,
+        ctr: Any | None,
     ) -> np.ndarray:
         """Run the PopularityPredictor with full inputs."""
         return ops.convert_to_numpy(
-            predictor(bias_vecs, recency_indices=recency, ctr_values=ctr, training=False)
+            predictor(
+                bias_vecs, recency_indices=recency, ctr_values=ctr, training=False
+            )
         )

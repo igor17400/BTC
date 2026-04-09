@@ -220,9 +220,9 @@ def run(cfg: DictConfig):
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
     # Evaluation function (isomorphic with Keras/JAX)
-    from src.core.models.evaluation import pprec_fast_evaluate
-    from src.frameworks.pytorch.evaluation import fast_evaluate
-    from src.frameworks.pytorch.models.adapter import PyTorchAdapter
+    from src.frameworks.pytorch.evaluation import get_evaluator
+
+    evaluate = get_evaluator(spec)
 
     int_to_news_id_map = (
         dataset_provider.get_int_to_news_id_map()
@@ -230,34 +230,24 @@ def run(cfg: DictConfig):
         else None
     )
 
-    is_pprec = spec.model.name.lower() == "pprec"
-
-    def eval_fn(model):
-        val_provider = _build_eval_dataloaders(dataset_provider, cfg, mode="val")
+    def eval_fn(model, mode="val"):
+        provider = _build_eval_dataloaders(dataset_provider, cfg, mode=mode)
+        behaviors_data = (
+            dataset_provider.val_behaviors_data
+            if mode == "val"
+            else dataset_provider.test_behaviors_data
+        )
         with Progress(transient=True) as progress:
-            if is_pprec:
-                return pprec_fast_evaluate(
-                    model=model,
-                    news_dataloader=val_provider["news_dataloader"],
-                    user_hist_dataloader=val_provider["user_hist_dataloader"],
-                    impression_iterator=val_provider["impression_iterator"],
-                    behaviors_data=dataset_provider.val_behaviors_data,
-                    metrics_calculator=metrics_engine,
-                    progress=progress,
-                    adapter=PyTorchAdapter(),
-                    int_to_news_id_map=int_to_news_id_map,
-                )
-            return fast_evaluate(
-                news_encoder=model.news_encoder,
-                user_encoder=model.user_encoder,
-                user_hist_dataloader=val_provider["user_hist_dataloader"],
-                news_dataloader=val_provider["news_dataloader"],
-                impression_iterator=val_provider["impression_iterator"],
+            return evaluate(
+                model=model,
+                news_dataloader=provider["news_dataloader"],
+                user_hist_dataloader=provider["user_hist_dataloader"],
+                impression_iterator=provider["impression_iterator"],
+                behaviors_data=behaviors_data,
                 metrics_calculator=metrics_engine,
                 progress=progress,
-                process_user_id=getattr(model, "process_user_id", False),
                 int_to_news_id_map=int_to_news_id_map,
-                mode="validate",
+                mode=mode,
             )
 
     # Loss function from config
@@ -295,33 +285,7 @@ def run(cfg: DictConfig):
         if not dataset_provider.test_behaviors_data:
             dataset_provider._load_data("test")
 
-        test_provider = _build_eval_dataloaders(dataset_provider, cfg, mode="test")
-        with Progress(transient=True) as progress:
-            if is_pprec:
-                test_metrics = pprec_fast_evaluate(
-                    model=model,
-                    news_dataloader=test_provider["news_dataloader"],
-                    user_hist_dataloader=test_provider["user_hist_dataloader"],
-                    impression_iterator=test_provider["impression_iterator"],
-                    behaviors_data=dataset_provider.test_behaviors_data,
-                    metrics_calculator=metrics_engine,
-                    progress=progress,
-                    adapter=PyTorchAdapter(),
-                    int_to_news_id_map=int_to_news_id_map,
-                )
-            else:
-                test_metrics = fast_evaluate(
-                    news_encoder=model.news_encoder,
-                    user_encoder=model.user_encoder,
-                    user_hist_dataloader=test_provider["user_hist_dataloader"],
-                    news_dataloader=test_provider["news_dataloader"],
-                    impression_iterator=test_provider["impression_iterator"],
-                    metrics_calculator=metrics_engine,
-                    progress=progress,
-                    process_user_id=getattr(model, "process_user_id", False),
-                    int_to_news_id_map=int_to_news_id_map,
-                    mode="test",
-                )
+        test_metrics = eval_fn(model, mode="test")
         if test_metrics:
             log_test_results(test_metrics)
 

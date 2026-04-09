@@ -75,6 +75,7 @@ poetry.lock
 coverage.xml
 .pytest_cache/
 htmlcov/
+tests/.smoke_logs/
 
 # Documentation
 docs/_build/

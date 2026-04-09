@@ -152,14 +152,18 @@ class PPRecNewsEncoder(nnx.Module):
         if has_entity:
             entity_kv_mask = entity_keep[:, None, None, :]  # (B, 1, 1, E)
             title_co = self.title_mhca(
-                title_emb, entity_emb,
-                mask=entity_kv_mask, deterministic=not training,
+                title_emb,
+                entity_emb,
+                mask=entity_kv_mask,
+                deterministic=not training,
             )  # (B, T, co_out_dim)
 
             title_kv_mask = title_keep[:, None, None, :]  # (B, 1, 1, T)
             entity_co = self.entity_mhca(
-                entity_emb, title_emb,
-                mask=title_kv_mask, deterministic=not training,
+                entity_emb,
+                title_emb,
+                mask=title_kv_mask,
+                deterministic=not training,
             )  # (B, E, co_out_dim)
 
         # --- Title self-attention + concat ---
@@ -468,7 +472,7 @@ class PPRec(BaseModel):
 
         if self.activity_gater is not None:
             eta = self.activity_gater(user_vec)[:, None]
-            scores = 2.0 * eta * rel_scores + 2.0 * (1.0 - eta) * pop_scores
+            scores = eta * rel_scores + (1.0 - eta) * pop_scores
         else:
             scores = rel_scores + pop_scores
 

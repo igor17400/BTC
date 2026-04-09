@@ -16,9 +16,19 @@ from flax import nnx
 class PositionalEncoding(nnx.Module):
     """Sinusoidal positional encoding (Flax NNX)."""
 
-    def __init__(self, model_dim: int, dropout_rate: float = 0.1, max_len: int = 5000, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        model_dim: int,
+        dropout_rate: float = 0.1,
+        max_len: int = 5000,
+        *,
+        rngs: nnx.Rngs,
+    ):
         position = np.arange(0, max_len, dtype=np.float32).reshape(-1, 1)
-        div_term = np.exp(np.arange(0, model_dim, 2, dtype=np.float32) * (-np.log(10000.0) / model_dim))
+        div_term = np.exp(
+            np.arange(0, model_dim, 2, dtype=np.float32)
+            * (-np.log(10000.0) / model_dim)
+        )
         pe = np.zeros((1, max_len, model_dim), dtype=np.float32)
         pe[0, :, 0::2] = np.sin(position * div_term)
         pe[0, :, 1::2] = np.cos(position * div_term)
@@ -34,7 +44,16 @@ class PositionalEncoding(nnx.Module):
 class MultiHeadAttentionBlock(nnx.Module):
     """Multi-head attention block with residual connections and layer norm (CROWN)."""
 
-    def __init__(self, dim_in: int, dim_out: int, num_heads: int, use_layer_norm: bool = True, dropout_rate: float = 0.1, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        dim_in: int,
+        dim_out: int,
+        num_heads: int,
+        use_layer_norm: bool = True,
+        dropout_rate: float = 0.1,
+        *,
+        rngs: nnx.Rngs,
+    ):
         self.dim_out = dim_out
         self.num_heads = num_heads
         self.use_layer_norm = use_layer_norm
@@ -52,14 +71,24 @@ class MultiHeadAttentionBlock(nnx.Module):
         Q, K, V = self.fc_q(x), self.fc_k(x), self.fc_v(x)
         batch_size, seq_len, _ = Q.shape
         head_dim = self.dim_out // self.num_heads
-        Q = Q.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(0, 2, 1, 3)
-        K = K.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(0, 2, 1, 3)
-        V = V.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(0, 2, 1, 3)
-        scores = jnp.matmul(Q, K.transpose(0, 1, 3, 2)) / jnp.sqrt(jnp.float32(head_dim))
+        Q = Q.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(
+            0, 2, 1, 3
+        )
+        K = K.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(
+            0, 2, 1, 3
+        )
+        V = V.reshape(batch_size, seq_len, self.num_heads, head_dim).transpose(
+            0, 2, 1, 3
+        )
+        scores = jnp.matmul(Q, K.transpose(0, 1, 3, 2)) / jnp.sqrt(
+            jnp.float32(head_dim)
+        )
         attn_weights = jax.nn.softmax(scores, axis=-1)
         attn_weights = self.dropout(attn_weights, deterministic=det)
         attn_out = jnp.matmul(attn_weights, V)
-        attn_out = attn_out.transpose(0, 2, 1, 3).reshape(batch_size, seq_len, self.dim_out)
+        attn_out = attn_out.transpose(0, 2, 1, 3).reshape(
+            batch_size, seq_len, self.dim_out
+        )
         out = self.fc_o(attn_out)
         out = self.dropout(out, deterministic=det)
         out = out + x
@@ -75,7 +104,17 @@ class MultiHeadAttentionBlock(nnx.Module):
 class GraphSAGELayer(nnx.Module):
     """GraphSAGE layer for the bipartite user-news graph in CROWN."""
 
-    def __init__(self, user_dim: int, news_dim: int, units: int, aggregator: str = "mean", dropout_rate: float = 0.0, normalize: bool = True, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        user_dim: int,
+        news_dim: int,
+        units: int,
+        aggregator: str = "mean",
+        dropout_rate: float = 0.0,
+        normalize: bool = True,
+        *,
+        rngs: nnx.Rngs,
+    ):
         self.units = units
         self.aggregator = aggregator
         self.normalize = normalize
@@ -88,10 +127,14 @@ class GraphSAGELayer(nnx.Module):
         self.b_news = nnx.Param(jnp.zeros((units,)))
         self.dropout = nnx.Dropout(rate=dropout_rate, rngs=rngs)
 
-    def _aggregate(self, adjacency_weights: jax.Array, neighbor_features: jax.Array) -> jax.Array:
+    def _aggregate(
+        self, adjacency_weights: jax.Array, neighbor_features: jax.Array
+    ) -> jax.Array:
         if self.aggregator == "mean":
             neigh_sum = jnp.matmul(adjacency_weights, neighbor_features)
-            degree = jnp.maximum(jnp.sum(adjacency_weights, axis=-1, keepdims=True), 1e-7)
+            degree = jnp.maximum(
+                jnp.sum(adjacency_weights, axis=-1, keepdims=True), 1e-7
+            )
             return neigh_sum / degree
         elif self.aggregator == "sum":
             return jnp.matmul(adjacency_weights, neighbor_features)
@@ -103,7 +146,14 @@ class GraphSAGELayer(nnx.Module):
         else:
             raise ValueError(f"Unknown aggregator: {self.aggregator}")
 
-    def __call__(self, user_features: jax.Array, news_features: jax.Array, adjacency_matrix: jax.Array, *, training: bool = False) -> tuple[jax.Array, jax.Array]:
+    def __call__(
+        self,
+        user_features: jax.Array,
+        news_features: jax.Array,
+        adjacency_matrix: jax.Array,
+        *,
+        training: bool = False,
+    ) -> tuple[jax.Array, jax.Array]:
         det = not training
         num_users = user_features.shape[1]
         user_to_news = adjacency_matrix[:, :num_users, num_users:]
@@ -123,7 +173,9 @@ class GraphSAGELayer(nnx.Module):
         )
         updated_news = self.dropout(updated_news, deterministic=det)
         if self.normalize:
-            u_norm = jnp.sqrt(jnp.sum(jnp.square(updated_users), axis=-1, keepdims=True))
+            u_norm = jnp.sqrt(
+                jnp.sum(jnp.square(updated_users), axis=-1, keepdims=True)
+            )
             updated_users = updated_users / (u_norm + 1e-7)
             n_norm = jnp.sqrt(jnp.sum(jnp.square(updated_news), axis=-1, keepdims=True))
             updated_news = updated_news / (n_norm + 1e-7)
@@ -133,7 +185,19 @@ class GraphSAGELayer(nnx.Module):
 class GraphAttentionLayer(nnx.Module):
     """Graph Attention Network layer for CROWN's bipartite user-news graph."""
 
-    def __init__(self, user_dim: int, news_dim: int, units: int, num_heads: int = 1, dropout_rate: float = 0.0, alpha: float = 0.2, concat_heads: bool = True, use_bias: bool = True, *, rngs: nnx.Rngs):
+    def __init__(
+        self,
+        user_dim: int,
+        news_dim: int,
+        units: int,
+        num_heads: int = 1,
+        dropout_rate: float = 0.0,
+        alpha: float = 0.2,
+        concat_heads: bool = True,
+        use_bias: bool = True,
+        *,
+        rngs: nnx.Rngs,
+    ):
         self.units = units
         self.num_heads = num_heads
         self.alpha = alpha
@@ -143,10 +207,18 @@ class GraphAttentionLayer(nnx.Module):
         if concat_heads:
             assert units % num_heads == 0
         glorot = nnx.initializers.glorot_uniform()
-        self.W_user = nnx.Param(glorot(rngs.params(), (num_heads, user_dim, self.head_dim)))
-        self.W_news = nnx.Param(glorot(rngs.params(), (num_heads, news_dim, self.head_dim)))
-        self.a_user_news = nnx.Param(glorot(rngs.params(), (num_heads, self.head_dim * 2, 1)))
-        self.a_news_user = nnx.Param(glorot(rngs.params(), (num_heads, self.head_dim * 2, 1)))
+        self.W_user = nnx.Param(
+            glorot(rngs.params(), (num_heads, user_dim, self.head_dim))
+        )
+        self.W_news = nnx.Param(
+            glorot(rngs.params(), (num_heads, news_dim, self.head_dim))
+        )
+        self.a_user_news = nnx.Param(
+            glorot(rngs.params(), (num_heads, self.head_dim * 2, 1))
+        )
+        self.a_news_user = nnx.Param(
+            glorot(rngs.params(), (num_heads, self.head_dim * 2, 1))
+        )
         if use_bias:
             out_dim = units if concat_heads else self.head_dim
             self.b_user = nnx.Param(jnp.zeros((out_dim,)))
@@ -155,8 +227,12 @@ class GraphAttentionLayer(nnx.Module):
 
     def _compute_attention(self, queries, keys, attn_vec, adj_mask, *, training):
         B, Nq, Nk = queries.shape[0], queries.shape[2], keys.shape[2]
-        q_exp = jnp.broadcast_to(queries[:, :, :, None, :], (B, self.num_heads, Nq, Nk, self.head_dim))
-        k_exp = jnp.broadcast_to(keys[:, :, None, :, :], (B, self.num_heads, Nq, Nk, self.head_dim))
+        q_exp = jnp.broadcast_to(
+            queries[:, :, :, None, :], (B, self.num_heads, Nq, Nk, self.head_dim)
+        )
+        k_exp = jnp.broadcast_to(
+            keys[:, :, None, :, :], (B, self.num_heads, Nq, Nk, self.head_dim)
+        )
         concat_qk = jnp.concatenate([q_exp, k_exp], axis=-1)
         scores = jnp.squeeze(jnp.matmul(concat_qk, attn_vec[None, :, :, :]), axis=-1)
         scores = jax.nn.leaky_relu(scores, negative_slope=self.alpha)
@@ -164,15 +240,25 @@ class GraphAttentionLayer(nnx.Module):
         coeffs = jax.nn.softmax(scores, axis=-1)
         return self.dropout(coeffs, deterministic=not training)
 
-    def __call__(self, user_features, news_features, adjacency_matrix, *, training=False):
-        B, Nu, Nn = user_features.shape[0], user_features.shape[1], news_features.shape[1]
+    def __call__(
+        self, user_features, news_features, adjacency_matrix, *, training=False
+    ):
+        B, Nu, Nn = (
+            user_features.shape[0],
+            user_features.shape[1],
+            news_features.shape[1],
+        )
         user_to_news = adjacency_matrix[:, :Nu, Nu:]
         news_to_user = adjacency_matrix[:, Nu:, :Nu]
         user_t = jnp.einsum("bud,hdk->bhuk", user_features, self.W_user.value)
         news_t = jnp.einsum("bnd,hdk->bhnk", news_features, self.W_news.value)
-        u2n_attn = self._compute_attention(user_t, news_t, self.a_user_news.value, user_to_news, training=training)
+        u2n_attn = self._compute_attention(
+            user_t, news_t, self.a_user_news.value, user_to_news, training=training
+        )
         user_updates = jnp.einsum("bhun,bhnk->bhuk", u2n_attn, news_t)
-        n2u_attn = self._compute_attention(news_t, user_t, self.a_news_user.value, news_to_user, training=training)
+        n2u_attn = self._compute_attention(
+            news_t, user_t, self.a_news_user.value, news_to_user, training=training
+        )
         news_updates = jnp.einsum("bhnu,bhuk->bhnk", n2u_attn, user_t)
         if self.concat_heads:
             updated_users = user_updates.reshape(B, Nu, self.units)
