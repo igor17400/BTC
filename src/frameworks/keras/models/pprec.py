@@ -112,9 +112,7 @@ class PPRecNewsEncoder(keras.Model):
                 kernel_initializer=keras.initializers.GlorotUniform(),
                 name=f"{name}_entity_proj",
             )
-            self.entity_dropout = layers.Dropout(
-                config.dropout_rate, seed=config.seed
-            )
+            self.entity_dropout = layers.Dropout(config.dropout_rate, seed=config.seed)
             self.entity_attention = AdditiveAttention(
                 query_vec_dim=config.attention_hidden_dim,
                 seed=config.seed,
@@ -188,27 +186,38 @@ class PPRecNewsEncoder(keras.Model):
             category_idx = None
 
         # --- Raw embeddings ---
-        title_emb = self.word_dropout(self.word_embedding(title_tokens), training=training)
+        title_emb = self.word_dropout(
+            self.word_embedding(title_tokens), training=training
+        )
         if has_entity:
             entity_emb = self.entity_embedding(entity_indices)
 
         # --- Bidirectional MHCA on RAW embeddings (paper co1) ---
         if has_entity:
             title_co = self.title_mhca(
-                title_emb, entity_emb, entity_emb,
-                key_mask=entity_mask, value_mask=entity_mask,
+                title_emb,
+                entity_emb,
+                entity_emb,
+                key_mask=entity_mask,
+                value_mask=entity_mask,
                 training=training,
             )
             entity_co = self.entity_mhca(
-                entity_emb, title_emb, title_emb,
-                key_mask=title_mask, value_mask=title_mask,
+                entity_emb,
+                title_emb,
+                title_emb,
+                key_mask=title_mask,
+                value_mask=title_mask,
                 training=training,
             )
 
         # --- Title self-attention + concat with co-attention ---
         title_vecs = self.word_mhsa(
-            title_emb, title_emb, title_emb,
-            key_mask=title_mask, value_mask=title_mask,
+            title_emb,
+            title_emb,
+            title_emb,
+            key_mask=title_mask,
+            value_mask=title_mask,
             training=training,
         )
         if has_entity:
@@ -222,8 +231,11 @@ class PPRecNewsEncoder(keras.Model):
         # --- Entity self-attention + concat with co-attention ---
         if has_entity:
             entity_vecs = self.entity_mhsa(
-                entity_emb, entity_emb, entity_emb,
-                key_mask=entity_mask, value_mask=entity_mask,
+                entity_emb,
+                entity_emb,
+                entity_emb,
+                key_mask=entity_mask,
+                value_mask=entity_mask,
                 training=training,
             )
             entity_vecs = ops.concatenate([entity_vecs, entity_co], axis=-1)
@@ -265,7 +277,6 @@ class PopularityPredictor(keras.Model):
     def __init__(self, config: PPRecConfig, name: str = "popularity_predictor"):
         super().__init__(name=name)
         self.config = config
-        seed = config.seed
 
         # Content scorer: news_dim -> pop_content_dims -> 1
         c1, c2, c3 = config.pop_content_dims

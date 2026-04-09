@@ -18,7 +18,6 @@ from src.core.models.configs import PPRecConfig
 from ..layers import AdditiveAttention, AttentivePoolingQKY
 from .base import BaseModel
 
-
 # ---------------------------------------------------------------------------
 # News Encoder (paper co1 variant with bidirectional cross-attention)
 # ---------------------------------------------------------------------------
@@ -79,9 +78,7 @@ class PPRecNewsEncoder(nn.Module):
                 dropout=config.dropout_rate,
                 batch_first=True,
             )
-            entity_concat_dim = config.entity_embedding_dim + (
-                co_out_dim
-            )
+            entity_concat_dim = config.entity_embedding_dim + (co_out_dim)
             self.entity_proj = nn.Linear(entity_concat_dim, config.news_dim)
             self.entity_dropout = nn.Dropout(config.dropout_rate)
             self.entity_attention = AdditiveAttention(
@@ -101,9 +98,7 @@ class PPRecNewsEncoder(nn.Module):
                 vdim=config.entity_embedding_dim,
                 batch_first=True,
             )
-            self.title_query_proj = nn.Linear(
-                config.embedding_size, co_out_dim
-            )
+            self.title_query_proj = nn.Linear(config.embedding_size, co_out_dim)
             self.entity_mhca = nn.MultiheadAttention(
                 embed_dim=co_out_dim,  # 200, output dim
                 num_heads=config.co_num_heads,
@@ -112,9 +107,7 @@ class PPRecNewsEncoder(nn.Module):
                 vdim=config.embedding_size,
                 batch_first=True,
             )
-            self.entity_query_proj = nn.Linear(
-                config.entity_embedding_dim, co_out_dim
-            )
+            self.entity_query_proj = nn.Linear(config.entity_embedding_dim, co_out_dim)
 
         # --- Category branch ---
         if category_embedding_layer is not None:
@@ -470,9 +463,7 @@ class PPRec(BaseModel):
         # Entity embedding (trainable per paper co1)
         entity_emb = None
         if cfg.use_entity and "entity_embeddings" in pn:
-            entity_emb = nn.Embedding(
-                pn["entity_vocab_size"], cfg.entity_embedding_dim
-            )
+            entity_emb = nn.Embedding(pn["entity_vocab_size"], cfg.entity_embedding_dim)
             entity_emb.weight = nn.Parameter(
                 torch.tensor(pn["entity_embeddings"], dtype=torch.float32)
             )
@@ -480,9 +471,7 @@ class PPRec(BaseModel):
         # Category embedding
         cat_emb = None
         if "num_categories" in pn:
-            cat_emb = nn.Embedding(
-                pn["num_categories"] + 1, cfg.category_embedding_dim
-            )
+            cat_emb = nn.Embedding(pn["num_categories"] + 1, cfg.category_embedding_dim)
 
         self.news_encoder = PPRecNewsEncoder(cfg, word_emb, entity_emb, cat_emb)
         self.bias_news_encoder = PPRecNewsEncoder(
@@ -505,9 +494,7 @@ class PPRec(BaseModel):
         """
         return self.score_training_batch(inputs)
 
-    def score_training_batch(
-        self, inputs: dict[str, torch.Tensor]
-    ) -> torch.Tensor:
+    def score_training_batch(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         hist_features = inputs["hist_tokens"]
         cand_features = inputs["cand_tokens"]
         hist_ctr = inputs.get("hist_ctr")
@@ -519,7 +506,9 @@ class PPRec(BaseModel):
         B, C, F = cand_features.shape
         flat_cand = cand_features.reshape(B * C, F)
         rel_cand_vecs = self.news_encoder(flat_cand, training=True).reshape(B, C, -1)
-        bias_cand_vecs = self.bias_news_encoder(flat_cand, training=True).reshape(B, C, -1)
+        bias_cand_vecs = self.bias_news_encoder(flat_cand, training=True).reshape(
+            B, C, -1
+        )
 
         rel_scores = torch.sum(rel_cand_vecs * user_vec.unsqueeze(1), dim=-1)
 
@@ -537,4 +526,3 @@ class PPRec(BaseModel):
             scores = rel_scores + pop_scores
 
         return scores
-

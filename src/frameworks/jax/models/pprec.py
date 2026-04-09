@@ -18,7 +18,6 @@ from src.core.models.configs import PPRecConfig
 from ..layers import AdditiveAttention, AttentivePoolingQKY
 from .base import BaseModel
 
-
 # ---------------------------------------------------------------------------
 # News Encoder (paper co1 variant with bidirectional cross-attention)
 # ---------------------------------------------------------------------------
@@ -64,9 +63,7 @@ class PPRecNewsEncoder(nnx.Module):
         word_concat_dim = config.embedding_size + (
             co_out_dim if entity_embedding_layer is not None else 0
         )
-        self.word_proj = nnx.Linear(
-            word_concat_dim, config.news_dim, rngs=rngs
-        )
+        self.word_proj = nnx.Linear(word_concat_dim, config.news_dim, rngs=rngs)
         self.word_dropout2 = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
         self.word_attention = AdditiveAttention(
             input_dim=config.news_dim,
@@ -84,9 +81,7 @@ class PPRecNewsEncoder(nnx.Module):
                 rngs=rngs,
             )
             entity_concat_dim = config.entity_embedding_dim + co_out_dim
-            self.entity_proj = nnx.Linear(
-                entity_concat_dim, config.news_dim, rngs=rngs
-            )
+            self.entity_proj = nnx.Linear(entity_concat_dim, config.news_dim, rngs=rngs)
             self.entity_dropout = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
             self.entity_attention = AdditiveAttention(
                 input_dim=config.news_dim,
@@ -96,9 +91,7 @@ class PPRecNewsEncoder(nnx.Module):
 
             # Cross-attention requires Q and K/V to share input dim in Flax NNX,
             # so pre-project both modalities to a common 200-d cross-attention dim.
-            self.title_q_proj = nnx.Linear(
-                config.embedding_size, co_out_dim, rngs=rngs
-            )
+            self.title_q_proj = nnx.Linear(config.embedding_size, co_out_dim, rngs=rngs)
             self.entity_kv_proj = nnx.Linear(
                 config.entity_embedding_dim, co_out_dim, rngs=rngs
             )
@@ -468,7 +461,9 @@ class PPRec(BaseModel):
 
         B, C, F = cand_features.shape
         flat_cand = cand_features.reshape(B * C, F)
-        rel_cand_vecs = self.news_encoder(flat_cand, training=training).reshape(B, C, -1)
+        rel_cand_vecs = self.news_encoder(flat_cand, training=training).reshape(
+            B, C, -1
+        )
         bias_cand_vecs = self.bias_news_encoder(flat_cand, training=training).reshape(
             B, C, -1
         )
