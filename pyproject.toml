@@ -66,6 +66,13 @@ all-cuda = [
 # Hyperparameter search
 search = ["optuna>=3.6.0", "optuna-dashboard>=0.15.0"]
 
+# VewsX visualization platform
+viz = [
+  "streamlit>=1.45.0",
+  "scipy>=1.11.0",
+  "wordcloud>=1.9.0",
+]
+
 # Development tools — framework-agnostic. Compose with any framework extra:
 #   uv sync --extra dev --extra all        # CPU dev environment
 #   uv sync --extra dev --extra all-cuda   # GPU dev environment
