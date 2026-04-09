@@ -57,6 +57,11 @@ metrics:
   params: {}
   _target_: src.core.metrics.functions.NewsRecommenderMetrics
 
+# Multi-seed evaluation (for paper-ready results with mean ± std)
+multi_seed:
+  enabled: false
+  seeds: [42, 123, 456, 789, 1024]
+
 # Cache configuration
 cache:
   root_dir: .cache

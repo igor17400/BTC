@@ -717,6 +717,18 @@ class NewsDatasetBase(BaseNewsDataset):
         logger.info("Generating dataset summary...")
         self.generate_dataset_summary()
 
+        # Generate VewsX visualization stats
+        from src.core.data.processing.vewsx_stats import generate_vewsx_stats
+
+        news_cat_map = {}
+        if "news_ids_original_strings" in self.processed_news:
+            from src.core.data.processing.news import read_all_news
+
+            all_news_df = read_all_news(self.dataset_path)
+            if not all_news_df.empty:
+                news_cat_map = dict(zip(all_news_df["id"], all_news_df["category"]))
+        generate_vewsx_stats(self.dataset_path, news_cat_map)
+
         logger.info("Preprocessing complete!")
 
     def get_train_val_data(
