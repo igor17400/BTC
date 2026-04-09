@@ -98,8 +98,8 @@ class NewsDatasetBase(BaseNewsDataset):
         process_subcategory: bool = True,
         process_user_id: bool = False,
         process_entities: bool = False,
-        popularity_ctr_method: str = "age_bucketed",
-        max_entities: int = 1000,
+        popularity: DictConfig | dict | None = None,
+        max_entities: int = 5,
         max_relations: int = 500,
         download_if_missing: bool = True,
         id_prefix: str = "N",
@@ -148,7 +148,11 @@ class NewsDatasetBase(BaseNewsDataset):
         self.process_subcategory = process_subcategory
         self.process_user_id = process_user_id
         self.process_entities = process_entities
-        self.popularity_ctr_method = popularity_ctr_method
+        _pop = popularity or {}
+        self.popularity_ctr_method = _pop.get("ctr_method", "age_bucketed")
+        self.popularity_bucket_hours = int(_pop.get("bucket_hours", 2))
+        self.popularity_max_buckets = int(_pop.get("max_buckets", 1500))
+        self.popularity_ctr_smoothing = float(_pop.get("ctr_smoothing", 0.01))
 
         self.float_dtype = "float32"
 
@@ -526,6 +530,9 @@ class NewsDatasetBase(BaseNewsDataset):
             "process_entities": self.process_entities,
             "max_entities": self.max_entities,
             "popularity_ctr_method": self.popularity_ctr_method,
+            "popularity_bucket_hours": self.popularity_bucket_hours,
+            "popularity_max_buckets": self.popularity_max_buckets,
+            "popularity_ctr_smoothing": self.popularity_ctr_smoothing,
             "random_train_samples": self.random_train_samples,
             "validation_split_strategy": self.validation_split_strategy,
             "validation_split_percentage": self.validation_split_percentage,
@@ -692,6 +699,9 @@ class NewsDatasetBase(BaseNewsDataset):
             "process_entities": self.process_entities,
             "max_entities": self.max_entities,
             "popularity_ctr_method": self.popularity_ctr_method,
+            "popularity_bucket_hours": self.popularity_bucket_hours,
+            "popularity_max_buckets": self.popularity_max_buckets,
+            "popularity_ctr_smoothing": self.popularity_ctr_smoothing,
             "random_train_samples": self.random_train_samples,
             "validation_split_strategy": self.validation_split_strategy,
             "validation_split_percentage": self.validation_split_percentage,

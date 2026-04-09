@@ -171,14 +171,14 @@ def process_behaviors(
     news_publish_time = processed_news.get("news_publish_time")
     popularity_method = processed_news.get("popularity_ctr_method", "age_bucketed")
     popularity_dataset_start = processed_news.get("popularity_dataset_start")
-    BUCKET_HOURS = 2
-    MAX_RECENCY = 1499  # NUM_BUCKETS - 1 in PPRecConfig
+    bucket_hours = int(processed_news.get("popularity_bucket_hours", 2))
+    max_recency = int(processed_news.get("popularity_max_buckets", 1500)) - 1
 
     def _compute_recency_and_ctr(news_int_idx: int, impression_time):
         """Return (recency_bucket, ctr_val) for one news article.
 
-        - ``recency_bucket`` is ALWAYS computed as age in 2-hour units
-          (used by the model's recency embedding).
+        - ``recency_bucket`` is ALWAYS computed as age in ``bucket_hours``
+          units (used by the model's recency embedding).
         - ``ctr_val`` is computed via the configured popularity method:
             * ``age_bucketed``: bucketed_ctr[news, age_bucket]
             * ``wall_clock``  : bucketed_ctr[news, wall_bucket - 1] (causal)
@@ -196,17 +196,17 @@ def process_behaviors(
         # Recency = age (always)
         age_delta = pd.Timestamp(impression_time) - pd.Timestamp(pub)
         age_hours = age_delta.total_seconds() / 3600.0
-        recency_bucket = max(0, min(int(age_hours / BUCKET_HOURS), MAX_RECENCY))
+        recency_bucket = max(0, min(int(age_hours / bucket_hours), max_recency))
 
         # CTR lookup depends on the popularity method
         if popularity_method == "wall_clock" and popularity_dataset_start is not None:
-            wall_delta = (
-                pd.Timestamp(impression_time) - pd.Timestamp(popularity_dataset_start)
+            wall_delta = pd.Timestamp(impression_time) - pd.Timestamp(
+                popularity_dataset_start
             )
             wall_hours = wall_delta.total_seconds() / 3600.0
-            wall_bucket = int(wall_hours / BUCKET_HOURS)
+            wall_bucket = int(wall_hours / bucket_hours)
             # Causal: use the previous bucket (strictly before current time)
-            ctr_bucket = max(0, min(wall_bucket - 1, MAX_RECENCY))
+            ctr_bucket = max(0, min(wall_bucket - 1, max_recency))
             ctr_val = float(news_ctr_bucketed[news_row, ctr_bucket])
         elif popularity_method == "aggregate":
             ctr_val = float(news_ctr_values.get(news_int_idx, 0.0))

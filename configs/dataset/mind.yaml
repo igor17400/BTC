@@ -43,7 +43,7 @@ max_impressions_length: 5
 
 # Knowledge graph configuration
 use_knowledge_graph: false # Enable/disable knowledge graph processing
-max_entities: 100
+max_entities: 5 # Max entities per news article (overridden by spec when available)
 max_relations: 50
 
 # Pass sampling configuration directly
@@ -57,6 +57,13 @@ process_subcategory: false
 process_user_id: false
 process_entities: false
 
-# CTR computation method for popularity features (PP-Rec).
-# Options: aggregate, age_bucketed, wall_clock
-popularity_ctr_method: age_bucketed
+# Popularity feature configuration (PP-Rec)
+popularity:
+  # CTR computation method. Options: aggregate, age_bucketed, wall_clock
+  ctr_method: wall_clock
+  # Width of each time bucket in hours
+  bucket_hours: 2
+  # Maximum number of time buckets (should match recency_embedding_bins in spec)
+  max_buckets: 1500
+  # Laplace smoothing constant for CTR computation
+  ctr_smoothing: 0.01

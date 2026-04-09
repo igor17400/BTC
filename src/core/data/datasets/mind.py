@@ -46,6 +46,10 @@ class MINDDataset(NewsDatasetBase):
             self.processed_news["news_ctr_bucketed"] = news_ctr_bucketed
             self.processed_news["news_publish_time"] = publish_time_arr
             self.processed_news["popularity_ctr_method"] = method
+            self.processed_news["popularity_bucket_hours"] = (
+                self.popularity_bucket_hours
+            )
+            self.processed_news["popularity_max_buckets"] = self.popularity_max_buckets
             if dataset_start is not None:
                 self.processed_news["popularity_dataset_start"] = dataset_start
             return
@@ -70,8 +74,7 @@ class MINDDataset(NewsDatasetBase):
             df_val = pd.read_csv(valid_path, sep="\t", header=None, names=col_names)
             df = pd.concat([df, df_val], ignore_index=True)
             logger.info(
-                f"wall_clock: combined train + valid behaviors "
-                f"({len(df):,} rows total)"
+                f"wall_clock: combined train + valid behaviors ({len(df):,} rows total)"
             )
 
         news_ids_str = self.processed_news["news_ids_original_strings"]
@@ -82,9 +85,10 @@ class MINDDataset(NewsDatasetBase):
                 behaviors_df=df,
                 news_str_to_idx=news_str_to_idx,
                 num_news=len(news_ids_str),
-                bucket_hours=2,
-                max_buckets=1500,
+                bucket_hours=self.popularity_bucket_hours,
+                max_buckets=self.popularity_max_buckets,
                 method=method,
+                ctr_smoothing=self.popularity_ctr_smoothing,
             )
         )
 
@@ -92,6 +96,8 @@ class MINDDataset(NewsDatasetBase):
         self.processed_news["news_ctr_bucketed"] = news_ctr_bucketed
         self.processed_news["news_publish_time"] = publish_time_arr
         self.processed_news["popularity_ctr_method"] = method
+        self.processed_news["popularity_bucket_hours"] = self.popularity_bucket_hours
+        self.processed_news["popularity_max_buckets"] = self.popularity_max_buckets
         if method == "wall_clock":
             self.processed_news["popularity_dataset_start"] = dataset_start
 
@@ -134,9 +140,9 @@ class MINDDataset(NewsDatasetBase):
         process_subcategory: bool = True,
         process_user_id: bool = False,
         process_entities: bool = False,
-        max_entities: int = 1000,
+        max_entities: int = 5,
         max_relations: int = 500,
-        popularity_ctr_method: str = "age_bucketed",
+        popularity: DictConfig | dict | None = None,
         **kwargs,
     ):
         super().__init__(
@@ -170,7 +176,7 @@ class MINDDataset(NewsDatasetBase):
             process_user_id=process_user_id,
             process_entities=process_entities,
             max_entities=max_entities,
-            popularity_ctr_method=popularity_ctr_method,
+            popularity=popularity,
             max_relations=max_relations,
             download_if_missing=True,
             id_prefix="N",  # MIND uses "N" prefix for news IDs

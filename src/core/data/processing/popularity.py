@@ -98,6 +98,7 @@ def compute_news_ctr_and_publish_times(
     max_buckets: int = 1500,
     method: str = "age_bucketed",
     dataset_start: pd.Timestamp | None = None,
+    ctr_smoothing: float = 0.01,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, pd.Timestamp]:
     """Compute aggregate CTR, publish times, and time-bucketed CTR.
 
@@ -127,6 +128,8 @@ def compute_news_ctr_and_publish_times(
             See module docstring for the differences.
         dataset_start: Wall-clock reference for bucket 0 (``wall_clock``
             method only). Defaults to ``min(timestamps)`` if ``None``.
+        ctr_smoothing: Laplace smoothing constant added to impression
+            counts to avoid division by zero (default 0.01).
 
     Returns:
         ``(news_ctr, news_publish_time, news_ctr_bucketed, dataset_start)``.
@@ -230,13 +233,13 @@ def compute_news_ctr_and_publish_times(
                 if clicked:
                     bucket_clicks[idx, bucket] += 1.0
 
-    news_ctr = click_counts / (impression_counts + 0.01)
+    news_ctr = click_counts / (impression_counts + ctr_smoothing)
 
     if method == "aggregate":
         # Broadcast aggregate CTR to all buckets so the model interface is uniform.
         news_ctr_bucketed = np.tile(news_ctr[:, None], (1, max_buckets))
     else:
-        news_ctr_bucketed = bucket_clicks / (bucket_imps + 0.01)
+        news_ctr_bucketed = bucket_clicks / (bucket_imps + ctr_smoothing)
 
     active_news = int((impression_counts > 0).sum())
     max_observed_bucket = (
@@ -307,7 +310,7 @@ def save_popularity_cache(
 def load_popularity_cache(
     cache_dir: Path,
     method: str = "age_bucketed",
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, "pd.Timestamp | None"] | None:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, pd.Timestamp | None] | None:
     """Load cached popularity arrays if present, else return ``None``.
 
     Returns ``(news_ctr, publish_time_arr, news_ctr_bucketed, dataset_start)``.
@@ -324,7 +327,7 @@ def load_popularity_cache(
     with open(publish_path, "rb") as f:
         publish_time_arr = pickle.load(f)
     dataset_start_path = cache_dir / f"news_dataset_start_{suffix}.pkl"
-    dataset_start: "pd.Timestamp | None" = None
+    dataset_start: pd.Timestamp | None = None
     if dataset_start_path.exists():
         with open(dataset_start_path, "rb") as f:
             dataset_start = pickle.load(f)

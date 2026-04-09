@@ -13,6 +13,20 @@ embedding_size: 300
 
 max_entities: 5
 
+# Synthetic data generation sizes
+vocab_size: 500
+num_categories: 10
+num_subcategories: 20
+num_entities: 50
+num_news: 100
+num_users: 30
+num_train: 80
+num_val: 20
+
+# Popularity feature sizes (should match spec defaults)
+popularity_embedding_bins: 200
+recency_embedding_bins: 1500
+
 # Processing flags (overridden by experiment configs via spec bridge)
 process_title: false
 process_abstract: false

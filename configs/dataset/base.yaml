@@ -2,3 +2,10 @@
 
 # Common dataset parameters
 seed: 42
+
+# Popularity feature defaults (used by PP-Rec)
+popularity:
+  ctr_method: wall_clock # Options: aggregate, age_bucketed, wall_clock
+  bucket_hours: 2 # Width of each time bucket in hours
+  max_buckets: 1500 # Maximum number of time buckets
+  ctr_smoothing: 0.01 # Laplace smoothing constant for CTR computation
