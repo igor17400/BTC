@@ -654,14 +654,6 @@ class PPRec(BaseModel):
         if cfg.use_activity_gate:
             self.activity_gater = ActivityGater(cfg)
 
-        # TimeDistributed for candidates
-        self._td_rel = layers.TimeDistributed(
-            self.news_encoder, name="td_rel_candidates"
-        )
-        self._td_bias = layers.TimeDistributed(
-            self.bias_news_encoder, name="td_bias_candidates"
-        )
-
         super().build(input_shape)
 
     def call(self, inputs, training=None):
@@ -699,19 +691,26 @@ class PPRec(BaseModel):
         else:
             user_vec = self.user_encoder(hist_features, training=training)
 
-        # Candidate vectors (relevance)
-        rel_cand_vecs = self._td_rel(cand_features, training=training)
+        # Candidate vectors via reshape trick (replaces TimeDistributed)
+        B = ops.shape(cand_features)[0]
+        C = ops.shape(cand_features)[1]
+        F = ops.shape(cand_features)[2]
+        flat_cand = ops.reshape(cand_features, (B * C, F))
+
+        rel_cand_vecs = ops.reshape(
+            self.news_encoder(flat_cand, training=training),
+            (B, C, -1),
+        )
+        bias_cand_vecs = ops.reshape(
+            self.bias_news_encoder(flat_cand, training=training),
+            (B, C, -1),
+        )
 
         # Relevance scores (dot product)
         user_expanded = ops.expand_dims(user_vec, axis=1)
         rel_scores = ops.sum(rel_cand_vecs * user_expanded, axis=-1)
 
-        # Bias candidate vectors (popularity)
-        bias_cand_vecs = self._td_bias(cand_features, training=training)
-
         # Popularity scores per candidate
-        B = ops.shape(cand_features)[0]
-        C = ops.shape(cand_features)[1]
         bias_flat = ops.reshape(bias_cand_vecs, (B * C, self.config.news_dim))
 
         recency_flat = None

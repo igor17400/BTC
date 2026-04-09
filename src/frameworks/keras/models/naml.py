@@ -461,54 +461,6 @@ class UserEncoder(keras.Model):
         return user_representation
 
 
-class NAMLScorer(keras.Model):
-    """Scoring component for NAML.
-
-    Handles different scoring scenarios: training (multiple candidates with softmax),
-    single candidate scoring (with sigmoid), and multiple candidate scoring (raw scores).
-    """
-
-    def __init__(
-        self,
-        config: NAMLConfig,
-        news_encoder: NewsEncoder,
-        user_encoder: UserEncoder,
-        name: str = "naml_scorer",
-    ):
-        super().__init__(name=name)
-        self.config = config
-        self.news_encoder = news_encoder
-        self.user_encoder = user_encoder
-
-        # TimeDistributed wrapper for candidate processing during training.
-        self.candidate_encoder_train = layers.TimeDistributed(
-            self.news_encoder, name="td_news_encoder_candidates"
-        )
-
-    def build(self, input_shape):
-        super().build(input_shape)
-
-    def score_training_batch(self, history_inputs, candidate_inputs, training=None):
-        """Score training batch (raw logits — loss handles softmax).
-
-        Args:
-            history_inputs: Concatenated history tensor
-                ``(batch_size, history_length, feature_size)``
-            candidate_inputs: Concatenated candidates tensor
-                ``(batch_size, num_candidates, feature_size)``
-            training: Whether in training mode.
-
-        Returns:
-            Raw logit scores ``(batch_size, num_candidates)``.
-        """
-        user_repr = self.user_encoder(history_inputs, training=training)
-        candidate_reprs = self.candidate_encoder_train(
-            candidate_inputs, training=training
-        )
-        user_repr_expanded = ops.expand_dims(user_repr, axis=1)
-        return ops.sum(candidate_reprs * user_repr_expanded, axis=-1)
-
-
 class NAML(BaseModel):
     """Neural Attentive Multi-View Learning (NAML) model for news recommendation.
 
@@ -561,7 +513,6 @@ class NAML(BaseModel):
         self.embedding_layer = None
         self.news_encoder = None
         self.user_encoder = None
-        self.scorer = None
 
         # Build the model immediately with dummy input shape
         dummy_input_shape = {
@@ -627,13 +578,10 @@ class NAML(BaseModel):
         # Create user encoder
         self.user_encoder = UserEncoder(self.config, self.news_encoder)
 
-        # Create scorer
-        self.scorer = NAMLScorer(self.config, self.news_encoder, self.user_encoder)
-
         super().build(input_shape)
 
     def call(self, inputs, training=None):
-        """Forward pass for training. Returns raw logits (B, C).
+        """Forward pass for training. Returns raw logits ``(B, C)``.
 
         Inference uses ``self.news_encoder`` and ``self.user_encoder``
         directly via the shared evaluator (see
@@ -649,7 +597,9 @@ class NAML(BaseModel):
             ],
             axis=-1,
         )
-        # Concatenate candidate inputs
+        user_repr = self.user_encoder(history_concat, training=training)
+
+        # Concatenate candidate inputs and encode via reshape trick
         candidate_concat = ops.concatenate(
             [
                 inputs["cand_tokens"],
@@ -659,9 +609,16 @@ class NAML(BaseModel):
             ],
             axis=-1,
         )
-        return self.scorer.score_training_batch(
-            history_concat, candidate_concat, training=training
+        B = ops.shape(candidate_concat)[0]
+        C = ops.shape(candidate_concat)[1]
+        F = ops.shape(candidate_concat)[2]
+        flat_cand = ops.reshape(candidate_concat, (B * C, F))
+        cand_repr = ops.reshape(
+            self.news_encoder(flat_cand, training=training), (B, C, -1)
         )
+
+        user_expanded = ops.expand_dims(user_repr, axis=1)
+        return ops.sum(cand_repr * user_expanded, axis=-1)
 
     def get_config(self):
         """Returns the configuration of the NAML model for serialization."""

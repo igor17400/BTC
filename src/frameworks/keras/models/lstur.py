@@ -417,60 +417,6 @@ class UserEncoder(keras.Model):
         return user_present
 
 
-class LSTURScorer(keras.Model):
-    """Scoring component for LSTUR.
-
-    Handles different scoring scenarios: training (multiple candidates with softmax),
-    single candidate scoring (with sigmoid), and multiple candidate scoring (raw scores).
-    """
-
-    def __init__(
-        self,
-        config: LSTURConfig,
-        news_encoder: NewsEncoder,
-        user_encoder: UserEncoder,
-        name: str = "lstur_scorer",
-    ):
-        super().__init__(name=name)
-        self.config = config
-        self.news_encoder = news_encoder
-        self.user_encoder = user_encoder
-
-        # TimeDistributed wrapper for candidate processing during training.
-        self.candidate_encoder_train = layers.TimeDistributed(
-            self.news_encoder, name="td_news_encoder_candidates"
-        )
-
-    def build(self, input_shape):
-        super().build(input_shape)
-
-    def score_training_batch(
-        self, history_inputs, user_indices, candidate_inputs, training=None
-    ):
-        """Score training batch (raw logits — loss handles softmax).
-
-        Args:
-            history_inputs: History tensor
-                ``(batch_size, history_length, title_length)``
-            user_indices: User indices ``(batch_size, 1)``
-            candidate_inputs: Candidates tensor
-                ``(batch_size, num_candidates, title_length)``
-            training: Whether in training mode.
-
-        Returns:
-            Raw logit scores ``(batch_size, num_candidates)``.
-        """
-        user_repr = self.user_encoder(
-            [history_inputs, user_indices], training=training
-        )
-        candidate_reprs = self.candidate_encoder_train(
-            candidate_inputs, training=training
-        )
-        return layers.Dot(axes=-1, name="dot_product_train")(
-            [candidate_reprs, user_repr]
-        )
-
-
 class LSTUR(BaseModel):
     """Neural News Recommendation with Long- and Short-term User Representations (LSTUR) model.
 
@@ -527,7 +473,6 @@ class LSTUR(BaseModel):
         self.embedding_layer = None
         self.news_encoder = None
         self.user_encoder = None
-        self.scorer = None
 
         # Build the model immediately with dummy input shape
         dummy_input_shape = {
@@ -584,12 +529,11 @@ class LSTUR(BaseModel):
             subcategory_encoder=subcategory_encoder,
         )
         self.user_encoder = UserEncoder(self.config, self.news_encoder, self.num_users)
-        self.scorer = LSTURScorer(self.config, self.news_encoder, self.user_encoder)
 
         super().build(input_shape)
 
     def call(self, inputs, training=None):
-        """Forward pass for training. Returns raw logits (B, C).
+        """Forward pass for training. Returns raw logits ``(B, C)``.
 
         Inference uses ``self.news_encoder`` and ``self.user_encoder``
         directly via the shared evaluator (see
@@ -612,9 +556,20 @@ class LSTUR(BaseModel):
                 [candidate_tokens, cand_category, cand_subcategory], axis=-1
             )
 
-        return self.scorer.score_training_batch(
-            history_tokens, user_ids, candidate_tokens, training=training
+        user_repr = self.user_encoder(
+            [history_tokens, user_ids], training=training
         )
+
+        B = ops.shape(candidate_tokens)[0]
+        C = ops.shape(candidate_tokens)[1]
+        T = ops.shape(candidate_tokens)[2]
+        flat_cand = ops.reshape(candidate_tokens, (B * C, T))
+        cand_repr = ops.reshape(
+            self.news_encoder(flat_cand, training=training), (B, C, -1)
+        )
+
+        user_expanded = ops.expand_dims(user_repr, axis=1)
+        return ops.sum(cand_repr * user_expanded, axis=-1)
 
     def get_config(self):
         """Returns the configuration of the LSTUR model for serialization."""

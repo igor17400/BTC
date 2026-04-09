@@ -171,51 +171,6 @@ class UserEncoder(keras.Model):
         return user_representation
 
 
-class NRMSScorer(keras.Model):
-    """Scoring component for NRMS.
-
-    Handles different scoring scenarios: training (multiple candidates with softmax),
-    single candidate scoring (with sigmoid), and multiple candidate scoring (raw scores).
-    """
-
-    def __init__(
-        self,
-        config: NRMSConfig,
-        news_encoder: NewsEncoder,
-        user_encoder: UserEncoder,
-        name: str = "nrms_scorer",
-    ):
-        super().__init__(name=name)
-        self.config = config
-        self.news_encoder = news_encoder
-        self.user_encoder = user_encoder
-
-        # Store TimeDistributed layers for candidate processing
-        self.candidate_encoder_train = layers.TimeDistributed(
-            self.news_encoder, name="td_news_encoder_candidates"
-        )
-
-    def build(self, input_shape):
-        super().build(input_shape)
-
-    def score_training_batch(self, history_tokens, candidate_tokens, training=None):
-        """Score a training batch (raw logits — loss handles softmax)."""
-        user_repr = self.user_encoder(history_tokens, training=training)
-
-        # Process candidates using stored TimeDistributed layer
-        candidate_repr = self.candidate_encoder_train(
-            candidate_tokens, training=training
-        )
-
-        # Calculate scores using dot product (raw logits)
-        scores = layers.Dot(axes=-1, name="dot_product_train")(
-            [candidate_repr, user_repr]
-        )
-
-        return scores
-
-
-
 class NRMS(BaseModel):
     """Neural News Recommendation with Multi-Head Self-Attention (NRMS) model.
 
@@ -259,7 +214,6 @@ class NRMS(BaseModel):
         self.embedding_layer = None
         self.news_encoder = None
         self.user_encoder = None
-        self.scorer = None
 
         # Build the model immediately with dummy input shape
         dummy_input_shape = {
@@ -292,20 +246,29 @@ class NRMS(BaseModel):
         # Create component encoders
         self.news_encoder = NewsEncoder(self.config, self.embedding_layer)
         self.user_encoder = UserEncoder(self.config, self.news_encoder)
-        self.scorer = NRMSScorer(self.config, self.news_encoder, self.user_encoder)
 
         super().build(input_shape)
 
     def call(self, inputs, training=None):
-        """Forward pass for training. Returns raw logits (B, C).
+        """Forward pass for training. Returns raw logits ``(B, C)``.
 
         Inference uses ``self.news_encoder`` and ``self.user_encoder``
         directly via the shared evaluator (see
         :mod:`src.core.models.evaluation`), not this method.
         """
-        return self.scorer.score_training_batch(
-            inputs["hist_tokens"], inputs["cand_tokens"], training=training
+        user_repr = self.user_encoder(inputs["hist_tokens"], training=training)
+
+        cand = inputs["cand_tokens"]
+        B = ops.shape(cand)[0]
+        C = ops.shape(cand)[1]
+        T = ops.shape(cand)[2]
+        flat_cand = ops.reshape(cand, (B * C, T))
+        cand_repr = ops.reshape(
+            self.news_encoder(flat_cand, training=training), (B, C, -1)
         )
+
+        user_expanded = ops.expand_dims(user_repr, axis=1)
+        return ops.sum(cand_repr * user_expanded, axis=-1)
 
     def get_config(self):
         """Returns the configuration of the NRMS model for serialization."""
