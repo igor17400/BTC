@@ -42,11 +42,6 @@ class NewsEncoder(nn.Module):
         Returns:
             (batch, embedding_size) news representations.
         """
-        if not training:
-            self.eval()
-        else:
-            self.train()
-
         # Word embedding + dropout
         embedded = self.embedding_layer(inputs)  # (B, T, E)
         y = self.dropout1(embedded)
@@ -155,11 +150,11 @@ class NRMS(BaseModel):
         self,
         processed_news: dict[str, Any],
         config: NRMSConfig | None = None,
-        **kwargs,
+        **config_overrides,
     ):
         super().__init__()
         if config is None:
-            config = NRMSConfig(**kwargs)
+            config = NRMSConfig(**config_overrides)
         self.config = config
         self.processed_news = processed_news
         self.process_user_id = config.process_user_id

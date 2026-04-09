@@ -166,11 +166,6 @@ class PPRecNewsEncoder(nn.Module):
         Returns:
             ``(batch, news_dim)`` news representation.
         """
-        if training:
-            self.train()
-        else:
-            self.eval()
-
         offset = 0
         title_len = self.config.max_title_length
 
@@ -449,11 +444,11 @@ class PPRec(BaseModel):
         self,
         processed_news: dict[str, Any],
         config: PPRecConfig | None = None,
-        **kwargs,
+        **config_overrides,
     ):
         super().__init__()
         if config is None:
-            config = PPRecConfig(**kwargs)
+            config = PPRecConfig(**config_overrides)
         self.config = config
         self.processed_news = processed_news
         self.process_user_id = config.process_user_id

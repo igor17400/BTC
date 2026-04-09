@@ -360,7 +360,7 @@ class NAML(BaseModel):
     # ---- Helpers to build concatenated inputs ---------------------------
 
     @staticmethod
-    def concatenate_features(inputs: dict[str, jax.Array], prefix: str) -> jax.Array:
+    def _concat_features(inputs: dict[str, jax.Array], prefix: str) -> jax.Array:
         """Build a single concatenated tensor from separate feature arrays.
 
         Expected keys: ``{prefix}_tokens``, ``{prefix}_abstract_tokens``,
@@ -394,6 +394,6 @@ class NAML(BaseModel):
         directly via the shared evaluator (see
         :mod:`src.core.models.evaluation`), not this method.
         """
-        hist_concat = self.concatenate_features(inputs, "hist")
-        cand_concat = self.concatenate_features(inputs, "cand")
+        hist_concat = self._concat_features(inputs, "hist")
+        cand_concat = self._concat_features(inputs, "cand")
         return self.score_training_batch(hist_concat, cand_concat, training=training)

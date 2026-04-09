@@ -16,7 +16,7 @@ from .base import BaseModel
 # ------------------------------------------------------------------
 
 
-class LSTURCategoryEncoder(nn.Module):
+class CategoryEncoder(nn.Module):
     """Simple embedding for category IDs (LSTUR-style, no projection)."""
 
     def __init__(self, config: LSTURConfig, num_categories: int):
@@ -28,7 +28,7 @@ class LSTURCategoryEncoder(nn.Module):
         return embedded.squeeze(1)  # (B, dim)
 
 
-class LSTURSubcategoryEncoder(nn.Module):
+class SubcategoryEncoder(nn.Module):
     """Simple embedding for subcategory IDs."""
 
     def __init__(self, config: LSTURConfig, num_subcategories: int):
@@ -49,8 +49,8 @@ class NewsEncoder(nn.Module):
         self,
         config: LSTURConfig,
         embedding_layer: nn.Embedding,
-        category_encoder: LSTURCategoryEncoder | None = None,
-        subcategory_encoder: LSTURSubcategoryEncoder | None = None,
+        category_encoder: CategoryEncoder | None = None,
+        subcategory_encoder: SubcategoryEncoder | None = None,
     ):
         super().__init__()
         self.config = config
@@ -240,11 +240,11 @@ class LSTUR(BaseModel):
         processed_news: dict[str, Any],
         num_users: int,
         config: LSTURConfig | None = None,
-        **kwargs,
+        **config_overrides,
     ):
         super().__init__()
         if config is None:
-            config = LSTURConfig(**kwargs)
+            config = LSTURConfig(**config_overrides)
         self.config = config
         self.processed_news = processed_news
         self.num_users = num_users
@@ -262,11 +262,11 @@ class LSTUR(BaseModel):
         category_encoder = None
         subcategory_encoder = None
         if config.use_category:
-            category_encoder = LSTURCategoryEncoder(
+            category_encoder = CategoryEncoder(
                 config, processed_news["num_categories"]
             )
         if config.use_subcategory:
-            subcategory_encoder = LSTURSubcategoryEncoder(
+            subcategory_encoder = SubcategoryEncoder(
                 config, processed_news["num_subcategories"]
             )
 
@@ -290,11 +290,11 @@ class LSTUR(BaseModel):
         directly via the shared evaluator (see
         :mod:`src.core.models.evaluation`), not this method.
         """
-        return self._score_training(inputs, training)
+        return self.score_training_batch(inputs, training)
 
     # ----- helpers --------------------------------------------------------
 
-    def _maybe_concat_cat(
+    def _maybe_concat_category(
         self, tokens: torch.Tensor, inputs: dict, cat_key: str, subcat_key: str
     ) -> torch.Tensor:
         """Optionally concatenate category/subcategory to token tensor."""
@@ -311,13 +311,13 @@ class LSTUR(BaseModel):
             return torch.cat(parts, dim=-1)
         return tokens
 
-    def _score_training(
+    def score_training_batch(
         self, inputs: dict[str, torch.Tensor], training: bool
     ) -> torch.Tensor:
-        history_tokens = self._maybe_concat_cat(
+        history_tokens = self._maybe_concat_category(
             inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
         )
-        candidate_tokens = self._maybe_concat_cat(
+        candidate_tokens = self._maybe_concat_category(
             inputs["cand_tokens"], inputs, "cand_category", "cand_subcategory"
         )
         user_ids = inputs.get("user_ids", inputs.get("user_indices"))

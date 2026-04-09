@@ -250,7 +250,11 @@ class NRMS(BaseModel):
         super().build(input_shape)
 
     def call(self, inputs, training=None):
-        """Forward pass for training. Returns raw logits ``(B, C)``.
+        """Thin entry point — delegates to :meth:`score_training_batch`."""
+        return self.score_training_batch(inputs, training=training)
+
+    def score_training_batch(self, inputs, training=None):
+        """Score a training batch. Returns raw logits ``(B, C)``.
 
         Inference uses ``self.news_encoder`` and ``self.user_encoder``
         directly via the shared evaluator (see

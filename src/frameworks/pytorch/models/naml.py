@@ -259,11 +259,11 @@ class NAML(BaseModel):
         self,
         processed_news: dict[str, Any],
         config: NAMLConfig | None = None,
-        **kwargs,
+        **config_overrides,
     ):
         super().__init__()
         if config is None:
-            config = NAMLConfig(**kwargs)
+            config = NAMLConfig(**config_overrides)
         self.config = config
         self.processed_news = processed_news
         self.process_user_id = config.process_user_id
@@ -307,7 +307,7 @@ class NAML(BaseModel):
         directly via the shared evaluator (see
         :mod:`src.core.models.evaluation`), not this method.
         """
-        return self._score_training(inputs)
+        return self.score_training_batch(inputs)
 
     # ----- helpers --------------------------------------------------------
 
@@ -334,7 +334,7 @@ class NAML(BaseModel):
 
         return torch.cat(parts, dim=-1)
 
-    def _score_training(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+    def score_training_batch(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
         hist_concat = self._concat_features(inputs, "hist")
         cand_concat = self._concat_features(inputs, "cand")
 
