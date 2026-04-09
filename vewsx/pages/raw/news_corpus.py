@@ -238,6 +238,13 @@ with tab_article:
 
     article_stats = _compute_article_stats(dataset["path"])
 
+    # Corpus-wide averages (computed once on full unfiltered data)
+    corpus_avg_ctr = article_stats["ctr"].mean() if not article_stats.empty else 0
+    corpus_avg_shown = article_stats["shown"].mean() if not article_stats.empty else 0
+    corpus_avg_history = (
+        article_stats["in_history"].mean() if not article_stats.empty else 0
+    )
+
     # Merge with news metadata
     if not article_stats.empty:
         article_stats = article_stats.merge(
@@ -395,24 +402,21 @@ with tab_article:
                 # Comparison vs corpus
                 st.markdown("---")
                 st.caption("Compared to corpus average")
-                avg_ctr = article_stats["ctr"].mean()
-                avg_shown = article_stats["shown"].mean()
-                avg_history = article_stats["in_history"].mean()
                 col1, col2, col3 = st.columns(3)
                 col1.metric(
                     "CTR vs Avg",
                     f"{r['ctr']:.4f}",
-                    delta=f"{r['ctr'] - avg_ctr:+.4f}",
+                    delta=f"{r['ctr'] - corpus_avg_ctr:+.4f}",
                 )
                 col2.metric(
                     "Shown vs Avg",
                     int(r["shown"]),
-                    delta=f"{int(r['shown'] - avg_shown):+d}",
+                    delta=f"{int(r['shown'] - corpus_avg_shown):+d}",
                 )
                 col3.metric(
                     "History vs Avg",
                     int(r["in_history"]),
-                    delta=f"{int(r['in_history'] - avg_history):+d}",
+                    delta=f"{int(r['in_history'] - corpus_avg_history):+d}",
                 )
             else:
                 st.info("This article has no recorded impressions.")
