@@ -15,8 +15,7 @@ from flax import nnx
 
 from src.core.models.configs import NAMLConfig
 
-from ..attention_layers import AdditiveAttention
-from ..layer_utils import apply_activation
+from ..layers import AdditiveAttention, apply_activation
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------

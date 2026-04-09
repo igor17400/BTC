@@ -8,8 +8,7 @@ import torch.nn.functional as F
 
 from src.core.models.configs import NAMLConfig
 
-from ..attention_layers import AdditiveAttention
-from ..layer_utils import get_activation
+from ..layers import AdditiveAttention, get_activation
 from .base import BaseModel
 
 

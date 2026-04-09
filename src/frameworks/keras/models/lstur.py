@@ -6,7 +6,7 @@ import keras
 from keras import layers, ops
 
 from src.core.models.configs import LSTURConfig
-from src.frameworks.keras.attention_layers import (
+from src.frameworks.keras.layers import (
     AdditiveAttention,
     ComputeMasking,
     OverwriteMasking,

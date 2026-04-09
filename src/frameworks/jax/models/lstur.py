@@ -15,8 +15,7 @@ from flax import nnx
 
 from src.core.models.configs import LSTURConfig
 
-from ..attention_layers import AdditiveAttention, compute_mask, overwrite_mask
-from ..layer_utils import apply_activation
+from ..layers import AdditiveAttention, apply_activation, compute_mask, overwrite_mask
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------

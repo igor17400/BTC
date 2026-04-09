@@ -11,8 +11,8 @@ import torch.nn.functional as F
 
 from src.core.models.configs import CROWNConfig
 
-from ..attention_layers import AdditiveAttention
-from ..graph_layers import (
+from ..layers import (
+    AdditiveAttention,
     GraphAttentionLayer,
     GraphSAGELayer,
     MultiHeadAttentionBlock,

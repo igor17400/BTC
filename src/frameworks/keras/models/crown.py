@@ -9,8 +9,8 @@ import numpy as np
 from keras import layers, ops
 
 from src.core.models.configs import CROWNConfig
-from src.frameworks.keras.attention_layers import AdditiveAttention
-from src.frameworks.keras.graph_layers import (
+from src.frameworks.keras.layers import AdditiveAttention
+from src.frameworks.keras.layers import (
     GraphAttentionLayer,
     GraphSAGELayer,
     MultiHeadAttentionBlock,

@@ -4,7 +4,7 @@ import keras
 from keras import layers, ops
 
 from src.core.models.configs import NAMLConfig
-from src.frameworks.keras.attention_layers import AdditiveAttention
+from src.frameworks.keras.layers import AdditiveAttention
 from src.frameworks.keras.models.base import BaseModel
 
 

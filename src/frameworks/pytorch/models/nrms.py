@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from src.core.models.configs import NRMSConfig
 
-from ..attention_layers import AdditiveAttention
+from ..layers import AdditiveAttention
 from .base import BaseModel
 
 

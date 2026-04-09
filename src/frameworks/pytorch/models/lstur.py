@@ -8,7 +8,7 @@ import torch.nn.functional as F
 
 from src.core.models.configs import LSTURConfig
 
-from ..attention_layers import AdditiveAttention, ComputeMasking, OverwriteMasking
+from ..layers import AdditiveAttention, ComputeMasking, OverwriteMasking
 from .base import BaseModel
 
 # ------------------------------------------------------------------

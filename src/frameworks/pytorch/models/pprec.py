@@ -15,7 +15,7 @@ import torch.nn as nn
 
 from src.core.models.configs import PPRecConfig
 
-from ..attention_layers import AdditiveAttention, AttentivePoolingQKY
+from ..layers import AdditiveAttention, AttentivePoolingQKY
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
