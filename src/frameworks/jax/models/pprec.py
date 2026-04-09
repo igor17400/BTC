@@ -15,7 +15,7 @@ from flax import nnx
 
 from src.core.models.configs import PPRecConfig
 
-from ..layers import AdditiveAttention, AttentivePoolingQKY
+from ..attention_layers import AdditiveAttention, AttentivePoolingQKY
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------

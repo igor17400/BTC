@@ -1,4 +1,11 @@
-"""Custom PyTorch layers for news recommendation models."""
+"""Graph and transformer layers for PyTorch (CROWN model).
+
+Layers used exclusively by the CROWN news recommendation model:
+- :class:`PositionalEncoding` — sinusoidal position signals.
+- :class:`MultiHeadAttentionBlock` — MAB with residual + layer norm.
+- :class:`GraphSAGELayer` — bipartite message-passing.
+- :class:`GraphAttentionLayer` — bipartite GAT.
+"""
 
 import math
 
@@ -6,149 +13,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
-# ---------------------------------------------------------------------------
-# Pure-function masking utilities (isomorphic with Keras/JAX)
-# ---------------------------------------------------------------------------
-
-
-def compute_mask(inputs: torch.Tensor) -> torch.Tensor:
-    """Compute a boolean mask where non-zero positions are True."""
-    return (inputs != 0).float()
-
-
-def overwrite_mask(values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-    """Zero out positions indicated by a mask."""
-    return values * mask.unsqueeze(-1)
-
-
-class AdditiveAttention(nn.Module):
-    """Soft-alignment attention layer (additive / Bahdanau-style).
-
-    Computes a weighted sum of the input sequence where the weights are learned.
-
-    Args:
-        input_dim: Last dimension of the input tensor (feature size).
-        query_vec_dim: Hidden dimension of the attention mechanism.
-    """
-
-    def __init__(self, input_dim: int, query_vec_dim: int = 200):
-        super().__init__()
-        self.W = nn.Parameter(torch.empty(input_dim, query_vec_dim))
-        self.b = nn.Parameter(torch.zeros(query_vec_dim))
-        self.q = nn.Parameter(torch.empty(query_vec_dim, 1))
-
-        # Glorot / Xavier uniform initialisation
-        nn.init.xavier_uniform_(self.W)
-        nn.init.xavier_uniform_(self.q)
-
-    def forward(self, inputs: torch.Tensor, mask: torch.Tensor = None) -> torch.Tensor:
-        """Forward pass.
-
-        Args:
-            inputs: (batch, seq_len, features)
-            mask:   (batch, seq_len) bool tensor. ``True`` keeps, ``False`` masks.
-
-        Returns:
-            (batch, features) weighted sum.
-        """
-        # 1. Dense + tanh
-        attention_hidden = torch.tanh(torch.matmul(inputs, self.W) + self.b)
-
-        # 2. Project to scalar per timestep
-        attention_scores = torch.matmul(attention_hidden, self.q).squeeze(
-            -1
-        )  # (batch, seq_len)
-
-        # 3. exp + masked normalization (matches official Microsoft implementation)
-        attention = torch.exp(attention_scores)
-        if mask is not None:
-            attention = attention * mask.float()
-        attention_weights = attention / (attention.sum(dim=-1, keepdim=True) + 1e-7)
-
-        # 4. Weighted sum
-        attention_weights_expanded = attention_weights.unsqueeze(
-            -1
-        )  # (batch, seq_len, 1)
-        weighted_input = inputs * attention_weights_expanded
-        return weighted_input.sum(dim=1)  # (batch, features)
-
-
-class AttentivePoolingQKY(nn.Module):
-    """Attentive pooling where attention keys differ from values (PyTorch).
-
-    Computes attention weights from ``key_input`` (e.g. concatenated
-    content + popularity embeddings) but returns a weighted sum of
-    ``value_input`` (e.g. content embeddings only).
-
-    Used in PP-Rec's Content-Popularity Joint Attention (CPJA), where:
-        key_input  = concat(user_news_vecs, popularity_embedding)  -- 800d
-        value_input = user_news_vecs                                -- 400d
-
-    Args:
-        key_dim: Last dimension of ``key_input``.
-        query_vec_dim: Hidden dimension of the attention MLP.
-    """
-
-    def __init__(self, key_dim: int, query_vec_dim: int = 200):
-        super().__init__()
-        self.W = nn.Parameter(torch.empty(key_dim, query_vec_dim))
-        self.b = nn.Parameter(torch.zeros(query_vec_dim))
-        self.q = nn.Parameter(torch.empty(query_vec_dim, 1))
-        nn.init.xavier_uniform_(self.W)
-        nn.init.xavier_uniform_(self.q)
-
-    def forward(
-        self,
-        key_input: torch.Tensor,
-        value_input: torch.Tensor,
-        mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Forward pass.
-
-        Args:
-            key_input:   ``(batch, seq_len, key_dim)``  used for attention weights.
-            value_input: ``(batch, seq_len, val_dim)``  weighted by attention.
-            mask:        ``(batch, seq_len)`` bool, ``True`` keeps.
-
-        Returns:
-            ``(batch, val_dim)`` weighted sum.
-        """
-        attention_hidden = torch.tanh(torch.matmul(key_input, self.W) + self.b)
-        attention_scores = torch.matmul(attention_hidden, self.q).squeeze(-1)
-
-        attention = torch.exp(attention_scores)
-        if mask is not None:
-            attention = attention * mask.float()
-        attention_weights = attention / (attention.sum(dim=-1, keepdim=True) + 1e-7)
-
-        attention_weights_expanded = attention_weights.unsqueeze(-1)
-        weighted_input = value_input * attention_weights_expanded
-        return weighted_input.sum(dim=1)
-
-
-class ComputeMasking(nn.Module):
-    """Produce a boolean mask where ``inputs != 0``."""
-
-    def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        """Return a float mask (1.0 / 0.0) with the same dtype as inputs."""
-        return (inputs != 0).float()
-
-
-class OverwriteMasking(nn.Module):
-    """Zero out positions according to a mask.
-
-    Args:
-        values: (batch, seq_len, features)
-        mask:   (batch, seq_len)  -- 1 keeps, 0 masks.
-
-    Returns:
-        values * mask (broadcast over last dim).
-    """
-
-    def forward(self, values: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        return values * mask.unsqueeze(-1)
-
 
 class PositionalEncoding(nn.Module):
     """Sinusoidal positional encoding for transformer-style models.

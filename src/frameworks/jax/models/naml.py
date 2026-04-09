@@ -15,23 +15,13 @@ from flax import nnx
 
 from src.core.models.configs import NAMLConfig
 
-from ..layers import AdditiveAttention
+from ..attention_layers import AdditiveAttention
+from ..layer_utils import apply_activation
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
 # View encoders
 # ---------------------------------------------------------------------------
-
-
-def _apply_activation(x: jax.Array, activation: str) -> jax.Array:
-    """Apply activation function by name."""
-    if activation == "relu":
-        return jax.nn.relu(x)
-    elif activation == "tanh":
-        return jnp.tanh(x)
-    elif activation == "gelu":
-        return jax.nn.gelu(x)
-    return x
 
 
 class TitleEncoder(nnx.Module):
@@ -67,7 +57,7 @@ class TitleEncoder(nnx.Module):
         """Args: inputs (B, title_len) int32.  Returns: (B, cnn_filter_num)."""
         embedded = self.embedding_layer(inputs)
         y = self.dropout1(embedded, deterministic=not training)
-        y = _apply_activation(self.cnn(y), self.config.activation)
+        y = apply_activation(self.cnn(y), self.config.activation)
         y = self.dropout2(y, deterministic=not training)
 
         padding_mask = jnp.not_equal(inputs, 0)
@@ -106,7 +96,7 @@ class AbstractEncoder(nnx.Module):
         """Args: inputs (B, abstract_len) int32.  Returns: (B, cnn_filter_num)."""
         embedded = self.embedding_layer(inputs)
         y = self.dropout1(embedded, deterministic=not training)
-        y = _apply_activation(self.cnn(y), self.config.activation)
+        y = apply_activation(self.cnn(y), self.config.activation)
         y = self.dropout2(y, deterministic=not training)
 
         padding_mask = jnp.not_equal(inputs, 0)
@@ -138,7 +128,7 @@ class CategoryEncoder(nnx.Module):
     def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
         """Args: inputs (B, 1) int32.  Returns: (B, cnn_filter_num)."""
         embedded = self.embedding(inputs)  # (B, 1, cat_dim)
-        projected = _apply_activation(self.projection(embedded), self.config.activation)
+        projected = apply_activation(self.projection(embedded), self.config.activation)
         return jnp.squeeze(projected, axis=1)  # (B, cnn_filter_num)
 
 
@@ -167,7 +157,7 @@ class SubcategoryEncoder(nnx.Module):
     def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
         """Args: inputs (B, 1) int32.  Returns: (B, cnn_filter_num)."""
         embedded = self.embedding(inputs)
-        projected = _apply_activation(self.projection(embedded), self.config.activation)
+        projected = apply_activation(self.projection(embedded), self.config.activation)
         return jnp.squeeze(projected, axis=1)
 
 

@@ -18,7 +18,7 @@ import keras
 from keras import layers, ops
 
 from src.core.models.configs import PPRecConfig
-from src.frameworks.keras.layers import (
+from src.frameworks.keras.attention_layers import (
     AdditiveAttention,
     AttentivePoolingQKY,
     GlorotUniformMHA,

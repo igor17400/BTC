@@ -1,7 +1,7 @@
 """PyTorch framework implementation for NewsReX news recommendation models."""
 
 from .device import setup_device
-from .layers import (
+from .attention_layers import (
     AdditiveAttention,
     ComputeMasking,
     OverwriteMasking,

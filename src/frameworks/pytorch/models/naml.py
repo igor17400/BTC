@@ -8,20 +8,9 @@ import torch.nn.functional as F
 
 from src.core.models.configs import NAMLConfig
 
-from ..layers import AdditiveAttention
+from ..attention_layers import AdditiveAttention
+from ..layer_utils import get_activation
 from .base import BaseModel
-
-
-def _get_activation(name: str):
-    """Resolve a string activation name to a torch.nn.functional callable.
-
-    Centralised so all sub-encoders honour ``NAMLConfig.activation`` instead
-    of hardcoding ``F.relu``.
-    """
-    fn = getattr(F, name, None)
-    if fn is None:
-        raise ValueError(f"Unknown activation '{name}' for torch.nn.functional")
-    return fn
 
 
 # ------------------------------------------------------------------
@@ -36,7 +25,7 @@ class TitleEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.embedding_layer = embedding_layer
-        self.activation = _get_activation(config.activation)
+        self.activation = get_activation(config.activation)
 
         self.dropout1 = nn.Dropout(config.dropout_rate)
         # PyTorch Conv1d: (batch, channels, length)
@@ -81,7 +70,7 @@ class AbstractEncoder(nn.Module):
         super().__init__()
         self.config = config
         self.embedding_layer = embedding_layer
-        self.activation = _get_activation(config.activation)
+        self.activation = get_activation(config.activation)
 
         self.dropout1 = nn.Dropout(config.dropout_rate)
         self.cnn = nn.Conv1d(
@@ -118,7 +107,7 @@ class CategoryEncoder(nn.Module):
         self.projection = nn.Linear(
             config.category_embedding_dim, config.cnn_filter_num
         )
-        self.activation = _get_activation(config.activation)
+        self.activation = get_activation(config.activation)
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         """Encode category ids.
@@ -145,7 +134,7 @@ class SubcategoryEncoder(nn.Module):
         self.projection = nn.Linear(
             config.subcategory_embedding_dim, config.cnn_filter_num
         )
-        self.activation = _get_activation(config.activation)
+        self.activation = get_activation(config.activation)
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
         embedded = self.embedding(inputs)

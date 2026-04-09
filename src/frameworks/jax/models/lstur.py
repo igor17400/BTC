@@ -15,23 +15,9 @@ from flax import nnx
 
 from src.core.models.configs import LSTURConfig
 
-from ..layers import AdditiveAttention, compute_mask, overwrite_mask
+from ..attention_layers import AdditiveAttention, compute_mask, overwrite_mask
+from ..layer_utils import apply_activation
 from .base import BaseModel
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _apply_activation(x: jax.Array, activation: str) -> jax.Array:
-    if activation == "relu":
-        return jax.nn.relu(x)
-    elif activation == "tanh":
-        return jnp.tanh(x)
-    elif activation == "gelu":
-        return jax.nn.gelu(x)
-    return x
-
 
 # ---------------------------------------------------------------------------
 # Optional category / subcategory encoders (simple embedding)
@@ -119,7 +105,7 @@ class NewsEncoder(nnx.Module):
         """
         embedded = self.embedding_layer(title_tokens)
         y = self.dropout1(embedded, deterministic=not training)
-        y = _apply_activation(self.cnn(y), self.config.cnn_activation)
+        y = apply_activation(self.cnn(y), self.config.cnn_activation)
         y = self.dropout2(y, deterministic=not training)
 
         # Masking: zero out padded positions
