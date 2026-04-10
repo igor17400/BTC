@@ -199,11 +199,16 @@ def compute_user_stats(
 
 
 def generate_vewsx_stats(
-    dataset_path: Path, news_cat_map: dict[str, str] | None = None
+    dataset_path: Path,
+    news_cat_map: dict[str, str] | None = None,
+    force: bool = False,
 ) -> None:
     """Compute and save article + user stats to the processed/ directory.
 
-    Called from ``NewsDatasetBase._process_data()`` during training.
+    Skips computation if the parquet files already exist, unless
+    ``force=True``.
+
+    Called from ``NewsDatasetBase.__init__()`` during training.
     """
     processed_dir = dataset_path / "processed"
     processed_dir.mkdir(parents=True, exist_ok=True)
@@ -211,14 +216,20 @@ def generate_vewsx_stats(
     article_path = processed_dir / ARTICLE_STATS_FILE
     user_path = processed_dir / USER_STATS_FILE
 
-    logger.info("Computing VewsX article statistics...")
-    article_df = compute_article_stats(dataset_path)
-    if not article_df.empty:
-        article_df.to_parquet(article_path, index=False)
-        logger.info(f"Saved {len(article_df)} article stats to {article_path}")
+    if not force and article_path.exists() and user_path.exists():
+        logger.info("VewsX stats already exist, skipping generation.")
+        return
 
-    logger.info("Computing VewsX user statistics...")
-    user_df = compute_user_stats(dataset_path, news_cat_map)
-    if not user_df.empty:
-        user_df.to_parquet(user_path, index=False)
-        logger.info(f"Saved {len(user_df)} user stats to {user_path}")
+    if not article_path.exists() or force:
+        logger.info("Computing VewsX article statistics...")
+        article_df = compute_article_stats(dataset_path)
+        if not article_df.empty:
+            article_df.to_parquet(article_path, index=False)
+            logger.info(f"Saved {len(article_df)} article stats to {article_path}")
+
+    if not user_path.exists() or force:
+        logger.info("Computing VewsX user statistics...")
+        user_df = compute_user_stats(dataset_path, news_cat_map)
+        if not user_df.empty:
+            user_df.to_parquet(user_path, index=False)
+            logger.info(f"Saved {len(user_df)} user stats to {user_path}")

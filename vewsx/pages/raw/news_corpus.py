@@ -18,7 +18,7 @@ from vewsx.components.dataframe_display import (
 from vewsx.components.metrics_cards import render_metric_row
 from vewsx.components.plotly_theme import apply_defaults, build_category_color_map
 from vewsx.components.sidebar import render_category_filter, render_dataset_selector
-from vewsx.data.loaders import load_raw_behaviors, load_raw_news
+from vewsx.data.loaders import load_article_stats, load_raw_news
 
 st.title("News Corpus Explorer")
 
@@ -140,103 +140,13 @@ with tab_general:
 # TAB 2: Single Article
 # =====================================================================
 with tab_article:
-    # -- Precompute article-level stats across all splits (cached) --
-    @st.cache_data(show_spinner="Computing article statistics...")
-    def _compute_article_stats(dataset_path: str) -> pd.DataFrame:
-        stats: dict[str, dict] = {}
-        for split in ["train", "valid", "test"]:
-            bdf = load_raw_behaviors(dataset_path, split)
-            if bdf.empty:
-                continue
-            for _, row in bdf.dropna(subset=["impressions"]).iterrows():
-                uid = row.get("user_id", "")
-                ts = row.get("time")
-                pairs = str(row["impressions"]).split()
-                for pos, pair in enumerate(pairs):
-                    parts = pair.rsplit("-", 1)
-                    if len(parts) != 2:
-                        continue
-                    nid, label = parts[0], parts[1]
-                    if nid not in stats:
-                        stats[nid] = {
-                            "shown": 0,
-                            "clicked": 0,
-                            "in_history": 0,
-                            "unique_users_shown": set(),
-                            "unique_users_clicked": set(),
-                            "splits": set(),
-                            "positions": [],
-                            "timestamps": [],
-                        }
-                    s = stats[nid]
-                    s["shown"] += 1
-                    s["splits"].add(split)
-                    s["positions"].append(pos)
-                    if pd.notna(ts):
-                        s["timestamps"].append(ts)
-                    if uid:
-                        s["unique_users_shown"].add(uid)
-                    if label == "1":
-                        s["clicked"] += 1
-                        if uid:
-                            s["unique_users_clicked"].add(uid)
-
-            for _, row in bdf.dropna(subset=["history"]).iterrows():
-                for nid in str(row["history"]).split():
-                    if nid not in stats:
-                        stats[nid] = {
-                            "shown": 0,
-                            "clicked": 0,
-                            "in_history": 0,
-                            "unique_users_shown": set(),
-                            "unique_users_clicked": set(),
-                            "splits": set(),
-                            "positions": [],
-                            "timestamps": [],
-                        }
-                    stats[nid]["in_history"] += 1
-
-        rows = []
-        for nid, s in stats.items():
-            positions = s["positions"]
-            timestamps = s["timestamps"]
-            rows.append(
-                {
-                    "id": nid,
-                    "shown": s["shown"],
-                    "clicked": s["clicked"],
-                    "ctr": s["clicked"] / max(s["shown"], 1),
-                    "in_history": s["in_history"],
-                    "unique_users_shown": len(s["unique_users_shown"]),
-                    "unique_users_clicked": len(s["unique_users_clicked"]),
-                    "splits": ",".join(sorted(s["splits"])),
-                    "avg_position": sum(positions) / len(positions) if positions else 0,
-                    "impression_size_avg": 0,  # filled below if needed
-                    "first_seen": min(timestamps) if timestamps else pd.NaT,
-                    "last_seen": max(timestamps) if timestamps else pd.NaT,
-                }
-            )
-        return (
-            pd.DataFrame(rows)
-            if rows
-            else pd.DataFrame(
-                columns=[
-                    "id",
-                    "shown",
-                    "clicked",
-                    "ctr",
-                    "in_history",
-                    "unique_users_shown",
-                    "unique_users_clicked",
-                    "splits",
-                    "avg_position",
-                    "first_seen",
-                    "last_seen",
-                ]
-            )
+    article_stats = load_article_stats(dataset["path"])
+    if article_stats is None:
+        st.warning(
+            "Article stats not found. Run NewsReX training first to generate them "
+            "(`uv run python src/train.py experiment=...`)."
         )
-
-    article_stats = _compute_article_stats(dataset["path"])
+        st.stop()
 
     # Corpus-wide averages (computed once on full unfiltered data)
     corpus_avg_ctr = article_stats["ctr"].mean() if not article_stats.empty else 0

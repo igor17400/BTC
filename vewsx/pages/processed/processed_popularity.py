@@ -104,12 +104,21 @@ if "news_ctr_bucketed" in pop:
     # Heatmap of a sample of articles
     st.caption("CTR Heatmap (sample of articles with highest CTR)")
     article_total_ctr = bucketed.sum(axis=1)
-    top_articles = np.argsort(-article_total_ctr)[:50]
-    sample = bucketed[top_articles, :200]  # first 200 buckets
+    top_indices = np.argsort(-article_total_ctr)[:50]
+    sample = bucketed[top_indices, :200]  # first 200 buckets
+
+    # Get article IDs for hover labels
+    news_ids = pn.get("news_ids_original_strings", []) if pn else []
+    if news_ids:
+        y_labels = [str(news_ids[i]) for i in top_indices]
+    else:
+        y_labels = [str(i) for i in top_indices]
 
     fig = px.imshow(
         sample,
-        labels=dict(x="Time Bucket", y="Article (sorted by total CTR)", color="CTR"),
+        x=list(range(200)),
+        y=y_labels,
+        labels=dict(x="Time Bucket", y="Article ID", color="CTR"),
         title="Bucketed CTR Heatmap (top 50 articles, first 200 buckets)",
         aspect="auto",
     )
@@ -159,10 +168,10 @@ if "news_publish_time" in pop:
 
     if isinstance(pub_times, dict):
         # JSON format: {news_id: ISO timestamp}
-        times = pd.to_datetime(list(pub_times.values()), errors="coerce")
+        times = pd.Series(pd.to_datetime(list(pub_times.values()), errors="coerce"))
         st.caption(f"{len(pub_times)} articles with publish times")
     elif isinstance(pub_times, np.ndarray):
-        times = pd.to_datetime(pub_times, errors="coerce")
+        times = pd.Series(pd.to_datetime(pub_times, errors="coerce"))
         st.caption(f"{len(pub_times)} articles with publish times")
     else:
         times = pd.Series(dtype="datetime64[ns]")

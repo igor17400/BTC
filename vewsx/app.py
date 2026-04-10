@@ -45,6 +45,11 @@ processed_popularity = st.Page(
     title="Popularity Features",
     icon=":material/local_fire_department:",
 )
+processed_behaviors = st.Page(
+    "pages/processed/processed_behaviors.py",
+    title="Behaviors & Sampling",
+    icon=":material/shuffle:",
+)
 
 # -- Model analysis pages --
 model_predictions = st.Page(
@@ -68,7 +73,12 @@ popularity_bias = st.Page(
 nav = st.navigation(
     {
         "Raw Dataset": [overview, news_corpus, temporal, user_behavior, user_segments],
-        "Processed Data": [processed_overview, processed_tensors, processed_popularity],
+        "Processed Data": [
+            processed_overview,
+            processed_tensors,
+            processed_popularity,
+            processed_behaviors,
+        ],
         "Models": [
             model_predictions,
             model_comparison,

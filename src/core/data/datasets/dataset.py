@@ -214,6 +214,7 @@ class NewsDatasetBase(BaseNewsDataset):
             self._compute_extra_features()
         self._load_data(mode)
         self._compute_num_users()
+        self._generate_vewsx_stats()
 
     # ------------------------------------------------------------------
     # Properties
@@ -648,6 +649,17 @@ class NewsDatasetBase(BaseNewsDataset):
                 f"(max user ID + 1 from {len(all_user_ids)} unique users across all splits)"
             )
 
+    def _generate_vewsx_stats(self) -> None:
+        """Generate VewsX visualization stats if not already present."""
+        from src.core.data.processing.vewsx_stats import generate_vewsx_stats
+
+        news_cat_map = {}
+        if "news_ids_original_strings" in self.processed_news:
+            all_news_df = read_all_news(self.dataset_path)
+            if not all_news_df.empty:
+                news_cat_map = dict(zip(all_news_df["id"], all_news_df["category"]))
+        generate_vewsx_stats(self.dataset_path, news_cat_map)
+
     def _compute_extra_features(self) -> None:
         """Hook for subclasses to compute dataset-specific extra features.
 
@@ -716,18 +728,6 @@ class NewsDatasetBase(BaseNewsDataset):
 
         logger.info("Generating dataset summary...")
         self.generate_dataset_summary()
-
-        # Generate VewsX visualization stats
-        from src.core.data.processing.vewsx_stats import generate_vewsx_stats
-
-        news_cat_map = {}
-        if "news_ids_original_strings" in self.processed_news:
-            from src.core.data.processing.news import read_all_news
-
-            all_news_df = read_all_news(self.dataset_path)
-            if not all_news_df.empty:
-                news_cat_map = dict(zip(all_news_df["id"], all_news_df["category"]))
-        generate_vewsx_stats(self.dataset_path, news_cat_map)
 
         logger.info("Preprocessing complete!")
 

@@ -77,6 +77,9 @@ coverage.xml
 htmlcov/
 tests/.smoke_logs/
 
+# VewsX precomputed stats
+**/vewsx_*.parquet
+
 # Documentation
 docs/_build/
 site/

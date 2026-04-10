@@ -100,7 +100,7 @@ def load_processed_behaviors(
 ) -> dict | None:
     """Load processed behavior data pickle for a given split."""
     base = Path(processed_path) if processed_path else CACHE_DIR
-    pattern = f"{split}_behaviors_*.pkl"
+    pattern = f"processed_{split}_*.pkl"
     pkl_files = sorted(base.glob(pattern))
     if not pkl_files:
         pkl_files = sorted(base.glob(f"**/{pattern}"))
@@ -135,6 +135,29 @@ def load_popularity_data(processed_path: str | None = None) -> dict:
             result["news_publish_time"] = pickle.load(f)
 
     return result
+
+
+# ---------------------------------------------------------------------------
+# Precomputed VewsX stats (generated during NewsReX training)
+# ---------------------------------------------------------------------------
+
+
+@st.cache_data(show_spinner="Loading article statistics...")
+def load_article_stats(dataset_path: str) -> pd.DataFrame | None:
+    """Load precomputed article stats generated during training."""
+    cache_file = Path(dataset_path) / "processed" / "vewsx_article_stats.parquet"
+    if cache_file.exists():
+        return pd.read_parquet(cache_file)
+    return None
+
+
+@st.cache_data(show_spinner="Loading user statistics...")
+def load_user_stats(dataset_path: str) -> pd.DataFrame | None:
+    """Load precomputed user stats generated during training."""
+    cache_file = Path(dataset_path) / "processed" / "vewsx_user_stats.parquet"
+    if cache_file.exists():
+        return pd.read_parquet(cache_file)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -173,7 +196,7 @@ def discover_datasets(data_dir: str | None = None) -> list[dict]:
 
         # Build a readable name from the path relative to base
         rel = dataset_root.relative_to(base)
-        name = str(rel).replace("/", "-")
+        name = str(rel)
 
         # Check for processed data
         processed_path = dataset_root / "processed"

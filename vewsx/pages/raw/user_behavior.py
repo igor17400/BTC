@@ -5,7 +5,6 @@
 - User Search: search users by activity level or category preference.
 """
 
-import numpy as np
 import pandas as pd
 import plotly.express as px
 import streamlit as st
@@ -14,7 +13,7 @@ from vewsx.components.dataframe_display import render_paginated_table
 from vewsx.components.metrics_cards import render_metric_row
 from vewsx.components.plotly_theme import apply_defaults, build_category_color_map
 from vewsx.components.sidebar import render_dataset_selector, render_split_selector
-from vewsx.data.loaders import load_raw_behaviors, load_raw_news
+from vewsx.data.loaders import load_raw_behaviors, load_raw_news, load_user_stats
 
 st.title("User Behavior Analysis")
 
@@ -37,95 +36,13 @@ categories = (
 color_map = build_category_color_map(categories) if categories else {}
 
 
-# -- Precompute user-level stats (cached) --
-@st.cache_data(show_spinner="Computing user statistics...")
-def _compute_user_stats(dataset_path: str) -> pd.DataFrame:
-    stats: dict[str, dict] = {}
-    for split in ["train", "valid", "test"]:
-        bdf = load_raw_behaviors(dataset_path, split)
-        if bdf.empty:
-            continue
-        for _, row in bdf.iterrows():
-            uid = str(row.get("user_id", ""))
-            if not uid:
-                continue
-            if uid not in stats:
-                stats[uid] = {
-                    "impressions": 0,
-                    "total_shown": 0,
-                    "total_clicked": 0,
-                    "history_ids": set(),
-                    "clicked_ids": set(),
-                    "splits": set(),
-                    "timestamps": [],
-                    "history_cats": [],
-                }
-            s = stats[uid]
-            s["impressions"] += 1
-            s["splits"].add(split)
-
-            ts = row.get("time")
-            if pd.notna(ts):
-                s["timestamps"].append(ts)
-
-            if pd.notna(row.get("history")):
-                for nid in str(row["history"]).split():
-                    s["history_ids"].add(nid)
-                    cat = news_cat_map.get(nid)
-                    if cat:
-                        s["history_cats"].append(cat)
-
-            if pd.notna(row.get("impressions")):
-                for pair in str(row["impressions"]).split():
-                    parts = pair.rsplit("-", 1)
-                    if len(parts) != 2:
-                        continue
-                    nid, label = parts[0], parts[1]
-                    s["total_shown"] += 1
-                    if label == "1":
-                        s["total_clicked"] += 1
-                        s["clicked_ids"].add(nid)
-
-    rows = []
-    for uid, s in stats.items():
-        cats = s["history_cats"]
-        cat_counts = (
-            pd.Series(cats).value_counts(normalize=True)
-            if cats
-            else pd.Series(dtype=float)
-        )
-        entropy = (
-            float(-np.sum(cat_counts * np.log2(cat_counts + 1e-10)))
-            if len(cat_counts) > 1
-            else 0.0
-        )
-        n_categories = len(set(cats)) if cats else 0
-        max_cat_frac = float(cat_counts.max()) if len(cat_counts) > 0 else 0.0
-        top_category = cat_counts.index[0] if len(cat_counts) > 0 else ""
-        timestamps = s["timestamps"]
-
-        rows.append(
-            {
-                "user_id": uid,
-                "impressions": s["impressions"],
-                "history_size": len(s["history_ids"]),
-                "total_shown": s["total_shown"],
-                "total_clicked": s["total_clicked"],
-                "ctr": s["total_clicked"] / max(s["total_shown"], 1),
-                "unique_clicked": len(s["clicked_ids"]),
-                "n_categories": n_categories,
-                "entropy": entropy,
-                "max_cat_fraction": max_cat_frac,
-                "top_category": top_category,
-                "splits": ",".join(sorted(s["splits"])),
-                "first_seen": min(timestamps) if timestamps else pd.NaT,
-                "last_seen": max(timestamps) if timestamps else pd.NaT,
-            }
-        )
-    return pd.DataFrame(rows) if rows else pd.DataFrame()
-
-
-user_stats = _compute_user_stats(dataset["path"])
+user_stats = load_user_stats(dataset["path"])
+if user_stats is None:
+    st.warning(
+        "User stats not found. Run NewsReX training first to generate them "
+        "(`uv run python src/train.py experiment=...`)."
+    )
+    st.stop()
 if user_stats.empty:
     st.warning("No user data found.")
     st.stop()
