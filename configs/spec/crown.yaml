@@ -3,37 +3,45 @@ model:
   architecture:
     news_encoder:
       type: transformer_intent_disentanglement
-      num_heads: 12
-      head_dim: 25
+      # Transformer: 1 layer, 10 heads, FFN 512 (paper defaults)
+      num_heads: 10
+      head_dim: 30 # 300 / 10
       feedforward_dim: 512
-      num_layers: 2
+      num_layers: 1
+      # Intent disentanglement: k=3 intents, dim=400
       intent_num: 3
-      intent_embedding_dim: 200
-      attention_dim: 200
+      intent_embedding_dim: 400
+      attention_dim: 400
     user_encoder:
-      type: gnn_hybrid
-      gnn_type: graphsage  # graphsage or gat
-      graph_hidden_dim: 300
-      graph_num_layers: 1
-      sage_aggregator: mean
-      sage_normalize: true
+      type: gnn_candidate_aware
+      # GAT: paper Appendix A.5 final choice (best MRR gain +6.61%)
+      gnn_type: gat
+      graph_num_layers: 5
+      # Graph construction
+      no_self_connection: false
+      gcn_normalization_type: symmetric
+      no_gcn_residual: true
+      gcn_layer_norm: false
+      # Candidate-aware attention
+      user_attention_dim: 400
+      # GAT alternative
       gat_num_heads: 4
       gat_alpha: 0.2
       gat_concat_heads: true
-      attention_dim: 200
     click_predictor:
       type: dot_product
   embedding:
     size: 300
-    trainable: true
-  category_embedding_dim: 100
-  subcategory_embedding_dim: 100
+    trainable: true # paper freezes word embeddings but trains others
+  # Paper uses 50-dim for both (not 100)
+  category_embedding_dim: 50
+  subcategory_embedding_dim: 50
   dropout_rate: 0.2
   seed: 42
 
 inputs:
   title: { max_length: 32 }
-  abstract: { max_length: 50 }
+  abstract: { max_length: 128 } # paper uses 128 (body/content)
   history: { max_length: 50 }
   impressions: { max_length: 5 }
   process_title: true
@@ -44,23 +52,27 @@ inputs:
 
 training:
   loss:
-    name: crown_combined
-    alpha: 0.3  # weight for auxiliary category prediction loss
-    num_categories: 18
+    name: categorical_crossentropy
+    from_logits: true
     reduction: sum_over_batch_size
     label_smoothing: 0.0
+  # Auxiliary loss (category prediction) is computed inside the model
+  # and weighted by alpha=0.3
+  auxiliary_alpha: 0.3
   optimizer: adam
-  learning_rate: 0.0001
-  batch_size: 512
-  num_epochs: 10
+  learning_rate: 0.00005 # paper Table 8: η = 5e-5
+  batch_size: 256 # paper Table 8: b = 16 (16 pos + 16*4 neg)
+  num_epochs: 20 # paper: 16 for MIND
+  gradient_clip_val: 4.0 # paper: gradient clipping at norm 4
   early_stopping:
-    patience: 5
-    min_improvement: 0.01
+    patience: 5 # paper Table 8: early stopping = 5
+    min_improvement: 0.001
   negative_sampling:
     strategy: random
-    candidates: 4
+    candidates: 4 # paper: 4 negatives per positive
 
 evaluation:
   mode: fast
+  evaluator: default
   metrics: [auc, mrr, ndcg@5, ndcg@10]
-  batch_size: 4096
+  batch_size: 256

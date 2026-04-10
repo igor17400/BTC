@@ -1,10 +1,11 @@
 import datetime
 import logging
 
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
 from rich.logging import RichHandler
+
+import wandb
 
 console = Console()
 

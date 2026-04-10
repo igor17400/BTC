@@ -14,7 +14,6 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-import wandb
 from rich.progress import (
     BarColumn,
     MofNCompleteColumn,
@@ -26,6 +25,7 @@ from rich.progress import (
 )
 from torch.utils.data import DataLoader
 
+import wandb
 from src.core.io.logging import log_early_stopping, log_epoch_end
 
 from .device import setup_device
@@ -149,6 +149,9 @@ def training_loop(
                 optimizer.zero_grad()
                 predictions = model(batch_features, training=True)
                 loss = loss_fn(predictions, batch_labels)
+                # Add auxiliary loss if model provides one (e.g. CROWN category prediction)
+                if hasattr(model, "get_auxiliary_loss"):
+                    loss = loss + model.get_auxiliary_loss()
                 loss.backward()
                 if (
                     cfg

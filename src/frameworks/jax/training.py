@@ -17,11 +17,11 @@ from typing import Any
 import jax
 import jax.numpy as jnp
 import optax
-import wandb
 from flax import nnx
 from rich.console import Console
 from rich.progress import Progress
 
+import wandb
 from src.core.io.logging import (
     log_early_stopping,
     log_epoch_end,

@@ -9,8 +9,8 @@ model:
       attention_hidden_dim: 200
     user_encoder:
       type: gru
-      gru_unit: 600  # Must match news encoder output: filter_num(400) + cat(100) + subcat(100)
-      variant: ini  # "ini" (initial state) or "con" (concatenation)
+      gru_unit: 600 # Must match news encoder output: filter_num(400) + cat(100) + subcat(100)
+      variant: ini # "ini" (initial state) or "con" (concatenation)
     click_predictor:
       type: dot_product
   embedding:
@@ -41,8 +41,8 @@ training:
     label_smoothing: 0.0
   optimizer: adam
   learning_rate: 0.0001
-  batch_size: 512
-  num_epochs: 5
+  batch_size: 256
+  num_epochs: 20
   early_stopping:
     patience: 5
     min_improvement: 0.01

@@ -10,7 +10,6 @@ Core layers used by NRMS, NAML, LSTUR, and PP-Rec:
 import torch
 import torch.nn as nn
 
-
 # ---------------------------------------------------------------------------
 # Pure-function masking utilities (isomorphic with Keras/JAX)
 # ---------------------------------------------------------------------------

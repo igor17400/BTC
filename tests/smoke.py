@@ -29,7 +29,7 @@ PROJECT_ROOT = Path(__file__).parent.parent
 LOGS_DIR = Path(__file__).parent / ".smoke_logs"
 console = Console()
 
-ALL_MODELS = ["nrms", "naml", "lstur", "pprec"]
+ALL_MODELS = ["nrms", "naml", "lstur", "pprec", "crown"]
 ALL_FRAMEWORKS = ["jax", "pytorch", "keras+jax", "keras+torch"]
 
 

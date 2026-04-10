@@ -9,11 +9,11 @@ import time
 
 import hydra
 import numpy as np
-import wandb
 from flax import nnx
 from omegaconf import DictConfig
 from rich.progress import Progress
 
+import wandb
 from src.core.io.logging import (
     console,
     log_test_results,

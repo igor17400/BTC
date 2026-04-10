@@ -73,51 +73,62 @@ class LSTURConfig:
 
 @dataclass
 class CROWNConfig:
-    """Configuration class for CROWN model parameters."""
+    """Configuration for CROWN (WWW 2025).
 
-    # Common parameters
+    Defaults match the official reference implementation:
+    ``reference_codes/crown-www25/config.py``.
+    """
+
+    # Word / shared embeddings
     embedding_size: int = 300
     dropout_rate: float = 0.2
     seed: int = 42
 
-    # Model dimensions
-    intent_embedding_dim: int = 200
-    category_embedding_dim: int = 100
-    subcategory_embedding_dim: int = 100
-    attention_dim: int = 200
+    # Category / subcategory embeddings (paper: 50 each)
+    category_embedding_dim: int = 50
+    subcategory_embedding_dim: int = 50
 
-    # Intent disentanglement
-    intent_num: int = 3  # Number of intents (k)
-    alpha: float = 0.3  # Weight for auxiliary loss
-
-    # MAB parameters
-    num_heads: int = 12  # 300 / 12 = 25 (evenly divisible)
-    head_dim: int = 25  # 12 * 25 = 300 = embedding_size
+    # Transformer encoder (paper: 1 layer, 10 heads, FFN 512)
+    num_heads: int = 10
+    head_dim: int = 30  # 300 / 10
     feedforward_dim: int = 512
-    num_layers: int = 2
+    num_layers: int = 1
 
-    # GNN parameters
-    gnn_type: str = "graphsage"  # 'graphsage' or 'gat'
-    graph_hidden_dim: int = 300
-    graph_num_layers: int = 1
+    # Intent disentanglement (paper: k=3, dim=400)
+    intent_num: int = 3
+    intent_embedding_dim: int = 400
+    attention_dim: int = 400
+    alpha: float = 0.3  # auxiliary category-prediction loss weight
 
-    # GAT-specific parameters
+    # GNN for user encoder (paper Appendix A.5: GAT chosen as final model)
+    gnn_type: str = "gat"
+    graph_num_layers: int = 5
+    no_self_connection: bool = False
+    gcn_normalization_type: str = "symmetric"  # 'symmetric' or 'asymmetric'
+    no_gcn_residual: bool = True
+    gcn_layer_norm: bool = False
+
+    # GraphSAGE-specific
+    sage_aggregator: str = "mean"
+    sage_normalize: bool = True
+
+    # GAT-specific (alternative to GraphSAGE)
     gat_num_heads: int = 4
     gat_alpha: float = 0.2
     gat_concat_heads: bool = True
 
-    # GraphSAGE-specific parameters
-    sage_aggregator: str = "mean"  # 'mean', 'max', 'sum', 'attention'
-    sage_normalize: bool = True
+    # Candidate-aware attention (paper: scaled dot-product)
+    user_attention_dim: int = 400
 
-    # Input parameters
-    max_title_length: int = 50
-    max_abstract_length: int = 100
+    # Input constraints (paper: title=32, abstract=128, history=50)
+    max_title_length: int = 32
+    max_abstract_length: int = 128
     max_history_length: int = 50
     max_impressions_length: int = 5
 
-    # Training parameters
+    # Training
     process_user_id: bool = False
+    gradient_clip_norm: float = 4.0
 
 
 @dataclass

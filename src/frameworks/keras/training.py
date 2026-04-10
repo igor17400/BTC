@@ -5,10 +5,10 @@ from pathlib import Path
 from typing import Any
 
 import keras
-import wandb
 from omegaconf import DictConfig
 from rich.progress import Progress
 
+import wandb
 from src.core.io.config import save_model_config
 from src.core.io.logging import (
     console,
