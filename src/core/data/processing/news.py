@@ -314,8 +314,10 @@ def process_news(
     os.makedirs(processed_path, exist_ok=True)
 
     vocab_file = processed_path / f"vocab_thresh{word_threshold}_{language}.pkl"
-    processed_news_file = (
-        processed_path / f"processed_news_thresh{word_threshold}_{language}.pkl"
+    # News tokenization cache depends on title/abstract length.
+    processed_news_file = processed_path / (
+        f"processed_news_thresh{word_threshold}_{language}"
+        f"_t{max_title_length}_a{max_abstract_length}.pkl"
     )
     embeddings_file = (
         processed_path / f"filtered_embeddings_thresh{word_threshold}_{language}.npy"

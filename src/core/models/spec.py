@@ -104,18 +104,11 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
         intent_embedding_dim=ne.intent_embedding_dim,
         attention_dim=ne.attention_dim,
         alpha=spec.training.get("auxiliary_alpha", 0.3),
-        # GNN
-        gnn_type=ue.gnn_type,
-        graph_num_layers=ue.graph_num_layers,
-        no_self_connection=ue.get("no_self_connection", False),
-        gcn_normalization_type=ue.get("gcn_normalization_type", "symmetric"),
-        no_gcn_residual=ue.get("no_gcn_residual", True),
-        gcn_layer_norm=ue.get("gcn_layer_norm", False),
-        sage_aggregator=ue.get("sage_aggregator", "mean"),
-        sage_normalize=ue.get("sage_normalize", True),
+        # Bipartite GNN (paper §3.3)
+        gnn_type=ue.get("gnn_type", "gat"),
+        graph_num_layers=ue.get("graph_num_layers", 1),
         gat_num_heads=ue.get("gat_num_heads", 4),
         gat_alpha=ue.get("gat_alpha", 0.2),
-        gat_concat_heads=ue.get("gat_concat_heads", True),
         # Candidate-aware attention
         user_attention_dim=ue.get("user_attention_dim", 400),
         # Input constraints

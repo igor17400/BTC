@@ -100,22 +100,12 @@ class CROWNConfig:
     attention_dim: int = 400
     alpha: float = 0.3  # auxiliary category-prediction loss weight
 
-    # GNN for user encoder (paper Appendix A.5: GAT chosen as final model)
-    gnn_type: str = "gat"
-    graph_num_layers: int = 5
-    no_self_connection: bool = False
-    gcn_normalization_type: str = "symmetric"  # 'symmetric' or 'asymmetric'
-    no_gcn_residual: bool = True
-    gcn_layer_norm: bool = False
-
-    # GraphSAGE-specific
-    sage_aggregator: str = "mean"
-    sage_normalize: bool = True
-
-    # GAT-specific (alternative to GraphSAGE)
+    # Bipartite user-news GNN (paper §3.3 eq. 8)
+    # Paper uses GAT; reference code ships GraphSAGE. Both supported for ablation.
+    gnn_type: str = "gat"  # 'gat' or 'graphsage'
+    graph_num_layers: int = 1
     gat_num_heads: int = 4
     gat_alpha: float = 0.2
-    gat_concat_heads: bool = True
 
     # Candidate-aware attention (paper: scaled dot-product)
     user_attention_dim: int = 400

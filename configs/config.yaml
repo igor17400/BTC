@@ -32,6 +32,7 @@ train:
   num_epochs: 10
   learning_rate: 0.0001
   gradient_clip_val: 1.0
+  grad_accum_steps: 1
   early_stopping:
     patience: 5
     min_improvement: 0.01

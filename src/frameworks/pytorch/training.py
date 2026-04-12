@@ -9,6 +9,7 @@ Provides ``training_loop`` as the main entry point with:
 """
 
 import time
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Any
 
@@ -141,29 +142,61 @@ def training_loop(
                 f"Epoch {epoch}/{num_epochs} - training", total=len(train_dataloader)
             )
 
-            for batch_features, batch_labels in train_dataloader:
+            grad_accum_steps = 1
+            if cfg and hasattr(cfg, "train") and hasattr(cfg.train, "grad_accum_steps"):
+                grad_accum_steps = max(int(cfg.train.grad_accum_steps), 1)
+            total_micro = len(train_dataloader)
+
+            # Mixed precision via cfg.device.precision = "bfloat16" | "float16"
+            amp_dtype: torch.dtype | None = None
+            if cfg and hasattr(cfg, "device") and hasattr(cfg.device, "precision"):
+                precision = str(cfg.device.precision).lower()
+                if precision in ("bfloat16", "bf16"):
+                    amp_dtype = torch.bfloat16
+                elif precision in ("float16", "fp16", "half"):
+                    amp_dtype = torch.float16
+            use_autocast = amp_dtype is not None and device.type == "cuda"
+
+            optimizer.zero_grad(set_to_none=True)
+            for micro_idx, (batch_features, batch_labels) in enumerate(train_dataloader):
                 batch_features, batch_labels = _move_batch_to_device(
                     batch_features, batch_labels, device
                 )
 
-                optimizer.zero_grad()
-                predictions = model(batch_features, training=True)
-                loss = loss_fn(predictions, batch_labels)
-                # Add auxiliary loss if model provides one (e.g. CROWN category prediction)
-                if hasattr(model, "get_auxiliary_loss"):
-                    loss = loss + model.get_auxiliary_loss()
-                loss.backward()
-                if (
-                    cfg
-                    and hasattr(cfg, "train")
-                    and hasattr(cfg.train, "gradient_clip_val")
-                ):
-                    torch.nn.utils.clip_grad_norm_(
-                        model.parameters(), cfg.train.gradient_clip_val
-                    )
-                optimizer.step()
+                autocast_ctx = (
+                    torch.autocast(device_type="cuda", dtype=amp_dtype)
+                    if use_autocast
+                    else nullcontext()
+                )
+                with autocast_ctx:
+                    predictions = model(batch_features, training=True)
+                    loss = loss_fn(predictions, batch_labels)
+                    # Auxiliary loss (e.g. CROWN category prediction)
+                    if hasattr(model, "get_auxiliary_loss"):
+                        loss = loss + model.get_auxiliary_loss()
 
-                running_loss += loss.item()
+                display_loss = loss.detach()
+                if grad_accum_steps > 1:
+                    loss = loss / grad_accum_steps
+                loss.backward()
+
+                is_step = (
+                    (micro_idx + 1) % grad_accum_steps == 0
+                    or (micro_idx + 1) == total_micro
+                )
+                if is_step:
+                    if (
+                        cfg
+                        and hasattr(cfg, "train")
+                        and hasattr(cfg.train, "gradient_clip_val")
+                    ):
+                        torch.nn.utils.clip_grad_norm_(
+                            model.parameters(), cfg.train.gradient_clip_val
+                        )
+                    optimizer.step()
+                    optimizer.zero_grad(set_to_none=True)
+
+                running_loss += display_loss.item()
                 num_batches += 1
 
                 progress.update(batch_task, advance=1)

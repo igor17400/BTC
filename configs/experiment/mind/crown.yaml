@@ -33,6 +33,7 @@ train:
   num_epochs: ${spec.training.num_epochs}
   learning_rate: ${spec.training.learning_rate}
   gradient_clip_val: ${spec.training.gradient_clip_val}
+  grad_accum_steps: ${spec.training.grad_accum_steps}
   early_stopping:
     patience: ${spec.training.early_stopping.patience}
     min_improvement: ${spec.training.early_stopping.min_improvement}
@@ -51,4 +52,4 @@ sampling:
 
 device:
   gpu_ids: [0]
-  precision: float32
+  precision: bfloat16

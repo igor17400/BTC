@@ -81,287 +81,170 @@ class AdditiveAttention(nn.Module):
         return (features * weights).sum(dim=1)
 
 
-class CandidateAwareAttention(nn.Module):
-    """Scaled dot-product attention with candidate queries (paper §3.3).
+class UserQueryAttention(nn.Module):
+    """Additive attention with the GNN-updated user proxy node as query.
 
-    For each candidate news, computes a separate user representation by
-    attending over the user's history embeddings.
+    Implements paper eq. 9:
+        z_j = q^T · tanh(W_key · r^n_j + b_key)
+        α_j = softmax_j(z_j)
+        r^u = Σ_j α_j · r^n_j
+    where q is the user proxy node's embedding after the bipartite GNN.
+    Candidate-independent — one user vector per behavior, shared across
+    all candidates. This makes the user encoder identical in training and
+    evaluation, unlike a candidate-aware pool.
     """
 
     def __init__(self, feature_dim: int, attention_dim: int):
         super().__init__()
-        self.key_proj = nn.Linear(feature_dim, attention_dim, bias=True)
-        self.query_proj = nn.Linear(feature_dim, attention_dim, bias=True)
-        self.scale = math.sqrt(attention_dim)
+        self.W_key = nn.Linear(feature_dim, attention_dim, bias=True)
+        self.W_query = nn.Linear(feature_dim, attention_dim, bias=False)
 
     def forward(
         self,
-        history: torch.Tensor,
-        candidates: torch.Tensor,
-        history_mask: torch.Tensor | None = None,
+        news: torch.Tensor,
+        user_node: torch.Tensor,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         """
         Args:
-            history: (B, H, D) — user history news embeddings.
-            candidates: (B, C, D) — candidate news embeddings.
-            history_mask: (B, H) — True where history slot is valid.
+            news: (B, H, D) — GNN-updated history news embeddings.
+            user_node: (B, D) — GNN-updated user proxy node.
+            mask: (B, H) — True where a history slot is valid.
 
         Returns:
-            (B, C, D) — per-candidate user representations.
+            (B, D) user representation.
         """
-        K = self.key_proj(history)  # (B, H, A)
-        Q = self.query_proj(candidates)  # (B, C, A)
-
-        scores = torch.bmm(Q, K.transpose(1, 2)) / self.scale  # (B, C, H)
-
-        if history_mask is not None:
-            mask = history_mask.unsqueeze(1).expand_as(scores)  # (B, C, H)
+        keys = torch.tanh(self.W_key(news))  # (B, H, A)
+        query = self.W_query(user_node).unsqueeze(1)  # (B, 1, A)
+        scores = (keys * query).sum(dim=-1)  # (B, H)
+        if mask is not None:
             scores = scores.masked_fill(~mask.bool(), -1e9)
-
-        weights = torch.softmax(scores, dim=-1)  # (B, C, H)
-        return torch.bmm(weights, history)  # (B, C, D)
-
-
-# ======================================================================
-# Graph construction (paper §3.2)
-# ======================================================================
-
-
-def build_category_graph(
-    history_categories: torch.Tensor,
-    history_mask: torch.Tensor,
-    num_categories: int,
-    max_history: int,
-    no_self_connection: bool = False,
-    normalization: str = "symmetric",
-) -> torch.Tensor:
-    """Build the category-aware heterogeneous graph adjacency matrix.
-
-    Graph layout per batch:
-        Nodes [0 .. max_history-1] = news nodes
-        Nodes [max_history .. max_history+num_categories-1] = category nodes
-
-    Edge types (paper):
-        E_n: intra-cluster (news↔news in same category)
-        E_p^1: news↔category
-        E_p^2: category↔category
-
-    Args:
-        history_categories: (B, H) int — category index per history news.
-        history_mask: (B, H) bool — True where history slot is valid.
-        num_categories: Total number of categories.
-        max_history: Maximum history length (H).
-        no_self_connection: If True, omit diagonal self-loops.
-        normalization: 'symmetric' for D^{-1/2}AD^{-1/2}, 'asymmetric' for D^{-1}A.
-
-    Returns:
-        (B, H+C, H+C) normalized adjacency matrix.
-    """
-    B = history_categories.size(0)
-    graph_size = max_history + num_categories
-    device = history_categories.device
-
-    adj = torch.zeros(B, graph_size, graph_size, device=device)
-
-    # Self connections (diagonal)
-    if not no_self_connection:
-        eye = torch.eye(graph_size, device=device).unsqueeze(0).expand(B, -1, -1)
-        adj = adj + eye
-
-    for b in range(B):
-        cats = history_categories[b]  # (H,)
-        mask = history_mask[b]  # (H,)
-
-        # Collect valid (news_idx, category) pairs, clamping to valid range
-        valid_news = []
-        active_cats = set()
-        for i in range(max_history):
-            if mask[i]:
-                c = int(cats[i].item())
-                if c < 0 or c >= num_categories:
-                    continue  # skip invalid category indices
-                valid_news.append((i, c))
-                active_cats.add(c)
-
-        # E_n: intra-cluster edges (news↔news in same category)
-        cat_to_news: dict[int, list[int]] = {}
-        for news_idx, c in valid_news:
-            cat_to_news.setdefault(c, []).append(news_idx)
-
-        for news_list in cat_to_news.values():
-            for i in range(len(news_list)):
-                for j in range(i + 1, len(news_list)):
-                    ni, nj = news_list[i], news_list[j]
-                    adj[b, ni, nj] = 1.0
-                    adj[b, nj, ni] = 1.0
-
-        # E_p^1: news↔category edges
-        for news_idx, c in valid_news:
-            cat_node = max_history + c
-            adj[b, news_idx, cat_node] = 1.0
-            adj[b, cat_node, news_idx] = 1.0
-
-        # E_p^2: category↔category edges
-        active_list = list(active_cats)
-        for i in range(len(active_list)):
-            for j in range(i + 1, len(active_list)):
-                ci = max_history + active_list[i]
-                cj = max_history + active_list[j]
-                adj[b, ci, cj] = 1.0
-                adj[b, cj, ci] = 1.0
-
-    # Degree normalization
-    degree = adj.sum(dim=-1).clamp(min=1e-7)  # (B, N)
-    if normalization == "symmetric":
-        d_inv_sqrt = degree.pow(-0.5)
-        # D^{-1/2} A D^{-1/2}
-        adj = d_inv_sqrt.unsqueeze(-1) * adj * d_inv_sqrt.unsqueeze(-2)
-    else:
-        d_inv = degree.pow(-1.0)
-        adj = d_inv.unsqueeze(-1) * adj
-
-    return adj
+        weights = torch.softmax(scores, dim=-1).unsqueeze(-1)  # (B, H, 1)
+        return (news * weights).sum(dim=1)  # (B, D)
 
 
 # ======================================================================
-# GraphSAGE layer (paper uses this for the category-aware graph)
+# Bipartite user-news GNN layers (paper §3.3, eq. 8)
+#
+# Graph structure: one learnable user proxy node + H history news nodes,
+# fully-connected bipartite (user ↔ every news), no news-news edges.
+# Implemented directly as tensor ops — no adjacency matrix, no Python
+# loops — so the same structure ports cleanly to JAX/Keras.
 # ======================================================================
 
 
-class GraphSAGEConv(nn.Module):
-    """Single GraphSAGE convolution layer for the heterogeneous graph.
+class BipartiteGATLayer(nn.Module):
+    """1-layer GAT on a user↔news bipartite graph with self-loops.
 
-    Operates on the full (news + category) node set.
-
-    Args:
-        in_dim: Input feature dimension.
-        out_dim: Output feature dimension.
-        dropout_rate: Dropout rate.
-        normalize: L2-normalize output.
-        residual: Add residual connection (skip when dims differ).
-        layer_norm: Apply layer norm after update.
+    Each batch element has one user node and H news nodes; user attends over
+    {self, all valid news}, each news attends over {self, user}.
     """
 
     def __init__(
         self,
-        in_dim: int,
-        out_dim: int,
-        dropout_rate: float = 0.2,
-        normalize: bool = True,
-        residual: bool = False,
-        layer_norm: bool = False,
-    ):
-        super().__init__()
-        self.W_self = nn.Linear(in_dim, out_dim)
-        self.W_neigh = nn.Linear(in_dim, out_dim)
-        self.dropout = nn.Dropout(dropout_rate)
-        self.do_normalize = normalize
-        self.residual = residual and (in_dim == out_dim)
-        self.ln = nn.LayerNorm(out_dim) if layer_norm else None
-
-    def forward(self, x: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
-        """
-        Args:
-            x: (B, N, D) node features.
-            adj: (B, N, N) normalized adjacency.
-
-        Returns:
-            (B, N, D_out) updated node features.
-        """
-        # Mean aggregation from neighbors (adj already normalized)
-        neigh_agg = torch.bmm(adj, x)  # (B, N, D)
-        out = F.relu(self.W_self(x) + self.W_neigh(neigh_agg))
-        out = self.dropout(out)
-
-        if self.residual:
-            out = out + x
-
-        if self.ln is not None:
-            out = self.ln(out)
-
-        if self.do_normalize:
-            out = F.normalize(out, p=2, dim=-1)
-
-        return out
-
-
-class GATConv(nn.Module):
-    """GAT convolution layer for the heterogeneous graph.
-
-    Multi-head attention over the adjacency structure. Same interface
-    as :class:`GraphSAGEConv` so the user encoder can swap freely.
-    """
-
-    def __init__(
-        self,
-        in_dim: int,
-        out_dim: int,
-        num_heads: int = 4,
-        dropout_rate: float = 0.2,
+        dim: int,
+        num_heads: int,
+        dropout_rate: float,
         alpha: float = 0.2,
-        residual: bool = False,
-        layer_norm: bool = False,
-        **kwargs,
     ):
         super().__init__()
+        assert dim % num_heads == 0, "dim must be divisible by num_heads"
         self.num_heads = num_heads
-        self.head_dim = out_dim // num_heads
-        self.out_dim = out_dim
+        self.head_dim = dim // num_heads
+        self.dim = dim
         self.alpha = alpha
-        self.residual = residual and (in_dim == out_dim)
 
-        self.W = nn.Linear(in_dim, num_heads * self.head_dim, bias=False)
+        self.W = nn.Linear(dim, dim, bias=False)
         self.a_src = nn.Parameter(torch.empty(num_heads, self.head_dim))
         self.a_dst = nn.Parameter(torch.empty(num_heads, self.head_dim))
         nn.init.xavier_uniform_(self.a_src.unsqueeze(0))
         nn.init.xavier_uniform_(self.a_dst.unsqueeze(0))
 
         self.dropout = nn.Dropout(dropout_rate)
-        self.ln = nn.LayerNorm(out_dim) if layer_norm else None
 
-    def forward(self, x: torch.Tensor, adj: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        user: torch.Tensor,
+        news: torch.Tensor,
+        news_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            x: (B, N, D) node features.
-            adj: (B, N, N) adjacency (non-zero = edge exists).
+            user: (B, D) — one user proxy per batch slot.
+            news: (B, H, D) — history news embeddings.
+            news_mask: (B, H) — True where a history slot is valid.
 
         Returns:
-            (B, N, out_dim) updated node features.
+            user_new: (B, D), news_new: (B, H, D).
         """
-        B, N, _ = x.shape
-        # Project to multi-head space: (B, N, H, head_dim)
-        h = self.W(x).view(B, N, self.num_heads, self.head_dim)
+        B, H, D = news.shape
+        NH, HD = self.num_heads, self.head_dim
 
-        # Attention scores: src_score + dst_score for each edge
-        # (B, N, H) for each node
-        src_scores = (h * self.a_src).sum(dim=-1)  # (B, N, H)
-        dst_scores = (h * self.a_dst).sum(dim=-1)  # (B, N, H)
+        Wu = self.W(user).view(B, NH, HD)  # (B, NH, HD)
+        Wn = self.W(news).view(B, H, NH, HD)  # (B, H, NH, HD)
 
-        # Pairwise: (B, H, N, N) = src[i] + dst[j]
-        attn = src_scores.permute(0, 2, 1).unsqueeze(-1) + dst_scores.permute(
-            0, 2, 1
-        ).unsqueeze(-2)
-        attn = F.leaky_relu(attn, negative_slope=self.alpha)
+        # GAT attention score a^T [W h_i || W h_j] splits into src + dst halves
+        src_u = (Wu * self.a_src).sum(dim=-1)  # (B, NH)
+        dst_u = (Wu * self.a_dst).sum(dim=-1)
+        src_n = (Wn * self.a_src).sum(dim=-1)  # (B, H, NH)
+        dst_n = (Wn * self.a_dst).sum(dim=-1)
 
-        # Mask non-edges
-        adj_mask = (adj > 0).unsqueeze(1)  # (B, 1, N, N)
-        attn = attn.masked_fill(~adj_mask, -1e9)
-        attn = self.dropout(torch.softmax(attn, dim=-1))
+        neg_inf = torch.finfo(src_u.dtype).min
 
-        # Aggregate: (B, H, N, N) @ (B, H, N, head_dim) → (B, H, N, head_dim)
-        h_t = h.permute(0, 2, 1, 3)  # (B, H, N, head_dim)
-        out = torch.matmul(attn, h_t)  # (B, H, N, head_dim)
+        # --- User update: attend over {self, all news} ---
+        score_u_n = F.leaky_relu(src_u.unsqueeze(1) + dst_n, self.alpha)  # (B, H, NH)
+        score_u_u = F.leaky_relu(src_u + dst_u, self.alpha)  # (B, NH)
+        score_u_n = score_u_n.masked_fill(~news_mask.unsqueeze(-1).bool(), neg_inf)
 
-        # Concat heads: (B, N, out_dim)
-        out = out.permute(0, 2, 1, 3).contiguous().view(B, N, self.out_dim)
-        out = self.dropout(F.relu(out))
+        all_u = torch.cat([score_u_n, score_u_u.unsqueeze(1)], dim=1)  # (B, H+1, NH)
+        attn_u = self.dropout(torch.softmax(all_u, dim=1))
+        u_from_n = (attn_u[:, :H].unsqueeze(-1) * Wn).sum(dim=1)  # (B, NH, HD)
+        u_self = attn_u[:, H].unsqueeze(-1) * Wu
+        user_new = F.elu(u_from_n + u_self).reshape(B, D)
 
-        if self.residual:
-            out = out + x
-        if self.ln is not None:
-            out = self.ln(out)
+        # --- News update: each news attends over {self, user} ---
+        score_n_u = F.leaky_relu(src_n + dst_u.unsqueeze(1), self.alpha)  # (B, H, NH)
+        score_n_n = F.leaky_relu(src_n + dst_n, self.alpha)
+        stacked = torch.stack([score_n_u, score_n_n], dim=-2)  # (B, H, 2, NH)
+        attn_n = self.dropout(torch.softmax(stacked, dim=-2))
+        n_from_u = attn_n[:, :, 0].unsqueeze(-1) * Wu.unsqueeze(1)  # (B, H, NH, HD)
+        n_self = attn_n[:, :, 1].unsqueeze(-1) * Wn
+        news_new = F.elu(n_from_u + n_self).reshape(B, H, D)
 
-        return out
+        return user_new, news_new
+
+
+class BipartiteSAGELayer(nn.Module):
+    """1-layer GraphSAGE on a user↔news bipartite graph.
+
+    Mean aggregator; user pools masked mean of news, each news pools the
+    single user neighbor. Matches the GraphSAGE variant shipped in the
+    reference code (``userEncoders.py`` CROWN class).
+    """
+
+    def __init__(self, dim: int, dropout_rate: float):
+        super().__init__()
+        self.W_self = nn.Linear(dim, dim)
+        self.W_neigh = nn.Linear(dim, dim)
+        self.dropout = nn.Dropout(dropout_rate)
+
+    def forward(
+        self,
+        user: torch.Tensor,
+        news: torch.Tensor,
+        news_mask: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        m = news_mask.unsqueeze(-1).to(news.dtype)  # (B, H, 1)
+        news_count = m.sum(dim=1).clamp(min=1.0)  # (B, 1)
+        news_mean = (news * m).sum(dim=1) / news_count  # (B, D)
+
+        user_new = F.relu(self.W_self(user) + self.W_neigh(news_mean))
+        news_new = F.relu(
+            self.W_self(news) + self.W_neigh(user.unsqueeze(1).expand_as(news))
+        )
+        user_new = F.normalize(user_new, p=2, dim=-1)
+        news_new = F.normalize(news_new, p=2, dim=-1)
+        return self.dropout(user_new), self.dropout(news_new)
 
 
 # ======================================================================
@@ -566,58 +449,60 @@ class CROWNNewsEncoder(nn.Module):
 
 
 class CROWNUserEncoder(nn.Module):
-    """CROWN user encoder.
+    """CROWN user encoder (paper §3.3).
 
     Pipeline:
-        1. Encode history news via shared news encoder
-        2. Build category-aware heterogeneous graph
-        3. Multi-layer GraphSAGE over the graph
-        4. Extract news node embeddings (drop category nodes)
-        5. Candidate-aware scaled dot-product attention
+        1. Encode history news via shared news encoder.
+        2. Initialise a learnable user proxy node.
+        3. ``graph_num_layers`` layers of bipartite GNN (GAT or GraphSAGE)
+           over the user↔news graph — returns both the updated user proxy
+           and the updated news nodes.
+        4. Additive attention (paper eq. 9) with the updated user proxy as
+           query, pooling the updated news nodes into a single user vector.
+           Candidate-independent — same mechanism in training and eval.
     """
 
     def __init__(
         self,
         config: CROWNConfig,
         news_encoder: CROWNNewsEncoder,
-        num_categories: int,
     ):
         super().__init__()
         self.config = config
         self.news_encoder = news_encoder
-        self.num_categories = num_categories
         news_emb_dim = news_encoder.news_embedding_dim
 
-        # Category node initial embeddings (learnable)
-        self.category_node_emb = nn.Parameter(torch.zeros(num_categories, news_emb_dim))
-        nn.init.uniform_(self.category_node_emb, -0.1, 0.1)
+        # Learnable user proxy node (paper: randomly initialised)
+        self.user_node = nn.Parameter(torch.empty(news_emb_dim))
+        nn.init.uniform_(self.user_node, -0.1, 0.1)
 
-        # Multi-layer GNN (GAT or GraphSAGE based on config)
-        gnn_cls = GATConv if config.gnn_type == "gat" else GraphSAGEConv
-        gnn_kwargs = dict(
-            in_dim=news_emb_dim,
-            out_dim=news_emb_dim,
-            dropout_rate=config.dropout_rate,
-            residual=not config.no_gcn_residual,
-            layer_norm=config.gcn_layer_norm,
-        )
+        # Bipartite GNN stack
         if config.gnn_type == "gat":
-            gnn_kwargs["num_heads"] = config.gat_num_heads
-            gnn_kwargs["alpha"] = config.gat_alpha
+            self.gnn_layers = nn.ModuleList(
+                [
+                    BipartiteGATLayer(
+                        dim=news_emb_dim,
+                        num_heads=config.gat_num_heads,
+                        dropout_rate=config.dropout_rate,
+                        alpha=config.gat_alpha,
+                    )
+                    for _ in range(config.graph_num_layers)
+                ]
+            )
+        elif config.gnn_type == "graphsage":
+            self.gnn_layers = nn.ModuleList(
+                [
+                    BipartiteSAGELayer(
+                        dim=news_emb_dim, dropout_rate=config.dropout_rate
+                    )
+                    for _ in range(config.graph_num_layers)
+                ]
+            )
         else:
-            gnn_kwargs["normalize"] = config.sage_normalize
-        self.gnn_layers = nn.ModuleList(
-            [gnn_cls(**gnn_kwargs) for _ in range(config.graph_num_layers)]
-        )
+            raise ValueError(f"Unknown gnn_type: {config.gnn_type!r}")
 
-        # Candidate-aware attention (training)
-        self.candidate_attention = CandidateAwareAttention(
-            feature_dim=news_emb_dim,
-            attention_dim=config.user_attention_dim,
-        )
-
-        # Additive attention fallback (evaluation — no candidates available)
-        self.eval_attention = AdditiveAttention(
+        # Shared user-query attention — used for both train and eval.
+        self.user_attention = UserQueryAttention(
             feature_dim=news_emb_dim,
             attention_dim=config.user_attention_dim,
         )
@@ -629,16 +514,15 @@ class CROWNUserEncoder(nn.Module):
         history_category: torch.Tensor,
         history_subcategory: torch.Tensor,
         history_mask: torch.Tensor,
-    ) -> torch.Tensor:
-        """Shared: encode history → GNN → enhanced news embeddings.
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Encode history → bipartite GNN → (user_node, news_nodes).
 
         Returns:
-            (B, H, D) GNN-enhanced history news embeddings.
+            user_node: (B, D) GNN-updated user proxy.
+            news: (B, H, D) GNN-updated history news embeddings.
         """
         B, H = history_title.shape[:2]
-        cfg = self.config
 
-        # 1. Encode history news (TimeDistributed)
         flat_title = history_title.reshape(B * H, -1)
         flat_abstract = history_abstract.reshape(B * H, -1)
         flat_cat = history_category.reshape(B * H)
@@ -647,28 +531,12 @@ class CROWNUserEncoder(nn.Module):
         flat_news = self.news_encoder(
             flat_title, flat_abstract, flat_cat, flat_subcat, compute_aux_loss=False
         )
-        history_news = flat_news.reshape(B, H, -1)  # (B, H, D)
+        news = flat_news.reshape(B, H, -1)  # (B, H, D)
 
-        # 2. Build category-aware graph
-        adj = build_category_graph(
-            history_categories=history_category,
-            history_mask=history_mask,
-            num_categories=self.num_categories,
-            max_history=H,
-            no_self_connection=cfg.no_self_connection,
-            normalization=cfg.gcn_normalization_type,
-        )
-
-        # 3. Concatenate news nodes + category nodes
-        cat_nodes = self.category_node_emb.unsqueeze(0).expand(B, -1, -1)
-        graph_nodes = torch.cat([history_news, cat_nodes], dim=1)
-
-        # 4. Multi-layer GraphSAGE
+        user = self.user_node.unsqueeze(0).expand(B, -1).contiguous()  # (B, D)
         for gnn in self.gnn_layers:
-            graph_nodes = gnn(graph_nodes, adj)
-
-        # 5. Extract news node embeddings (first H nodes)
-        return graph_nodes[:, :H, :]
+            user, news = gnn(user, news, history_mask)
+        return user, news
 
     def forward_with_candidates(
         self,
@@ -679,31 +547,29 @@ class CROWNUserEncoder(nn.Module):
         history_mask: torch.Tensor,
         candidate_repr: torch.Tensor,
     ) -> torch.Tensor:
-        """Training: candidate-aware user representations.
+        """Training: one user representation per behavior.
+
+        ``candidate_repr`` is accepted for API compatibility but not used —
+        paper eq. 9 is candidate-independent.
 
         Returns:
-            (B, C, D) — per-candidate user representations.
+            (B, D) user representation.
         """
-        enhanced = self._encode_history_graph(
+        user_node, news = self._encode_history_graph(
             history_title,
             history_abstract,
             history_category,
             history_subcategory,
             history_mask,
         )
-        return self.candidate_attention(enhanced, candidate_repr, history_mask)
+        return self.user_attention(news, user_node, mask=history_mask)
 
     def forward(self, inputs: torch.Tensor, **kwargs) -> torch.Tensor:
         """Evaluation: concatenated history → single user vector.
 
         Called by the shared evaluation adapter with a concatenated tensor
         ``[title | abstract | category | subcategory]`` per history slot.
-
-        Args:
-            inputs: (B, H, title_len + abstract_len + 2)
-
-        Returns:
-            (B, D) — single user representation.
+        Uses the same attention mechanism as the training path.
         """
         cfg = self.config
         title_len = cfg.max_title_length
@@ -715,14 +581,14 @@ class CROWNUserEncoder(nn.Module):
         history_subcategory = inputs[:, :, title_len + abstract_len + 1]
         history_mask = inputs.any(dim=-1)  # (B, H)
 
-        enhanced = self._encode_history_graph(
+        user_node, news = self._encode_history_graph(
             history_title,
             history_abstract,
             history_category,
             history_subcategory,
             history_mask,
         )
-        return self.eval_attention(enhanced, mask=history_mask)
+        return self.user_attention(news, user_node, mask=history_mask)
 
 
 # ======================================================================
@@ -791,9 +657,7 @@ class CROWN(BaseModel):
         )
 
         # User encoder
-        self.user_encoder = CROWNUserEncoder(
-            config, self.news_encoder, num_categories + 1
-        )
+        self.user_encoder = CROWNUserEncoder(config, self.news_encoder)
 
         # Store alpha for auxiliary loss weighting
         self.alpha = config.alpha
@@ -835,19 +699,19 @@ class CROWN(BaseModel):
         directly — this method is only for training.
         """
         # Encode candidates (with auxiliary loss)
-        cand_full, cand_title_intent = self._encode_candidates(
+        cand_full, _ = self._encode_candidates(
             inputs["cand_tokens"],
             inputs["cand_abstract_tokens"],
             inputs["cand_category"],
             inputs["cand_subcategory"],
             training=training,
         )
+        # Snapshot now — history encoding below calls news_encoder with
+        # compute_aux_loss=False, which overwrites self.auxiliary_loss.
+        self._aux_loss_snapshot = self.news_encoder.auxiliary_loss
 
-        # History mask
         history_mask = inputs["hist_tokens"].any(dim=-1)  # (B, H)
 
-        # Encode user (candidate-aware during training)
-        # User encoder uses full news repr for GNN context
         user_repr = self.user_encoder.forward_with_candidates(
             history_title=inputs["hist_tokens"],
             history_abstract=inputs["hist_abstract_tokens"],
@@ -855,16 +719,12 @@ class CROWN(BaseModel):
             history_subcategory=inputs["hist_subcategory"],
             history_mask=history_mask,
             candidate_repr=cand_full,
-        )  # (B, C, news_emb_dim)
+        )  # (B, news_emb_dim) — candidate-independent (paper eq. 9)
 
-        # Click prediction uses only title intent (paper §4.3)
-        # Project user repr to title intent dim for dot product
-        scores = (
-            user_repr[:, :, : self.config.intent_embedding_dim] * cand_title_intent
-        ).sum(dim=-1)
-
-        return scores  # raw logits (B, C)
+        # Broadcast user rep over candidates, full-vector dot product.
+        scores = (user_repr.unsqueeze(1) * cand_full).sum(dim=-1)
+        return scores
 
     def get_auxiliary_loss(self) -> torch.Tensor:
         """Return weighted auxiliary loss from the news encoder."""
-        return self.alpha * self.news_encoder.auxiliary_loss
+        return self.alpha * self._aux_loss_snapshot
