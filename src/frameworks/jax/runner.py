@@ -228,6 +228,11 @@ def run(cfg: DictConfig):
         label_smoothing=spec.training.loss.get("label_smoothing", 0.0),
     )
 
+    # Auxiliary loss (e.g. CROWN category prediction)
+    aux_loss_fn = None
+    if hasattr(model, "get_auxiliary_loss"):
+        aux_loss_fn = lambda m: m.get_auxiliary_loss()
+
     # Train
     best_metrics = training_loop(
         model=model,
@@ -236,6 +241,7 @@ def run(cfg: DictConfig):
         learning_rate=cfg.train.learning_rate,
         early_stopping_patience=cfg.train.early_stopping.patience,
         loss_fn=loss_fn,
+        get_aux_loss=aux_loss_fn,
         eval_fn=eval_fn if cfg.eval.fast_evaluation else None,
         enable_wandb=cfg.logging.enable_wandb,
         save_dir=str(output_run_dir / "models"),

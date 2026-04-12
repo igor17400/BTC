@@ -36,11 +36,13 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 
-def make_train_step(loss_fn):
+def make_train_step(loss_fn, get_aux_loss=None):
     """Create a JIT-compiled training step that uses the given loss function.
 
     Args:
         loss_fn: Callable ``(y_true, y_pred) -> scalar`` loss function.
+        get_aux_loss: Optional callable ``(model) -> scalar`` that returns
+            an auxiliary loss term (e.g. CROWN category prediction).
 
     Returns:
         A JIT-compiled ``train_step(model, optimizer, features, labels)`` function.
@@ -57,7 +59,10 @@ def make_train_step(loss_fn):
 
         def _loss(model):
             preds = model(batch_features, training=True)
-            return loss_fn(batch_labels, preds)
+            total = loss_fn(batch_labels, preds)
+            if get_aux_loss is not None:
+                total = total + get_aux_loss(model)
+            return total
 
         loss, grads = nnx.value_and_grad(_loss)(model)
         optimizer.update(model, grads)
@@ -133,6 +138,7 @@ def training_loop(
     weight_decay: float = 0.0,
     early_stopping_patience: int = 5,
     loss_fn=None,
+    get_aux_loss=None,
     # Optional evaluation hooks
     eval_fn=None,
     eval_kwargs: dict[str, Any] | None = None,
@@ -171,7 +177,7 @@ def training_loop(
 
         loss_fn = categorical_cross_entropy
 
-    train_step = make_train_step(loss_fn)
+    train_step = make_train_step(loss_fn, get_aux_loss=get_aux_loss)
 
     # ---- Optimiser -------------------------------------------------------
     if weight_decay > 0:

@@ -213,6 +213,7 @@ _MODEL_CLASS_PATHS = {
         "nrms": "src.frameworks.jax.models.nrms.NRMS",
         "naml": "src.frameworks.jax.models.naml.NAML",
         "lstur": "src.frameworks.jax.models.lstur.LSTUR",
+        "crown": "src.frameworks.jax.models.crown.CROWN",
         "pprec": "src.frameworks.jax.models.pprec.PPRec",
     },
 }
