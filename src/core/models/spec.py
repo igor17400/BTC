@@ -162,11 +162,35 @@ def spec_to_pprec_config(spec: DictConfig) -> PPRecConfig:
     )
 
 
+def spec_to_digat_config(spec: DictConfig) -> "DIGATConfig":
+    """Convert a parsed DIGAT spec into DIGATConfig."""
+    from src.core.models.configs import DIGATConfig
+
+    ne = spec.model.architecture.news_encoder
+    ge = spec.model.architecture.graph_encoder
+    return DIGATConfig(
+        embedding_size=spec.model.embedding.size,
+        dropout_rate=spec.model.dropout_rate,
+        seed=spec.model.seed,
+        msa_head_num=ne.get("msa_head_num", 16),
+        msa_head_dim=ne.get("msa_head_dim", 25),
+        attention_dim=ne.get("attention_dim", 256),
+        graph_depth=ge.get("graph_depth", 3),
+        sag_hops=ge.get("sag_hops", 2),
+        sag_neighbors=ge.get("sag_neighbors", 5),
+        max_title_length=spec.inputs.title.max_length,
+        max_history_length=spec.inputs.history.max_length,
+        max_impressions_length=spec.inputs.impressions.max_length,
+        process_user_id=spec.inputs.get("process_user_id", False),
+    )
+
+
 _SPEC_CONVERTERS = {
     "nrms": spec_to_nrms_config,
     "naml": spec_to_naml_config,
     "lstur": spec_to_lstur_config,
     "crown": spec_to_crown_config,
+    "digat": spec_to_digat_config,
     "pprec": spec_to_pprec_config,
 }
 
@@ -207,6 +231,7 @@ _MODEL_CLASS_PATHS = {
         "naml": "src.frameworks.pytorch.models.naml.NAML",
         "lstur": "src.frameworks.pytorch.models.lstur.LSTUR",
         "crown": "src.frameworks.pytorch.models.crown.CROWN",
+        "digat": "src.frameworks.pytorch.models.digat.DIGAT",
         "pprec": "src.frameworks.pytorch.models.pprec.PPRec",
     },
     "jax": {

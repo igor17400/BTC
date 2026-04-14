@@ -202,7 +202,58 @@ def run(cfg: DictConfig):
     console.log(f"Model {spec.model.name} instantiated for PyTorch.")
 
     # Train dataloader
-    features, labels = _build_train_features(dataset_provider)
+    if spec.model.name.lower() == "digat":
+        from src.core.models.configs import DIGATConfig
+        from src.frameworks.pytorch.digat_features import build_digat_train_features
+
+        sag_config = spec.model.architecture.graph_encoder
+        digat_cfg = DIGATConfig(
+            sag_hops=sag_config.get("sag_hops", 2),
+            sag_neighbors=sag_config.get("sag_neighbors", 5),
+            max_title_length=spec.inputs.title.max_length,
+            max_history_length=spec.inputs.history.max_length,
+            max_impressions_length=spec.inputs.impressions.max_length,
+        )
+        if hasattr(dataset_provider, "dataset_path"):
+            from src.core.data.processing.news import read_all_news
+            from src.core.data.processing.sag import construct_sag
+
+            all_news_df = read_all_news(dataset_provider.dataset_path)
+            id_map = dataset_provider.news_str_id_to_int_idx
+            cache_dir = dataset_provider.dataset_path / "processed"
+            sag_data = construct_sag(
+                all_news_df, id_map,
+                sag_hops=digat_cfg.sag_hops,
+                sag_neighbors=digat_cfg.sag_neighbors,
+                cache_dir=cache_dir,
+            )
+        else:
+            num_news = processed_news["tokens"].shape[0]
+            G = digat_cfg.news_graph_size
+            sag_data = {
+                "news_node_ID": np.zeros((num_news, G), dtype=np.int32),
+                "news_graph": np.eye(G, dtype=np.bool_)[None].repeat(num_news, axis=0),
+                "news_graph_mask": np.ones((num_news, G), dtype=np.bool_),
+            }
+        num_categories = int(processed_news.get("num_categories", 18)) + 1
+
+        # Build behaviors→SAG ID remap (the two pipelines use different int mappings)
+        from src.frameworks.pytorch.digat_features import build_id_remap
+        remap_path = dataset_provider.dataset_path / "processed" / "behaviors_to_sag_remap.npy" if hasattr(dataset_provider, "dataset_path") else None
+        id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
+
+        features, labels = build_digat_train_features(
+            dataset_provider.train_behaviors_data,
+            processed_news, sag_data,
+            max_history=digat_cfg.max_history_length,
+            max_impressions=digat_cfg.max_impressions_length,
+            num_categories=num_categories,
+            news_graph_size=digat_cfg.news_graph_size,
+            max_title_length=digat_cfg.max_title_length,
+            id_remap=id_remap,
+        )
+    else:
+        features, labels = _build_train_features(dataset_provider)
     train_dataloader = create_train_dataloader(
         features=features,
         labels=labels,
@@ -230,25 +281,36 @@ def run(cfg: DictConfig):
         else None
     )
 
-    def eval_fn(model, mode="val"):
-        provider = _build_eval_dataloaders(dataset_provider, cfg, mode=mode)
-        behaviors_data = (
-            dataset_provider.val_behaviors_data
-            if mode == "val"
-            else dataset_provider.test_behaviors_data
-        )
-        with Progress(transient=True) as progress:
-            return evaluate(
-                model=model,
-                news_dataloader=provider["news_dataloader"],
-                user_hist_dataloader=provider["user_hist_dataloader"],
-                impression_iterator=provider["impression_iterator"],
-                behaviors_data=behaviors_data,
-                metrics_calculator=metrics_engine,
-                progress=progress,
-                int_to_news_id_map=int_to_news_id_map,
-                mode=mode,
+    if spec.model.name.lower() == "digat":
+        from src.frameworks.pytorch.digat_eval import digat_evaluate
+
+        def eval_fn(model, mode="val"):
+            return digat_evaluate(
+                model, dataset_provider, processed_news, sag_data,
+                metrics_calculator=metrics_engine, mode=mode,
+                batch_size=cfg.eval.batch_size,
+                id_remap=id_remap,
             )
+    else:
+        def eval_fn(model, mode="val"):
+            provider = _build_eval_dataloaders(dataset_provider, cfg, mode=mode)
+            behaviors_data = (
+                dataset_provider.val_behaviors_data
+                if mode == "val"
+                else dataset_provider.test_behaviors_data
+            )
+            with Progress(transient=True) as progress:
+                return evaluate(
+                    model=model,
+                    news_dataloader=provider["news_dataloader"],
+                    user_hist_dataloader=provider["user_hist_dataloader"],
+                    impression_iterator=provider["impression_iterator"],
+                    behaviors_data=behaviors_data,
+                    metrics_calculator=metrics_engine,
+                    progress=progress,
+                    int_to_news_id_map=int_to_news_id_map,
+                    mode=mode,
+                )
 
     # Loss function from config
     loss_fn = get_loss(

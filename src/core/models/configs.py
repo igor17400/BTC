@@ -122,6 +122,58 @@ class CROWNConfig:
 
 
 @dataclass
+class DIGATConfig:
+    """Configuration for DIGAT (EMNLP 2022 Findings).
+
+    Dual Interactive Graph Attention Networks for news recommendation.
+    Defaults match ``reference_codes/digat/config.py``.
+    """
+
+    # Word embedding
+    embedding_size: int = 300
+    dropout_rate: float = 0.2
+    seed: int = 42
+
+    # News encoder (MSA: multi-head self-attention)
+    msa_head_num: int = 16
+    msa_head_dim: int = 25  # news_embedding_dim = 16 * 25 = 400
+    attention_dim: int = 256
+
+    # Dual graph interaction
+    graph_depth: int = 3
+
+    # Semantic Augmented Graph (precomputed offline)
+    sag_hops: int = 2
+    sag_neighbors: int = 5
+    # news_graph_size is computed: 1 + 5 + 5*4 = 26 for defaults above
+
+    # Input constraints
+    max_title_length: int = 32
+    max_history_length: int = 50
+    max_impressions_length: int = 5
+
+    # Training
+    process_user_id: bool = False
+    gradient_clip_norm: float = 1.0
+
+    @property
+    def news_embedding_dim(self) -> int:
+        return self.msa_head_num * self.msa_head_dim
+
+    @property
+    def news_graph_size(self) -> int:
+        size = 1
+        neighbors = 1
+        for i in range(self.sag_hops):
+            if i == 0:
+                neighbors *= self.sag_neighbors
+            else:
+                neighbors *= self.sag_neighbors - 1
+            size += neighbors
+        return size
+
+
+@dataclass
 class PPRecConfig:
     """Configuration class for PP-Rec model parameters.
 

@@ -28,6 +28,7 @@ dependencies = [
   "plotly>=5.13.0",
   "seaborn>=0.12.0",
   "wordcloud>=1.9.0",
+  "sentence-transformers>=5.4.0",
 ]
 
 [project.optional-dependencies]
@@ -154,16 +155,12 @@ conflicts = [
 [[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
-explicit = true
 
 [tool.uv.sources]
-# `torch` resolution: route to the CUDA 12.6 index when the user requests
-# the GPU extras. Otherwise (default), uv pulls torch from PyPI, which
-# yields the right wheel for the user's platform (CPU on Mac, etc.).
-torch = [
-  { index = "pytorch-cu126", extra = "pytorch-cuda" },
-  { index = "pytorch-cu126", extra = "all-cuda" },
-]
+# Always resolve torch from the CUDA 12.6 index so that transitive
+# dependencies (e.g. sentence-transformers) don't pull a cu130 wheel
+# that requires a newer driver than we have.
+torch = { index = "pytorch-cu126" }
 
 [tool.pyright]
 typeCheckingMode = "basic"
