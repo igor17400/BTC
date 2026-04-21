@@ -2,11 +2,17 @@
 
 - :mod:`.default` — shared fast evaluation (dot-product scoring).
 - :mod:`.pp_rec` — PP-Rec evaluation with full popularity-aware scoring.
+- :mod:`.digat` — DIGAT evaluation with dual graph interaction scoring.
 - :mod:`.utils` — shared precomputation and metric helpers.
 
-Use :func:`get_evaluator` to resolve an evaluator by name. The spec YAML
-declares which evaluator a model uses via ``evaluation.evaluator``
-(defaults to ``"default"``).
+Use :func:`get_evaluator` to resolve a registry-based evaluator by name.
+The spec YAML declares which evaluator a model uses via
+``evaluation.evaluator`` (defaults to ``"default"``).
+
+Note: DIGAT uses :func:`.digat.digat_evaluate` directly rather than the
+registry, because its calling convention differs (it takes raw
+``news_encoder``, ``graph_encoder``, and dataset-level arguments instead
+of dataloaders).
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from .default import fast_evaluate
+from .digat import digat_evaluate
 from .pp_rec import pprec_fast_evaluate
 
 if TYPE_CHECKING:
@@ -49,6 +56,7 @@ def get_evaluator(evaluator_name: str, adapter: FrameworkAdapter) -> Callable:
 
 __all__ = [
     "EVALUATOR_REGISTRY",
+    "digat_evaluate",
     "fast_evaluate",
     "get_evaluator",
     "pprec_fast_evaluate",

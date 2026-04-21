@@ -106,3 +106,92 @@ class PyTorchAdapter:
                 .cpu()
                 .numpy()
             )
+
+    # ------------------------------------------------------------------
+    # DIGAT-specific methods
+    # ------------------------------------------------------------------
+
+    def encode_digat_news(
+        self,
+        news_encoder: Any,
+        tokens: Any,
+        mask: Any,
+    ) -> Any:
+        """Run the DIGAT MSA news encoder on a raw token batch."""
+        news_encoder.eval()
+        device = next(news_encoder.parameters()).device
+        tokens_t = torch.as_tensor(tokens, dtype=torch.long).to(device)
+        mask_t = torch.as_tensor(mask, dtype=torch.float32).to(device)
+        with torch.no_grad():
+            emb = news_encoder(tokens_t.unsqueeze(1), mask_t.unsqueeze(1))
+        return emb.squeeze(1).detach().cpu().numpy()
+
+    def encode_digat_graph_context(
+        self,
+        graph_encoder: Any,
+        sag_emb: Any,
+        sag_mask: Any,
+    ) -> Any:
+        """Compute SAG graph context vectors for a batch of news."""
+        graph_encoder.eval()
+        device = next(graph_encoder.parameters()).device
+        sag_emb_t = torch.as_tensor(sag_emb, dtype=torch.float32).to(device)
+        sag_mask_t = torch.as_tensor(sag_mask, dtype=torch.float32).to(device)
+        with torch.no_grad():
+            ctx = graph_encoder._news_graph_context(sag_emb_t, sag_mask_t)
+        return ctx.detach().cpu().numpy()
+
+    def score_digat_impression(
+        self,
+        graph_encoder: Any,
+        cand_sag_emb: Any,
+        cand_sag_graph: Any,
+        cand_sag_mask: Any,
+        user_hist_emb: Any,
+        u_graph: Any,
+        u_cat_mask: Any,
+        u_cat_indices: Any,
+        num_categories: int,
+    ) -> Any:
+        """Run dual graph interaction and return per-candidate scores."""
+        graph_encoder.eval()
+        device = next(graph_encoder.parameters()).device
+        C = cand_sag_emb.shape[0]
+
+        cand_emb_t = torch.as_tensor(cand_sag_emb, dtype=torch.float32).to(device)
+        cand_graph_t = torch.as_tensor(cand_sag_graph, dtype=torch.float32).to(device)
+        cand_mask_t = torch.as_tensor(cand_sag_mask, dtype=torch.float32).to(device)
+
+        # Broadcast per-impression user data across the C candidates
+        hist_t = (
+            torch.as_tensor(user_hist_emb, dtype=torch.float32)
+            .to(device)
+            .unsqueeze(0)
+            .expand(C, -1, -1)
+        )
+        u_graph_t = (
+            torch.as_tensor(u_graph, dtype=torch.float32)
+            .to(device)
+            .unsqueeze(0)
+            .expand(C, -1, -1)
+        )
+        u_cat_mask_t = (
+            torch.as_tensor(u_cat_mask, dtype=torch.float32)
+            .to(device)
+            .unsqueeze(0)
+            .expand(C, -1)
+        )
+        u_cat_idx_t = (
+            torch.as_tensor(u_cat_indices, dtype=torch.long)
+            .to(device)
+            .unsqueeze(0)
+            .expand(C, -1)
+        )
+
+        with torch.no_grad():
+            news_ctx, user_ctx = graph_encoder(
+                cand_emb_t, cand_graph_t, cand_mask_t,
+                hist_t, u_graph_t, u_cat_mask_t, u_cat_idx_t,
+                num_categories,
+            )
+        return (news_ctx * user_ctx).sum(dim=-1).detach().cpu().numpy()

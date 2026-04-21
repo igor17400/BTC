@@ -203,8 +203,8 @@ def run(cfg: DictConfig):
 
     # Train dataloader
     if spec.model.name.lower() == "digat":
+        from src.core.data.processing.digat import build_digat_train_features
         from src.core.models.configs import DIGATConfig
-        from src.frameworks.pytorch.digat_features import build_digat_train_features
 
         sag_config = spec.model.architecture.graph_encoder
         digat_cfg = DIGATConfig(
@@ -238,7 +238,7 @@ def run(cfg: DictConfig):
         num_categories = int(processed_news.get("num_categories", 18)) + 1
 
         # Build behaviors→SAG ID remap (the two pipelines use different int mappings)
-        from src.frameworks.pytorch.digat_features import build_id_remap
+        from src.core.data.processing.digat import build_id_remap
         remap_path = dataset_provider.dataset_path / "processed" / "behaviors_to_sag_remap.npy" if hasattr(dataset_provider, "dataset_path") else None
         id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
 
@@ -282,12 +282,24 @@ def run(cfg: DictConfig):
     )
 
     if spec.model.name.lower() == "digat":
-        from src.frameworks.pytorch.digat_eval import digat_evaluate
+        from src.core.models.evaluations.digat import digat_evaluate
+        from src.frameworks.pytorch.models.adapter import PyTorchAdapter
+
+        _adapter = PyTorchAdapter()
 
         def eval_fn(model, mode="val"):
             return digat_evaluate(
-                model, dataset_provider, processed_news, sag_data,
-                metrics_calculator=metrics_engine, mode=mode,
+                news_encoder=model.news_encoder,
+                graph_encoder=model.graph_encoder,
+                dataset_provider=dataset_provider,
+                processed_news=processed_news,
+                sag_data=sag_data,
+                adapter=_adapter,
+                metrics_calculator=metrics_engine,
+                D=model.D,
+                num_categories=model.num_categories,
+                max_history=model.max_history,
+                mode=mode,
                 batch_size=cfg.eval.batch_size,
                 id_remap=id_remap,
             )

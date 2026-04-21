@@ -108,7 +108,7 @@ def test_model_forward_backward():
 # ---------- 4. User graph construction ----------
 
 def test_user_graph_construction():
-    from src.frameworks.pytorch.digat_features import build_user_graphs
+    from src.core.data.processing.digat import build_user_graphs
 
     N, H = 8, 50
     num_categories = 11  # 10 + 1 padding
@@ -130,7 +130,7 @@ def test_user_graph_construction():
 
 def test_evaluator():
     from src.frameworks.pytorch.models.digat import DIGAT
-    from src.frameworks.pytorch.digat_features import build_user_graphs
+    from src.core.data.processing.digat import build_user_graphs
 
     B, H, T = 4, 50, 32
     num_news = 50

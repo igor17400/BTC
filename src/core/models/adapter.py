@@ -72,3 +72,92 @@ class FrameworkAdapter(Protocol):
             ``(batch_size, user_dim)`` numpy array of user vectors.
         """
         ...
+
+    # ------------------------------------------------------------------
+    # DIGAT-specific methods (optional — only needed by DIGAT adapters)
+    # ------------------------------------------------------------------
+
+    def encode_digat_news(
+        self,
+        news_encoder: Any,
+        tokens: np.ndarray,
+        mask: np.ndarray,
+    ) -> np.ndarray:
+        """Run the DIGAT news (MSA) encoder on a raw token batch.
+
+        Unlike :meth:`encode_news`, this accepts raw token arrays rather
+        than dataloader feature dicts, because DIGAT pre-computes
+        embeddings for the entire corpus by iterating index ranges.
+
+        Args:
+            news_encoder: Framework-native DIGAT news encoder module.
+            tokens: ``(B, T)`` int array of title token IDs.
+            mask: ``(B, T)`` float array of token masks (1 = valid).
+
+        Returns:
+            ``(B, D)`` numpy array of news embeddings.
+        """
+        ...
+
+    def encode_digat_graph_context(
+        self,
+        graph_encoder: Any,
+        sag_emb: np.ndarray,
+        sag_mask: np.ndarray,
+    ) -> np.ndarray:
+        """Compute SAG graph context vectors for a batch of news.
+
+        Wraps the graph encoder's internal ``_news_graph_context`` method
+        which runs gated attention over a news article's SAG subgraph
+        nodes to produce a single context vector per news.
+
+        Args:
+            graph_encoder: Framework-native DIGAT graph encoder module.
+            sag_emb: ``(B, G_n, D)`` float — SAG node embeddings for
+                each news in the batch.
+            sag_mask: ``(B, G_n)`` float — valid-node mask per SAG graph.
+
+        Returns:
+            ``(B, D)`` numpy array of graph context vectors.
+        """
+        ...
+
+    def score_digat_impression(
+        self,
+        graph_encoder: Any,
+        cand_sag_emb: np.ndarray,
+        cand_sag_graph: np.ndarray,
+        cand_sag_mask: np.ndarray,
+        user_hist_emb: np.ndarray,
+        u_graph: np.ndarray,
+        u_cat_mask: np.ndarray,
+        u_cat_indices: np.ndarray,
+        num_categories: int,
+    ) -> np.ndarray:
+        """Run dual graph interaction and return per-candidate scores.
+
+        Feeds the candidate SAG subgraphs and the user history graph
+        through the DIGAT graph encoder simultaneously.  The two
+        co-dependent output context vectors are combined via element-wise
+        dot product to produce one score per candidate.
+
+        The adapter is responsible for broadcasting per-impression user
+        data to match the candidate batch dimension C before invoking
+        the framework-native graph encoder.
+
+        Args:
+            graph_encoder: Framework-native DIGAT graph encoder module.
+            cand_sag_emb: ``(C, G_n, D)`` — candidate SAG node embeddings.
+            cand_sag_graph: ``(C, G_n, G_n)`` — candidate SAG adjacency.
+            cand_sag_mask: ``(C, G_n)`` — candidate SAG valid-node mask.
+            user_hist_emb: ``(H, D)`` — history news embeddings for this
+                impression (un-broadcast; adapter expands to C).
+            u_graph: ``(G_u, G_u)`` — user-topic graph adjacency.
+            u_cat_mask: ``(num_categories,)`` — active category mask.
+            u_cat_indices: ``(H,)`` — category index per history slot.
+            num_categories: Total number of topic categories.
+
+        Returns:
+            ``(C,)`` numpy array of relevance scores.
+        """
+        ...
