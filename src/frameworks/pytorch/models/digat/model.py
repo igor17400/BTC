@@ -352,6 +352,7 @@ class DIGAT(BaseModel):
         self.graph_encoder.topic_node_emb = nn.Parameter(
             torch.zeros(self.num_categories, config.news_embedding_dim)
         )
+        nn.init.uniform_(self.graph_encoder.topic_node_emb, -0.1, 0.1)
 
         self.news_graph_size = config.news_graph_size
         self.max_history = config.max_history_length

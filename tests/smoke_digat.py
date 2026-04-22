@@ -15,7 +15,7 @@ import torch
 # ---------- 1. Scatter operations ----------
 
 def test_scatter_ops():
-    from src.frameworks.pytorch.models.digat import scatter_softmax, scatter_sum
+    from src.frameworks.pytorch.models.digat.layers import scatter_softmax, scatter_sum
 
     src = torch.tensor([[1.0, 2.0, 3.0, 4.0]])
     idx = torch.tensor([[0, 0, 1, 1]])

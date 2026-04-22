@@ -359,6 +359,14 @@ def run(cfg: DictConfig):
         if not dataset_provider.test_behaviors_data:
             dataset_provider._load_data("test")
 
+        # DIGAT: rebuild id_remap now that test data is loaded. It was built
+        # at startup before test behaviors existed, so test-exclusive news
+        # IDs were mapped to 0 (padding), silently corrupting test metrics.
+        if spec.model.name.lower() == "digat":
+            if remap_path is not None and remap_path.exists():
+                remap_path.unlink()
+            id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
+
         test_metrics = eval_fn(model, mode="test")
         if test_metrics:
             log_test_results(test_metrics)
