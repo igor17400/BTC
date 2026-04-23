@@ -16,8 +16,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
 
 # ======================================================================
 # Attention primitives (mirror GLORY's ``src/models/base/layers.py``)
@@ -95,11 +93,27 @@ class MultiHeadAttention(nn.Module):
         batch_size = Q.shape[0]
         if mask is not None:
             mask = mask.unsqueeze(dim=1).expand(-1, self.head_num, -1)
-        q = self.W_Q(Q).view(batch_size, -1, self.head_num, self.head_dim).transpose(1, 2)
-        k = self.W_K(K).view(batch_size, -1, self.head_num, self.head_dim).transpose(1, 2)
-        v = self.W_V(V).view(batch_size, -1, self.head_num, self.head_dim).transpose(1, 2)
+        q = (
+            self.W_Q(Q)
+            .view(batch_size, -1, self.head_num, self.head_dim)
+            .transpose(1, 2)
+        )
+        k = (
+            self.W_K(K)
+            .view(batch_size, -1, self.head_num, self.head_dim)
+            .transpose(1, 2)
+        )
+        v = (
+            self.W_V(V)
+            .view(batch_size, -1, self.head_num, self.head_dim)
+            .transpose(1, 2)
+        )
         ctx = self.attn(q, k, v, mask)
-        out = ctx.transpose(1, 2).contiguous().view(batch_size, -1, self.head_num * self.head_dim)
+        out = (
+            ctx.transpose(1, 2)
+            .contiguous()
+            .view(batch_size, -1, self.head_num * self.head_dim)
+        )
         return out + Q if self.residual else out
 
 
@@ -117,7 +131,8 @@ class AttentionPooling(nn.Module):
         self.att_fc2 = nn.Linear(hidden_size, 1)
 
         nn.init.xavier_uniform_(
-            self.att_fc1.weight, gain=nn.init.calculate_gain("tanh"),
+            self.att_fc1.weight,
+            gain=nn.init.calculate_gain("tanh"),
         )
         nn.init.zeros_(self.att_fc1.bias)
         nn.init.xavier_uniform_(self.att_fc2.weight)
@@ -217,9 +232,7 @@ class GatedGraphConv(nn.Module):
             nn.init.xavier_uniform_(self.weight[i])
         # GRUCell is self-initialised by PyTorch default.
 
-    def forward(
-        self, x: torch.Tensor, edge_index: torch.Tensor
-    ) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
         """Propagate features across a graph.
 
         Args:
@@ -242,11 +255,13 @@ class GatedGraphConv(nn.Module):
 
         src, dst = edge_index[0], edge_index[1]
         num_nodes = x.shape[0]
+
         for i in range(self.num_layers):
             # Message: W_i @ h[src]  (per-layer weight)
-            m = x @ self.weight[i]                          # (N, D)
+            m = x @ self.weight[i]  # (N, D)
             # Aggregate at destination nodes.
-            agg = _scatter_add(m[src], dst, num_nodes)      # (N, D)
+            agg = _scatter_add(m[src], dst, num_nodes)  # (N, D)
             # Gated update.
-            x = self.rnn(agg, x)                            # (N, D)
+            x = self.rnn(agg, x)  # (N, D)
+
         return x

@@ -26,7 +26,6 @@ from typing import Any
 import numpy as np
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 
 from src.core.models.configs import GLORYConfig
 
@@ -37,7 +36,6 @@ from .layers import (
     GatedGraphConv,
     MultiHeadAttention,
 )
-
 
 # ======================================================================
 # News encoder (local — no graph)
@@ -99,11 +97,14 @@ class GLORYNewsEncoder(nn.Module):
         flat_title = title_tokens.reshape(B * N, self.title_size).long()
 
         word_emb = self.dropout1(self.word_embedding(flat_title))  # (B*N, T, E)
-        attn_out = self.msa(word_emb, word_emb, word_emb, mask)     # (B*N, T, D)
+
+        attn_out = self.msa(word_emb, word_emb, word_emb, mask)  # (B*N, T, D)
         attn_out = self.layernorm1(attn_out)
         attn_out = self.dropout2(attn_out)
-        pooled = self.attn_pool(attn_out, mask)                     # (B*N, D)
+
+        pooled = self.attn_pool(attn_out, mask)  # (B*N, D)
         pooled = self.layernorm2(pooled)
+
         return pooled.view(B, N, self.news_dim)
 
 
@@ -122,13 +123,16 @@ class GLORYClickEncoder(nn.Module):
 
     def forward(
         self,
-        title_emb: torch.Tensor,    # (B, N, D)
-        graph_emb: torch.Tensor,    # (B, N, D)
+        title_emb: torch.Tensor,  # (B, N, D)
+        graph_emb: torch.Tensor,  # (B, N, D)
     ) -> torch.Tensor:
         B, N = title_emb.shape[:2]
-        stacked = torch.stack([title_emb, graph_emb], dim=-2)       # (B, N, 2, D)
+
+        stacked = torch.stack([title_emb, graph_emb], dim=-2)  # (B, N, 2, D)
         stacked = stacked.view(B * N, 2, self.news_dim)
-        fused = self.attn_pool(stacked)                             # (B*N, D)
+
+        fused = self.attn_pool(stacked)  # (B*N, D)
+
         return fused.view(B, N, self.news_dim)
 
 
@@ -139,8 +143,11 @@ class GLORYUserEncoder(nn.Module):
         super().__init__()
         self.news_dim = config.head_num * config.head_dim
         self.msa = MultiHeadAttention(
-            self.news_dim, self.news_dim, self.news_dim,
-            config.head_num, config.head_dim,
+            self.news_dim,
+            self.news_dim,
+            self.news_dim,
+            config.head_num,
+            config.head_dim,
         )
         self.attn_pool = AttentionPooling(self.news_dim, config.attention_hidden_dim)
 
@@ -191,14 +198,19 @@ class GLORY(BaseModel):
 
         vocab_size = int(processed_news["vocab_size"])
         embeddings_matrix = np.asarray(processed_news["embeddings"])
-        self.word_embedding = nn.Embedding(vocab_size, config.word_emb_dim, padding_idx=0)
+
+        self.word_embedding = nn.Embedding(
+            vocab_size, config.word_emb_dim, padding_idx=0
+        )
         self.word_embedding.weight = nn.Parameter(
             torch.tensor(embeddings_matrix, dtype=torch.float32)
         )
 
         self.local_news_encoder = GLORYNewsEncoder(config, self.word_embedding)
         self.global_news_encoder = GatedGraphConv(
-            self.news_dim, num_layers=config.gnn_num_layers, aggr="add",
+            self.news_dim,
+            num_layers=config.gnn_num_layers,
+            aggr="add",
         )
         self.click_encoder = GLORYClickEncoder(config)
         self.user_encoder = GLORYUserEncoder(config)
@@ -239,28 +251,31 @@ class GLORY(BaseModel):
         cand_tokens = inputs["cand_tokens"]
 
         # Valid-history mask (1 where mapping_idx != -1).
-        valid = (mapping_idx != -1)
-        mapping = mapping_idx.masked_fill(~valid, 0)                   # safe index
+        valid = mapping_idx != -1
+        mapping = mapping_idx.masked_fill(~valid, 0)  # safe index
 
         # Encode every subgraph node once with the local encoder.
-        flat = subgraph_x.unsqueeze(0)                                  # (1, N_total, feat)
-        x_encoded = self.local_news_encoder(flat).squeeze(0)            # (N_total, D)
+        flat = subgraph_x.unsqueeze(0)  # (1, N_total, feat)
+        x_encoded = self.local_news_encoder(flat).squeeze(0)  # (N_total, D)
 
         # GNN over the full (batched) subgraph.
-        graph_emb = self.global_news_encoder(x_encoded, edge_index)    # (N_total, D)
+        graph_emb = self.global_news_encoder(x_encoded, edge_index)  # (N_total, D)
 
         # Gather history embeddings from both views.
-        B, H = mapping.shape
-        clicked_title = x_encoded[mapping].masked_fill(~valid.unsqueeze(-1), 0)  # (B, H, D)
-        clicked_graph = graph_emb[mapping].masked_fill(~valid.unsqueeze(-1), 0)  # (B, H, D)
+        clicked_title = x_encoded[mapping].masked_fill(
+            ~valid.unsqueeze(-1), 0
+        )  # (B, H, D)
+        clicked_graph = graph_emb[mapping].masked_fill(
+            ~valid.unsqueeze(-1), 0
+        )  # (B, H, D)
 
         # Fuse → pool into user vector.
-        fused = self.click_encoder(clicked_title, clicked_graph)       # (B, H, D)
-        user_emb = self.user_encoder(fused, valid.float())             # (B, D)
+        fused = self.click_encoder(clicked_title, clicked_graph)  # (B, H, D)
+        user_emb = self.user_encoder(fused, valid.float())  # (B, D)
 
         # Candidates: encode locally then project.
-        cand_local = self.local_news_encoder(cand_tokens)              # (B, C, D)
-        cand_final = self.candidate_encoder(cand_local)                # (B, C, D)
+        cand_local = self.local_news_encoder(cand_tokens)  # (B, C, D)
+        cand_final = self.candidate_encoder(cand_local)  # (B, C, D)
 
         # Dot-product scoring.
-        return self.click_predictor(cand_final, user_emb)              # (B, C)
+        return self.click_predictor(cand_final, user_emb)  # (B, C)
