@@ -342,22 +342,26 @@ class DIGATGraphEncoder(nnx.Module):
         deterministic: bool = True,
     ) -> jax.Array:
         """Single cross-interactive graph attention update."""
-        batch_size, num_nodes, _ = emb.shape
+        batch_size, _, _ = emb.shape
         emb = self.input_dropout(emb, deterministic=deterministic)
         h = W_list[idx](emb)
+
         K1 = jnp.expand_dims(ffn1_list[idx](emb), axis=1)  # (B, 1, N, D)
         K2 = jnp.expand_dims(ffn2_list[idx](emb), axis=2)  # (B, N, 1, D)
         K3 = ffn3_list[idx](cross_ctx).reshape(batch_size, 1, 1, self.D)
+
         scores = jnp.squeeze(
             a_list[idx](jax.nn.relu(K1 + K2 + K3)),
             axis=-1,
         )  # (B, N, N)
         scores = jax.nn.leaky_relu(scores, negative_slope=0.2)
         scores = jnp.where(adj == 0, -1e9, scores)
+
         alpha = self.attn_dropout(
             jax.nn.softmax(scores, axis=2),
             deterministic=deterministic,
         )
+
         return jax.nn.relu(jnp.matmul(alpha, h)) + emb
 
     # ------------------------------------------------------------------
