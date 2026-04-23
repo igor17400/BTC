@@ -15,6 +15,7 @@ import pandas as pd
 from omegaconf import DictConfig, OmegaConf
 
 from src.core.io.logging import console, setup_logging
+from src.core.io.progress import set_default_backend
 
 FRAMEWORK_MODULES = {
     "keras": "src.frameworks.keras.runner",
@@ -109,6 +110,7 @@ def _run_multi_seed(cfg: DictConfig) -> None:
 def main(cfg: DictConfig) -> None:
     """Main entry point for training, configured by Hydra."""
     setup_logging(level=cfg.logging.level if hasattr(cfg.logging, "level") else "INFO")
+    set_default_backend(cfg.logging.get("progress_backend", "rich"))
 
     framework = getattr(cfg, "framework", "keras")
 

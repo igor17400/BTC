@@ -20,13 +20,13 @@ import jax.numpy as jnp
 import optax
 from flax import nnx
 from rich.console import Console
-from rich.progress import Progress
 
 import wandb
 from src.core.io.logging import (
     log_early_stopping,
     log_epoch_end,
 )
+from src.core.io.progress import ProgressManager, create_progress
 
 logger = logging.getLogger(__name__)
 
@@ -153,7 +153,7 @@ def training_loop(
     eval_fn=None,
     eval_kwargs: dict[str, Any] | None = None,
     # Logging
-    progress: Progress | None = None,
+    progress: ProgressManager | None = None,
     enable_wandb: bool = False,
     # Saving
     save_dir: str | Path | None = None,
@@ -174,7 +174,7 @@ def training_loop(
         eval_fn: Optional callable ``(model, **eval_kwargs) -> metrics_dict``
             to run at the end of each epoch.
         eval_kwargs: Keyword arguments forwarded to *eval_fn*.
-        progress: Rich ``Progress`` bar manager.
+        progress: Progress bar manager.
         enable_wandb: Whether to log metrics to Weights & Biases.
         save_dir: Directory for saving model checkpoints.
 
@@ -214,7 +214,7 @@ def training_loop(
     # ---- Progress --------------------------------------------------------
     own_progress = False
     if progress is None:
-        progress = Progress()
+        progress = create_progress()
         progress.start()
         own_progress = True
 

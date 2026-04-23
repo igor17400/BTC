@@ -5,9 +5,9 @@ import zipfile
 import numpy as np
 import requests
 import urllib3
-from rich.progress import Progress
 
 from src.core.data.loaders.cache import CacheManager
+from src.core.io.progress import create_progress
 
 # Disable SSL verification warnings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -75,7 +75,7 @@ class EmbeddingsManager:
         logger.info("Loading GloVe embeddings from txt file...")
         self.glove_embeddings = {}
 
-        with Progress() as progress:
+        with create_progress() as progress:
             file_size = txt_file.stat().st_size
             task = progress.add_task("Loading embeddings...", total=file_size)
 
@@ -112,7 +112,7 @@ class EmbeddingsManager:
         path.mkdir(parents=True, exist_ok=True)
 
         # Download the zip file
-        with Progress() as progress:
+        with create_progress() as progress:
             task = progress.add_task("Downloading GloVe...", total=None)
             # Disable SSL verification to handle expired certificates
             response = requests.get(url, stream=True, verify=False)
@@ -319,7 +319,7 @@ class EmbeddingsManager:
         logger.info(f"Loading BPEmb embeddings from txt file: {txt_file}")
         bpemb_embeddings = {}
 
-        with Progress() as progress:
+        with create_progress() as progress:
             file_size = txt_file.stat().st_size
             task = progress.add_task("Loading BPEmb embeddings...", total=file_size)
 
@@ -370,7 +370,7 @@ class EmbeddingsManager:
         logger.info(f"Downloading BPEmb embeddings for {language} from {url}")
 
         # Download the tar.gz file
-        with Progress() as progress:
+        with create_progress() as progress:
             task = progress.add_task(f"Downloading BPEmb {language}...", total=None)
             response = requests.get(url, stream=True, verify=False)
 

@@ -12,13 +12,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
+
+from src.core.io.progress import create_progress
 
 logger = logging.getLogger(__name__)
 
@@ -253,14 +248,7 @@ def process_behaviors(
     # ------------------------------------------------------------------
     initial_count = len(behaviors_df)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
+    with create_progress(console=console) as progress:
         filter_task = progress.add_task(
             "Filtering behaviors without at least one negative sample...",
             total=len(behaviors_df),
@@ -293,14 +281,7 @@ def process_behaviors(
     # ------------------------------------------------------------------
     # Main iteration
     # ------------------------------------------------------------------
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
+    with create_progress(console=console) as progress:
         task = progress.add_task(
             f"Processing {stage} behaviors...", total=len(behaviors_df)
         )

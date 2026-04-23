@@ -10,15 +10,9 @@ import re
 from collections.abc import Callable
 
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
 
 from src.core.data.stats import string_is_number
+from src.core.io.progress import create_progress
 
 logger = logging.getLogger(__name__)
 
@@ -106,14 +100,7 @@ def build_vocabulary(
     total_items = len(news_df) * 2  # titles + abstracts
     logger.info(f"Counting words from {len(news_df):,} news titles and abstracts...")
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
+    with create_progress(console=console) as progress:
         task = progress.add_task(
             "Counting words in titles and abstracts...", total=total_items
         )

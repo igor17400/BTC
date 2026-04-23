@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from rich.progress import Progress
 
+from src.core.io.progress import ProgressManager
 from src.core.io.saving import save_predictions_to_file_fn
 from src.core.models.adapter import FrameworkAdapter
 
@@ -24,7 +24,7 @@ def fast_evaluate(
     user_hist_dataloader: Any,
     impression_iterator: Any,
     metrics_calculator: Any,
-    progress: Progress,
+    progress: ProgressManager,
     adapter: FrameworkAdapter,
     behaviors_data: dict | None = None,
     int_to_news_id_map: dict[int, str] | None = None,

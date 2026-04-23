@@ -21,9 +21,9 @@ import logging
 from typing import Any
 
 import numpy as np
-from rich.progress import Progress
 
 from src.core.data.processing.models.digat import build_user_graphs
+from src.core.io.progress import create_progress
 from src.core.models.evaluations.utils import compute_metrics
 
 logger = logging.getLogger(__name__)
@@ -206,7 +206,7 @@ def digat_evaluate(
     # ------------------------------------------------------------------
     # 4. Compute metrics
     # ------------------------------------------------------------------
-    with Progress(transient=True) as progress:
+    with create_progress(transient=True) as progress:
         metrics = compute_metrics(
             group_labels, group_preds, metrics_calculator, progress
         )

@@ -8,15 +8,9 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
 
 from src.core.io.logging import console
+from src.core.io.progress import create_progress
 
 logger = logging.getLogger(__name__)
 
@@ -90,14 +84,7 @@ def _create_glove_embeddings(
                     loc=glove_mean_np, scale=glove_std_np, size=embedding_size
                 ).astype(np.float32)
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
+    with create_progress(console=console) as progress:
         task = progress.add_task("Populating embedding matrix...", total=len(vocab))
         for word, idx in vocab.items():
             if word in ("[PAD]", "[UNK]", "<NUM>"):

@@ -52,6 +52,7 @@ logging:
   enable_wandb: true
   experiment_name: ${framework}/${dataset.name}/${model_name}
   wandb_group: ${framework}/${dataset.name}/${model_name}
+  progress_backend: rich  # "rich" (interactive) or "tqdm" (line-by-line, for background agents)
 
 # Metrics configuration
 metrics:

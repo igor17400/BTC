@@ -8,17 +8,9 @@ import os
 
 import numpy as np
 from omegaconf import DictConfig
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
 
 from src.core.io.logging import console, setup_wandb_session
+from src.core.io.progress import create_progress
 from src.core.io.saving import get_output_run_dir
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
@@ -290,7 +282,7 @@ def run(cfg: DictConfig):
             if mode == "val"
             else dataset_provider.test_behaviors_data
         )
-        with Progress(transient=True) as progress:
+        with create_progress(transient=True) as progress:
             return evaluate(
                 model=model,
                 news_dataloader=news_dl,
@@ -316,17 +308,7 @@ def run(cfg: DictConfig):
         return eval_fn(model, mode="test")
 
     # Train
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(bar_width=None),
-        TaskProgressColumn(),
-        TimeElapsedColumn(),
-        TextColumn("|"),
-        TimeRemainingColumn(),
-        console=console,
-        transient=False,
-    ) as progress:
+    with create_progress(console=console) as progress:
         best_epoch_metrics, test_metrics = training_loop(
             model=model,
             train_dataset=train_dataloader,

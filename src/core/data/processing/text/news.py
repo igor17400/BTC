@@ -15,19 +15,13 @@ from typing import Any
 import numpy as np
 import pandas as pd
 from rich.console import Console
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeRemainingColumn,
-)
 
 from src.core.data.processing.text.vocabulary import (
     build_vocabulary,
     segment_text_into_words,
     tokenize_text,
 )
+from src.core.io.progress import create_progress
 
 logger = logging.getLogger(__name__)
 
@@ -146,14 +140,7 @@ def tokenize_all_news(
 
     _tokenize = tokenize_fn if tokenize_fn is not None else _default_tokenize
 
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[progress.description]{task.description}"),
-        BarColumn(),
-        TextColumn("[progress.percentage]{task.percentage:>3.0f}%"),
-        TimeRemainingColumn(),
-        console=console,
-    ) as progress:
+    with create_progress(console=console) as progress:
         task = progress.add_task(
             "Tokenizing all news titles and abstracts...", total=len(all_news_df)
         )

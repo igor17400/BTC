@@ -14,7 +14,7 @@ import urllib.request
 import zipfile
 from pathlib import Path
 
-from rich.progress import Progress
+from src.core.io.progress import ProgressManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,7 +58,7 @@ def _download_with_curl(url: str, dest: Path) -> None:
 
 
 def _download_with_urllib(
-    url: str, dest: Path, progress: Progress | None, task_id
+    url: str, dest: Path, progress: ProgressManager | None, task_id
 ) -> None:
     """Download using urllib (works when curl is unavailable)."""
     ssl_ctx = _build_ssl_context()
@@ -100,7 +100,7 @@ def _has_curl() -> bool:
 def download_file_with_retries(
     url: str,
     dest: Path,
-    progress: Progress | None = None,
+    progress: ProgressManager | None = None,
     task_id=None,
     max_retries: int = 3,
 ) -> None:

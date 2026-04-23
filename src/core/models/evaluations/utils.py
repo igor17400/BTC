@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from rich.progress import Progress
 
+from src.core.io.progress import ProgressManager
 from src.core.models.adapter import FrameworkAdapter
 
 # ---------------------------------------------------------------------------
@@ -22,7 +22,7 @@ def precompute_news_vectors(
     news_encoder: Any,
     news_dataloader: Any,
     adapter: FrameworkAdapter,
-    progress: Progress,
+    progress: ProgressManager,
 ) -> dict:
     """Precompute news vectors for every article in the dataloader.
 
@@ -30,7 +30,7 @@ def precompute_news_vectors(
         news_encoder: Framework-native news encoder module.
         news_dataloader: Iterable yielding ``{"news_id": ..., "news_features": ...}``.
         adapter: Framework adapter providing :meth:`encode_news` and :meth:`to_numpy`.
-        progress: Rich progress bar manager.
+        progress: Progress bar manager.
 
     Returns:
         ``{news_id: numpy_vector}`` dictionary.
@@ -47,7 +47,7 @@ def precompute_news_vectors(
         vecs_np = adapter.encode_news(news_encoder, features)
 
         if np.isnan(vecs_np).any() or np.isinf(vecs_np).any():
-            progress.console.print(
+            progress.print(
                 f"[WARNING fast_evaluate] news vectors have NaN/Inf — "
                 f"min={float(np.min(vecs_np)):.6f} max={float(np.max(vecs_np)):.6f}"
             )
@@ -66,7 +66,7 @@ def precompute_user_vectors(
     user_encoder: Any,
     user_dataloader: Any,
     adapter: FrameworkAdapter,
-    progress: Progress,
+    progress: ProgressManager,
     process_user_id: bool = False,
 ) -> dict[int, np.ndarray]:
     """Precompute user vectors for every impression in the dataloader.
@@ -76,7 +76,7 @@ def precompute_user_vectors(
         user_dataloader: Iterable yielding
             ``(impression_ids, user_ids_or_None, features)``.
         adapter: Framework adapter providing :meth:`encode_user`.
-        progress: Rich progress bar manager.
+        progress: Progress bar manager.
         process_user_id: ``True`` for LSTUR-style encoders that need an
             explicit user-id tensor.
 
@@ -92,7 +92,7 @@ def precompute_user_vectors(
         vecs_np = adapter.encode_user(user_encoder, features, user_ids, process_user_id)
 
         if np.isnan(vecs_np).any() or np.isinf(vecs_np).any():
-            progress.console.print(
+            progress.print(
                 f"[WARNING fast_evaluate] user vectors have NaN/Inf — "
                 f"min={float(np.min(vecs_np)):.6f} max={float(np.max(vecs_np)):.6f}"
             )
@@ -122,7 +122,7 @@ def compute_metrics(
     group_labels: list[np.ndarray],
     group_preds: list[np.ndarray],
     metrics_calculator: Any,
-    progress: Progress,
+    progress: ProgressManager,
 ) -> dict[str, float]:
     """Compute eval loss + ranking metrics from per-impression labels and scores.
 
@@ -137,7 +137,7 @@ def compute_metrics(
         if labels_np.size == 0 or scores_np.size == 0:
             continue
         if np.isnan(scores_np).any() or np.isinf(scores_np).any():
-            progress.console.print(
+            progress.print(
                 "[WARNING fast_evaluate] NaN/Inf detected in scores. Skipping impression."
             )
             continue

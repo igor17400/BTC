@@ -6,7 +6,6 @@ from typing import Any
 
 import keras
 from omegaconf import DictConfig
-from rich.progress import Progress
 
 import wandb
 from src.core.io.config import save_model_config
@@ -19,6 +18,7 @@ from src.core.io.logging import (
     log_training_complete,
     log_training_start,
 )
+from src.core.io.progress import ProgressManager
 from src.core.io.saving import save_run_summary_fn
 from src.core.metrics.functions import NewsRecommenderMetrics
 
@@ -108,7 +108,10 @@ class RichProgressCallback(keras.callbacks.Callback):
     """Rich progress bar for Keras training."""
 
     def __init__(
-        self, progress: Progress, num_epochs: int, steps_per_epoch: int | None = None
+        self,
+        progress: ProgressManager,
+        num_epochs: int,
+        steps_per_epoch: int | None = None,
     ):
         super().__init__()
         self.progress = progress
@@ -162,7 +165,7 @@ def training_loop(
     test_fn,
     cfg: DictConfig,
     metrics_engine: NewsRecommenderMetrics,
-    progress: Progress,
+    progress: ProgressManager,
     output_directory: Path,
 ) -> tuple[dict[str, Any], dict[str, float] | None]:
     """Train a Keras model using model.fit() with evaluation callbacks.

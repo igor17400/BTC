@@ -26,6 +26,7 @@ import optuna
 from omegaconf import DictConfig
 
 from src.core.io.logging import console, setup_logging
+from src.core.io.progress import set_default_backend
 from src.core.search.optimizer import print_results, run_search
 
 
@@ -33,6 +34,7 @@ from src.core.search.optimizer import print_results, run_search
 def main(cfg: DictConfig) -> None:
     """Main entry point for hyperparameter search, configured by Hydra."""
     setup_logging(level=cfg.logging.level if hasattr(cfg.logging, "level") else "INFO")
+    set_default_backend(cfg.logging.get("progress_backend", "rich"))
 
     # Suppress noisy Optuna logs unless explicitly verbose
     optuna.logging.set_verbosity(optuna.logging.WARNING)

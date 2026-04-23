@@ -17,7 +17,8 @@ from __future__ import annotations
 from typing import Any
 
 import numpy as np
-from rich.progress import Progress
+
+from src.core.io.progress import ProgressManager
 
 from .utils import compute_metrics, precompute_news_vectors, precompute_user_vectors
 
@@ -33,7 +34,7 @@ def pprec_fast_evaluate(
     user_hist_dataloader: Any,
     impression_iterator: Any,
     metrics_calculator: Any,
-    progress: Progress,
+    progress: ProgressManager,
     adapter: Any,
     behaviors_data: dict | None = None,
     int_to_news_id_map: dict[int, str] | None = None,
@@ -50,7 +51,7 @@ def pprec_fast_evaluate(
         user_hist_dataloader: Iterable yielding ``(imp_ids, user_ids, features)``.
         impression_iterator: Iterable yielding ``(_, labels, imp_id, cand_ids)``.
         metrics_calculator: Object with ``METRIC_NAMES`` and ``compute_metrics``.
-        progress: Rich progress bar manager.
+        progress: Progress bar manager.
         adapter: Framework adapter implementing :class:`FrameworkAdapter`.
         behaviors_data: Dict with optional ``candidate_news_ctr``,
             ``candidate_news_recency``, ``candidate_news_ids``.

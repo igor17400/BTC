@@ -11,7 +11,6 @@ import hydra
 import numpy as np
 import torch
 from omegaconf import DictConfig
-from rich.progress import Progress
 
 import wandb
 from src.core.io.logging import (
@@ -20,6 +19,7 @@ from src.core.io.logging import (
     log_training_complete,
     setup_wandb_session,
 )
+from src.core.io.progress import create_progress
 from src.core.io.saving import get_output_run_dir
 from src.core.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
@@ -552,7 +552,7 @@ def run(cfg: DictConfig):
                 if mode == "val"
                 else dataset_provider.test_behaviors_data
             )
-            with Progress(transient=True) as progress:
+            with create_progress(transient=True) as progress:
                 return evaluate(
                     model=model,
                     news_dataloader=provider["news_dataloader"],

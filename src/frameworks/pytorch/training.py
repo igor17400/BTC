@@ -15,19 +15,11 @@ from typing import Any
 
 import torch
 import torch.nn as nn
-from rich.progress import (
-    BarColumn,
-    MofNCompleteColumn,
-    Progress,
-    SpinnerColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
 from torch.utils.data import DataLoader
 
 import wandb
 from src.core.io.logging import log_early_stopping, log_epoch_end
+from src.core.io.progress import create_progress
 
 from .device import setup_device
 
@@ -47,16 +39,8 @@ def _move_batch_to_device(
     return features, labels
 
 
-def _build_progress() -> Progress:
-    return Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        MofNCompleteColumn(),
-        TimeElapsedColumn(),
-        TimeRemainingColumn(),
-        expand=True,
-    )
+def _build_progress():
+    return create_progress(columns="training", expand=True)
 
 
 # ------------------------------------------------------------------
@@ -158,7 +142,9 @@ def training_loop(
             use_autocast = amp_dtype is not None and device.type == "cuda"
 
             optimizer.zero_grad(set_to_none=True)
-            for micro_idx, (batch_features, batch_labels) in enumerate(train_dataloader):
+            for micro_idx, (batch_features, batch_labels) in enumerate(
+                train_dataloader
+            ):
                 batch_features, batch_labels = _move_batch_to_device(
                     batch_features, batch_labels, device
                 )
@@ -180,10 +166,9 @@ def training_loop(
                     loss = loss / grad_accum_steps
                 loss.backward()
 
-                is_step = (
-                    (micro_idx + 1) % grad_accum_steps == 0
-                    or (micro_idx + 1) == total_micro
-                )
+                is_step = (micro_idx + 1) % grad_accum_steps == 0 or (
+                    micro_idx + 1
+                ) == total_micro
                 if is_step:
                     if (
                         cfg
