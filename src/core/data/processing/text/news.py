@@ -23,7 +23,7 @@ from rich.progress import (
     TimeRemainingColumn,
 )
 
-from src.core.data.processing.vocabulary import (
+from src.core.data.processing.text.vocabulary import (
     build_vocabulary,
     segment_text_into_words,
     tokenize_text,

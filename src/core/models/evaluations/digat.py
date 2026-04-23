@@ -23,7 +23,7 @@ from typing import Any
 import numpy as np
 from rich.progress import Progress
 
-from src.core.data.processing.digat import build_user_graphs
+from src.core.data.processing.models.digat import build_user_graphs
 from src.core.models.evaluations.utils import compute_metrics
 
 logger = logging.getLogger(__name__)
@@ -76,9 +76,9 @@ def digat_evaluate(
     Returns:
         ``{metric_name: value}`` dictionary.
     """
-    news_tokens = processed_news["tokens"]           # (num_news, T)
-    news_node_ID = sag_data["news_node_ID"]          # (num_news, G_n)
-    news_graph_adj = sag_data["news_graph"]          # (num_news, G_n, G_n)
+    news_tokens = processed_news["tokens"]  # (num_news, T)
+    news_node_ID = sag_data["news_node_ID"]  # (num_news, G_n)
+    news_graph_adj = sag_data["news_graph"]  # (num_news, G_n, G_n)
     news_graph_mask_arr = sag_data["news_graph_mask"]  # (num_news, G_n)
 
     num_news = news_tokens.shape[0]
@@ -90,7 +90,7 @@ def digat_evaluate(
     all_news_emb = np.zeros((num_news, D), dtype=np.float32)
     for start in range(0, num_news, batch_size):
         end = min(start + batch_size, num_news)
-        tokens_batch = news_tokens[start:end]             # (B, T)
+        tokens_batch = news_tokens[start:end]  # (B, T)
         mask_batch = (tokens_batch != 0).astype(np.float32)
         all_news_emb[start:end] = adapter.encode_digat_news(
             news_encoder, tokens_batch, mask_batch
@@ -103,8 +103,8 @@ def digat_evaluate(
     all_news_ctx = np.zeros((num_news, D), dtype=np.float32)
     for start in range(0, num_news, batch_size):
         end = min(start + batch_size, num_news)
-        node_ids_batch = news_node_ID[start:end]          # (B, G_n)
-        sag_emb = all_news_emb[node_ids_batch]            # (B, G_n, D)
+        node_ids_batch = news_node_ID[start:end]  # (B, G_n)
+        sag_emb = all_news_emb[node_ids_batch]  # (B, G_n, D)
         sag_mask = news_graph_mask_arr[start:end].astype(np.float32)
         all_news_ctx[start:end] = adapter.encode_digat_graph_context(
             graph_encoder, sag_emb, sag_mask
@@ -124,7 +124,10 @@ def digat_evaluate(
             "DIGAT eval: histories_news_ids not available, returning dummy metrics"
         )
         return {
-            "auc": 0.0, "mrr": 0.0, "ndcg@5": 0.0, "ndcg@10": 0.0,
+            "auc": 0.0,
+            "mrr": 0.0,
+            "ndcg@5": 0.0,
+            "ndcg@10": 0.0,
             "num_impressions": 0,
         }
 
@@ -159,9 +162,9 @@ def digat_evaluate(
         cand_ids = cand_ids_raw.astype(np.int64)
 
         if id_remap is not None:
-            cand_ids = np.where(
-                cand_ids < len(id_remap), id_remap[cand_ids], 0
-            ).astype(np.int64)
+            cand_ids = np.where(cand_ids < len(id_remap), id_remap[cand_ids], 0).astype(
+                np.int64
+            )
         else:
             cand_ids = np.clip(cand_ids, 0, num_news - 1)
 
@@ -173,22 +176,27 @@ def digat_evaluate(
             imp_labels = imp_labels[valid_mask]
 
         # Per-impression inputs (un-broadcast — adapter handles expansion)
-        h_ids = hist_ids[idx]                                   # (H,)
-        user_hist_emb = all_news_emb[h_ids]                     # (H, D)
-        u_graph = user_graphs["user_graph"][idx].astype(np.float32)       # (G_u, G_u)
+        h_ids = hist_ids[idx]  # (H,)
+        user_hist_emb = all_news_emb[h_ids]  # (H, D)
+        u_graph = user_graphs["user_graph"][idx].astype(np.float32)  # (G_u, G_u)
         u_cat_mask = user_graphs["user_category_mask"][idx].astype(np.float32)  # (C,)
-        u_cat_indices = user_graphs["user_category_indices"][idx]          # (H,)
+        u_cat_indices = user_graphs["user_category_indices"][idx]  # (H,)
 
         # Candidate SAG inputs
-        cand_node_ids = news_node_ID[cand_ids]                  # (C, G_n)
-        cand_sag_emb = all_news_emb[cand_node_ids]              # (C, G_n, D)
-        cand_sag_graph = news_graph_adj[cand_ids].astype(np.float32)      # (C, G_n, G_n)
+        cand_node_ids = news_node_ID[cand_ids]  # (C, G_n)
+        cand_sag_emb = all_news_emb[cand_node_ids]  # (C, G_n, D)
+        cand_sag_graph = news_graph_adj[cand_ids].astype(np.float32)  # (C, G_n, G_n)
         cand_sag_mask = news_graph_mask_arr[cand_ids].astype(np.float32)  # (C, G_n)
 
         scores = adapter.score_digat_impression(
             graph_encoder,
-            cand_sag_emb, cand_sag_graph, cand_sag_mask,
-            user_hist_emb, u_graph, u_cat_mask, u_cat_indices,
+            cand_sag_emb,
+            cand_sag_graph,
+            cand_sag_mask,
+            user_hist_emb,
+            u_graph,
+            u_cat_mask,
+            u_cat_indices,
             num_categories,
         )  # (C,)
 
@@ -199,6 +207,8 @@ def digat_evaluate(
     # 4. Compute metrics
     # ------------------------------------------------------------------
     with Progress(transient=True) as progress:
-        metrics = compute_metrics(group_labels, group_preds, metrics_calculator, progress)
+        metrics = compute_metrics(
+            group_labels, group_preds, metrics_calculator, progress
+        )
     metrics["num_impressions"] = len(group_labels)
     return metrics

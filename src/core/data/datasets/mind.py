@@ -9,7 +9,7 @@ import pandas as pd
 from omegaconf import DictConfig
 
 from src.core.data.datasets.dataset import NewsDatasetBase
-from src.core.data.processing.popularity import (
+from src.core.data.processing.enrichment.popularity import (
     compute_news_ctr_and_publish_times,
     load_popularity_cache,
     save_popularity_cache,

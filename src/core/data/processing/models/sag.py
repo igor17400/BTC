@@ -9,6 +9,11 @@ Outputs are cached to disk and loaded at training time.
 
 Reference: Mao et al., "DIGAT: Modeling News Recommendation with
 Dual-Graph Interaction", EMNLP 2022 Findings.
+
+Obs: This file is located at the part where theoretically we have
+framework agnostic files. However in order to make things easier
+the preprocessing is made using pytorch, but the rest of the training
+is done by the define framework.
 """
 
 from __future__ import annotations
@@ -64,7 +69,10 @@ def _compute_top_k_similarities(
         for start in range(0, N, chunk):
             end = min(start + chunk, N)
             sim = torch.mm(emb[start:end], emb.t())  # (chunk, N)
-            sim[torch.arange(end - start, device=sim.device), torch.arange(start, end, device=sim.device)] = -1.0
+            sim[
+                torch.arange(end - start, device=sim.device),
+                torch.arange(start, end, device=sim.device),
+            ] = -1.0
             vals, idxs = sim.topk(top_k, dim=1)
             all_values[start:end] = vals
             all_indices[start:end] = idxs
@@ -107,12 +115,14 @@ def _build_news_graphs_bfs(
                 head += 1
                 continue
             cur_news = node_ids[i, head]
-            neighbors_used = 0
-            for j in range(similarity_indices.shape[1]):
+            for neighbors_used, j in enumerate(range(similarity_indices.shape[1])):
                 neighbor = int(similarity_indices[cur_news, j])
                 cos_sim = float(similarity_values[cur_news, j])
 
-                if depths[head] > 0 and (cos_sim < SIMILARITY_THRESHOLD or neighbors_used >= sag_neighbors - 1):
+                if depths[head] > 0 and (
+                    cos_sim < SIMILARITY_THRESHOLD
+                    or neighbors_used >= sag_neighbors - 1
+                ):
                     break
                 if depths[head] == 0 and neighbors_used >= sag_neighbors:
                     break
@@ -131,8 +141,6 @@ def _build_news_graphs_bfs(
                     pos = node_pos[neighbor]
                     graph[i, head, pos] = True
                     graph[i, pos, head] = True
-
-                neighbors_used += 1
             head += 1
 
     return node_ids, graph, mask
@@ -199,9 +207,16 @@ def construct_sag(
     logger.info(f"Computing top-{top_k} similarities...")
     sim_values, sim_indices = _compute_top_k_similarities(embeddings, top_k)
 
-    logger.info(f"Building BFS graphs (hops={sag_hops}, neighbors={sag_neighbors}, graph_size={news_graph_size})...")
+    logger.info(
+        f"Building BFS graphs (hops={sag_hops}, neighbors={sag_neighbors}, graph_size={news_graph_size})..."
+    )
     node_ids, graph, mask = _build_news_graphs_bfs(
-        sim_indices, sim_values, num_news, news_graph_size, sag_hops, sag_neighbors,
+        sim_indices,
+        sim_values,
+        num_news,
+        news_graph_size,
+        sag_hops,
+        sag_neighbors,
     )
 
     result = {

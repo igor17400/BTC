@@ -2,10 +2,10 @@
 
 Delegates heavy processing to standalone modules:
 - Download: ``src.core.data.download``
-- News processing: ``src.core.data.processing.news``
-- Behavior processing: ``src.core.data.processing.behaviors``
-- Embedding creation: ``src.core.data.processing.embeddings``
-- Sampling: ``src.core.data.processing.sampling``
+- News processing: ``src.core.data.processing.text.news``
+- Behavior processing: ``src.core.data.processing.interactions.behaviors``
+- Embedding creation: ``src.core.data.processing.text.embeddings``
+- Sampling: ``src.core.data.processing.interactions.sampling``
 """
 
 from __future__ import annotations
@@ -27,13 +27,16 @@ from src.core.data.download import download_dataset
 from src.core.data.encoders.bpemb import BPEmbManager
 from src.core.data.encoders.embeddings import EmbeddingsManager
 from src.core.data.loaders.cache import CacheManager
-from src.core.data.processing.behaviors import get_test_data, get_train_val_data
-from src.core.data.processing.embeddings import create_embeddings
-from src.core.data.processing.knowledge_graph import KnowledgeGraphProcessor
-from src.core.data.processing.news import process_news as _process_news_pipeline
-from src.core.data.processing.news import read_all_news
-from src.core.data.processing.sampling import ImpressionSampler
-from src.core.data.processing.vocabulary import segment_text_into_words
+from src.core.data.processing.interactions.behaviors import (
+    get_test_data,
+    get_train_val_data,
+)
+from src.core.data.processing.interactions.sampling import ImpressionSampler
+from src.core.data.processing.models.knowledge_graph import KnowledgeGraphProcessor
+from src.core.data.processing.text.embeddings import create_embeddings
+from src.core.data.processing.text.news import process_news as _process_news_pipeline
+from src.core.data.processing.text.news import read_all_news
+from src.core.data.processing.text.vocabulary import segment_text_into_words
 from src.core.data.stats import (
     apply_data_fraction,
     collect_basic_dataset_info,

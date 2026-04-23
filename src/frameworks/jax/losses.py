@@ -42,6 +42,7 @@ def categorical_cross_entropy(
         y_true = y_true * (1.0 - label_smoothing) + label_smoothing / num_classes
 
     loss = -jnp.sum(y_true * log_probs, axis=-1)
+
     return jnp.mean(loss)
 
 
@@ -71,6 +72,7 @@ def binary_cross_entropy(
         y_true = y_true * (1.0 - label_smoothing) + 0.5 * label_smoothing
 
     loss = -(y_true * jnp.log(y_pred) + (1.0 - y_true) * jnp.log(1.0 - y_pred))
+
     return jnp.mean(loss)
 
 
@@ -105,4 +107,5 @@ def get_loss(loss_name: str, **kwargs: Any):
     filtered = {k: v for k, v in kwargs.items() if k in valid_keys}
     if filtered:
         return partial(base_fn, **filtered)
+
     return base_fn

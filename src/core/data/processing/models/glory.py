@@ -64,7 +64,10 @@ def build_news_feature_matrix(
         pad = np.zeros((num_news, title_size - tokens.shape[1]), dtype=np.int32)
         tokens = np.concatenate([tokens, pad], axis=1)
 
-    if "entity_indices" in processed_news and processed_news["entity_indices"] is not None:
+    if (
+        "entity_indices" in processed_news
+        and processed_news["entity_indices"] is not None
+    ):
         entities = np.asarray(processed_news["entity_indices"])[:, :entity_size]
         if entities.shape[1] < entity_size:
             pad = np.zeros((num_news, entity_size - entities.shape[1]), dtype=np.int32)
@@ -72,13 +75,22 @@ def build_news_feature_matrix(
     else:
         entities = np.zeros((num_news, entity_size), dtype=np.int32)
 
-    category = np.asarray(processed_news.get("category_indices", np.zeros(num_news))).reshape(num_news, 1)
-    subcategory = np.asarray(processed_news.get("subcategory_indices", np.zeros(num_news))).reshape(num_news, 1)
+    category = np.asarray(
+        processed_news.get("category_indices", np.zeros(num_news))
+    ).reshape(num_news, 1)
+    subcategory = np.asarray(
+        processed_news.get("subcategory_indices", np.zeros(num_news))
+    ).reshape(num_news, 1)
     news_idx = np.arange(num_news, dtype=np.int32).reshape(num_news, 1)
 
     return np.concatenate(
-        [tokens, entities.astype(np.int32), category.astype(np.int32),
-         subcategory.astype(np.int32), news_idx],
+        [
+            tokens,
+            entities.astype(np.int32),
+            category.astype(np.int32),
+            subcategory.astype(np.int32),
+            news_idx,
+        ],
         axis=1,
     ).astype(np.int32)
 
@@ -173,14 +185,17 @@ def build_news_graph(
             raise ValueError(f"Unknown use_graph_type={use_graph_type}")
 
     if not edge_counter:
-        logger.warning("No edges built for GLORY news graph — empty or invalid behaviors")
+        logger.warning(
+            "No edges built for GLORY news graph — empty or invalid behaviors"
+        )
         edge_index = np.zeros((2, 0), dtype=np.int64)
         edge_attr = np.zeros((0,), dtype=np.int64)
     else:
         edges = list(edge_counter.keys())
-        edge_index = np.asarray(edges, dtype=np.int64).T    # (2, E)
+        edge_index = np.asarray(edges, dtype=np.int64).T  # (2, E)
         edge_attr = np.asarray(
-            [edge_counter[e] for e in edges], dtype=np.int64,
+            [edge_counter[e] for e in edges],
+            dtype=np.int64,
         )
 
     graph = {
@@ -318,7 +333,9 @@ def sample_subgraph(
         current = next_hop
         all_nodes.extend(next_hop)
 
-    unique, inverse = np.unique(np.asarray(all_nodes, dtype=np.int64), return_inverse=True)
+    unique, inverse = np.unique(
+        np.asarray(all_nodes, dtype=np.int64), return_inverse=True
+    )
     # inverse[:len(hist_valid)] gives us the mapping for original history.
     hist_mapping = inverse[: hist_valid.size]
     return unique, hist_mapping
@@ -412,9 +429,7 @@ def extract_edges_for_subgraph(
                 continue
             valid_srcs = srcs[keep]
             sub_src_chunks.append(global_to_local[valid_srcs])
-            sub_dst_chunks.append(
-                np.full(valid_srcs.size, local_dst, dtype=np.int64)
-            )
+            sub_dst_chunks.append(np.full(valid_srcs.size, local_dst, dtype=np.int64))
 
         if not sub_src_chunks:
             return np.zeros((2, 0), dtype=np.int64), np.zeros((0,), dtype=np.int64)
@@ -434,12 +449,18 @@ def extract_edges_for_subgraph(
     src, dst = edge_index[0], edge_index[1]
     pos_src = np.searchsorted(node_set, src)
     pos_dst = np.searchsorted(node_set, dst)
-    valid_src = (pos_src < node_set.size) & (node_set[np.minimum(pos_src, node_set.size - 1)] == src)
-    valid_dst = (pos_dst < node_set.size) & (node_set[np.minimum(pos_dst, node_set.size - 1)] == dst)
+    valid_src = (pos_src < node_set.size) & (
+        node_set[np.minimum(pos_src, node_set.size - 1)] == src
+    )
+    valid_dst = (pos_dst < node_set.size) & (
+        node_set[np.minimum(pos_dst, node_set.size - 1)] == dst
+    )
     mask = valid_src & valid_dst
     if not mask.any():
         return np.zeros((2, 0), dtype=np.int64), np.zeros((0,), dtype=np.int64)
     sub_src = pos_src[mask]
     sub_dst = pos_dst[mask]
-    sub_attr = edge_attr[mask] if edge_attr.size > 0 else np.zeros(mask.sum(), dtype=np.int64)
+    sub_attr = (
+        edge_attr[mask] if edge_attr.size > 0 else np.zeros(mask.sum(), dtype=np.int64)
+    )
     return np.stack([sub_src, sub_dst], axis=0).astype(np.int64), sub_attr

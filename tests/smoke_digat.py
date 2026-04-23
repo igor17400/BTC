@@ -9,10 +9,12 @@ Usage:
 """
 
 import sys
+
 import numpy as np
 import torch
 
 # ---------- 1. Scatter operations ----------
+
 
 def test_scatter_ops():
     from src.frameworks.pytorch.models.digat.layers import scatter_softmax, scatter_sum
@@ -36,8 +38,9 @@ def test_scatter_ops():
 
 # ---------- 2. SAG BFS construction ----------
 
+
 def test_sag_bfs():
-    from src.core.data.processing.sag import _build_news_graphs_bfs
+    from src.core.data.processing.models.sag import _build_news_graphs_bfs
 
     N = 20
     top_k = 5
@@ -45,8 +48,12 @@ def test_sag_bfs():
     sim_values = np.random.uniform(0.6, 1.0, (N, top_k)).astype(np.float32)
 
     node_ids, graph, mask = _build_news_graphs_bfs(
-        sim_indices, sim_values, num_news=N,
-        news_graph_size=26, sag_hops=2, sag_neighbors=5,
+        sim_indices,
+        sim_values,
+        num_news=N,
+        news_graph_size=26,
+        sag_hops=2,
+        sag_neighbors=5,
     )
     assert node_ids.shape == (N, 26), f"node_ids shape: {node_ids.shape}"
     assert graph.shape == (N, 26, 26), f"graph shape: {graph.shape}"
@@ -57,11 +64,11 @@ def test_sag_bfs():
 
 # ---------- 3. Model forward + backward ----------
 
+
 def test_model_forward_backward():
     from src.frameworks.pytorch.models.digat import DIGAT
 
     B, C, H, T = 4, 5, 50, 32
-    num_news = 100
     num_categories = 10 + 1  # +1 padding
 
     processed = {
@@ -81,7 +88,11 @@ def test_model_forward_backward():
         "user_category_indices": torch.randint(0, num_categories, (B, H)),
         "cand_tokens": torch.randint(1, 200, (B, C, G_n, T)),
         "cand_mask": torch.ones(B, C, G_n, T),
-        "cand_graph": torch.eye(G_n).unsqueeze(0).unsqueeze(0).expand(B, C, -1, -1).float(),
+        "cand_graph": torch.eye(G_n)
+        .unsqueeze(0)
+        .unsqueeze(0)
+        .expand(B, C, -1, -1)
+        .float(),
         "cand_graph_mask": torch.ones(B, C, G_n),
     }
 
@@ -89,7 +100,9 @@ def test_model_forward_backward():
     logits = model(inputs, training=True)
     assert logits.shape == (B, C), f"logits shape: {logits.shape}"
     assert not torch.isnan(logits).any(), "NaN in logits"
-    print(f"  forward OK: logits {logits.shape}, range [{logits.min():.3f}, {logits.max():.3f}]")
+    print(
+        f"  forward OK: logits {logits.shape}, range [{logits.min():.3f}, {logits.max():.3f}]"
+    )
 
     # Backward
     labels = torch.zeros(B, C)
@@ -99,16 +112,21 @@ def test_model_forward_backward():
     assert not torch.isnan(loss), "NaN loss"
 
     # Check gradients exist
-    grad_count = sum(1 for p in model.parameters() if p.grad is not None and p.grad.abs().sum() > 0)
+    grad_count = sum(
+        1 for p in model.parameters() if p.grad is not None and p.grad.abs().sum() > 0
+    )
     total = sum(1 for p in model.parameters())
-    print(f"  backward OK: loss={loss.item():.4f}, {grad_count}/{total} params have non-zero grad")
+    print(
+        f"  backward OK: loss={loss.item():.4f}, {grad_count}/{total} params have non-zero grad"
+    )
     print("[OK] model forward + backward")
 
 
 # ---------- 4. User graph construction ----------
 
+
 def test_user_graph_construction():
-    from src.core.data.processing.digat import build_user_graphs
+    from src.core.data.processing.models.digat import build_user_graphs
 
     N, H = 8, 50
     num_categories = 11  # 10 + 1 padding
@@ -128,11 +146,12 @@ def test_user_graph_construction():
 
 # ---------- 5. DIGAT evaluator (minimal) ----------
 
-def test_evaluator():
-    from src.frameworks.pytorch.models.digat import DIGAT
-    from src.core.data.processing.digat import build_user_graphs
 
-    B, H, T = 4, 50, 32
+def test_evaluator():
+    from src.core.data.processing.models.digat import build_user_graphs
+    from src.frameworks.pytorch.models.digat import DIGAT
+
+    H, T = 50, 32
     num_news = 50
     num_categories = 11
 
@@ -151,7 +170,9 @@ def test_evaluator():
 
     # Dummy SAG
     sag_data = {
-        "news_node_ID": np.random.randint(0, num_news, (num_news, G_n)).astype(np.int32),
+        "news_node_ID": np.random.randint(0, num_news, (num_news, G_n)).astype(
+            np.int32
+        ),
         "news_graph": np.eye(G_n, dtype=np.bool_)[None].repeat(num_news, axis=0),
         "news_graph_mask": np.ones((num_news, G_n), dtype=np.bool_),
     }
@@ -159,7 +180,9 @@ def test_evaluator():
     # Pre-compute news embeddings (same as evaluator step 1)
     with torch.no_grad():
         tokens_t = torch.tensor(processed["tokens"], dtype=torch.long)
-        emb = model.news_encoder(tokens_t.unsqueeze(1), (tokens_t != 0).float().unsqueeze(1))
+        emb = model.news_encoder(
+            tokens_t.unsqueeze(1), (tokens_t != 0).float().unsqueeze(1)
+        )
         all_news_emb = emb.squeeze(1).numpy()
 
     # Pre-compute SAG contexts (step 2)
@@ -178,20 +201,43 @@ def test_evaluator():
         cand_node_ids = sag_data["news_node_ID"][cand_ids]
         cand_sag_emb = torch.tensor(all_news_emb[cand_node_ids], dtype=torch.float32)
         cand_graph = torch.tensor(sag_data["news_graph"][cand_ids].astype(np.float32))
-        cand_mask = torch.tensor(sag_data["news_graph_mask"][cand_ids].astype(np.float32))
+        cand_mask = torch.tensor(
+            sag_data["news_graph_mask"][cand_ids].astype(np.float32)
+        )
 
         hist_ids = np.random.randint(0, num_news, H)
-        user_hist_emb = torch.tensor(all_news_emb[hist_ids], dtype=torch.float32).unsqueeze(0).expand(C, -1, -1)
+        user_hist_emb = (
+            torch.tensor(all_news_emb[hist_ids], dtype=torch.float32)
+            .unsqueeze(0)
+            .expand(C, -1, -1)
+        )
 
         hist_cats = np.random.randint(0, 10, (1, H)).astype(np.int32)
         ug = build_user_graphs(hist_cats, H, num_categories)
-        u_graph = torch.tensor(ug["user_graph"][0], dtype=torch.float32).unsqueeze(0).expand(C, -1, -1)
-        u_cat_mask = torch.tensor(ug["user_category_mask"][0], dtype=torch.float32).unsqueeze(0).expand(C, -1)
-        u_cat_indices = torch.tensor(ug["user_category_indices"][0], dtype=torch.long).unsqueeze(0).expand(C, -1)
+        u_graph = (
+            torch.tensor(ug["user_graph"][0], dtype=torch.float32)
+            .unsqueeze(0)
+            .expand(C, -1, -1)
+        )
+        u_cat_mask = (
+            torch.tensor(ug["user_category_mask"][0], dtype=torch.float32)
+            .unsqueeze(0)
+            .expand(C, -1)
+        )
+        u_cat_indices = (
+            torch.tensor(ug["user_category_indices"][0], dtype=torch.long)
+            .unsqueeze(0)
+            .expand(C, -1)
+        )
 
         news_ctx, user_ctx = model.graph_encoder(
-            cand_sag_emb, cand_graph, cand_mask,
-            user_hist_emb, u_graph, u_cat_mask, u_cat_indices,
+            cand_sag_emb,
+            cand_graph,
+            cand_mask,
+            user_hist_emb,
+            u_graph,
+            u_cat_mask,
+            u_cat_indices,
             num_categories,
         )
         scores = (news_ctx * user_ctx).sum(dim=-1)
@@ -220,5 +266,6 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nFAILED: {e}")
         import traceback
+
         traceback.print_exc()
         sys.exit(1)

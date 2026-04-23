@@ -1,5 +1,10 @@
 """
-Data processing utilities for converting custom dataset formats.
+Data processing pipeline, organized by concern:
+
+- ``text/``: news reading, tokenization, vocabulary, embeddings
+- ``interactions/``: behavior parsing, filtering, sampling
+- ``enrichment/``: popularity metrics, date inference
+- ``models/``: model-specific graph/feature construction (DIGAT, GLORY, KG)
 """
 
 from src.core.data.processing.format_converter import (

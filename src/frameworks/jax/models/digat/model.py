@@ -37,11 +37,10 @@ from .layers import (
     scatter_sum,
 )
 
-
 # Match PyTorch's ``nn.init.calculate_gain`` values so cross-framework
 # runs produce statistically equivalent initializations.
 _RELU_GAIN = math.sqrt(2.0)
-_LEAKY_RELU_GAIN_02 = math.sqrt(2.0 / (1.0 + 0.2 ** 2))
+_LEAKY_RELU_GAIN_02 = math.sqrt(2.0 / (1.0 + 0.2**2))
 
 
 # ======================================================================
@@ -62,11 +61,16 @@ class DIGATNewsEncoder(nnx.Module):
         self.word_embedding = word_embedding
         self.dropout = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
         self.msa = MultiHeadSelfAttention(
-            config.embedding_size, config.msa_head_num, config.msa_head_dim, rngs=rngs,
+            config.embedding_size,
+            config.msa_head_num,
+            config.msa_head_dim,
+            rngs=rngs,
         )
         self.news_embedding_dim = config.news_embedding_dim
         self.attention = AdditiveAttention(
-            self.news_embedding_dim, config.attention_dim, rngs=rngs,
+            self.news_embedding_dim,
+            config.attention_dim,
+            rngs=rngs,
         )
 
     def __call__(
@@ -145,69 +149,99 @@ class DIGATGraphEncoder(nnx.Module):
         # PyTorch: nn.init.xavier_uniform_(w, gain=G) → variance_scaling(G**2, "fan_avg", "uniform")
         xavier = nnx.initializers.xavier_uniform()
         xavier_relu = nnx.initializers.variance_scaling(
-            _RELU_GAIN ** 2, "fan_avg", "uniform",
+            _RELU_GAIN**2,
+            "fan_avg",
+            "uniform",
         )
         xavier_leaky = nnx.initializers.variance_scaling(
-            _LEAKY_RELU_GAIN_02 ** 2, "fan_avg", "uniform",
+            _LEAKY_RELU_GAIN_02**2,
+            "fan_avg",
+            "uniform",
         )
 
         # --- News graph context ---
         self.news_ctx_attn = ScaledDotProductAttention(D, D, D, rngs=rngs)
         self.news_ctx_gate = nnx.Linear(
-            D * 2, D, kernel_init=xavier, rngs=rngs,
+            D * 2,
+            D,
+            kernel_init=xavier,
+            rngs=rngs,
         )
 
         # --- User graph context (topic-level scatter + attention) ---
         self.user_news_K = nnx.Linear(
-            D, D, use_bias=False, kernel_init=xavier, rngs=rngs,
+            D,
+            D,
+            use_bias=False,
+            kernel_init=xavier,
+            rngs=rngs,
         )
         self.user_news_Q = nnx.Linear(
-            D, D, use_bias=True, kernel_init=xavier, rngs=rngs,
+            D,
+            D,
+            use_bias=True,
+            kernel_init=xavier,
+            rngs=rngs,
         )
         self.topic_affine = nnx.Linear(
-            D, D, kernel_init=xavier_relu, rngs=rngs,
+            D,
+            D,
+            kernel_init=xavier_relu,
+            rngs=rngs,
         )
         self.user_ctx_attn = ScaledDotProductAttention(D, D, D, rngs=rngs)
 
         # --- Per-depth news graph update layers ---
-        self.n_W = ModuleStack([
-            nnx.Linear(D, D, kernel_init=xavier, rngs=rngs) for _ in range(depth)
-        ])
-        self.n_ffn1 = ModuleStack([
-            nnx.Linear(D, D, use_bias=False, kernel_init=xavier_relu, rngs=rngs)
-            for _ in range(depth)
-        ])
-        self.n_ffn2 = ModuleStack([
-            nnx.Linear(D, D, use_bias=False, kernel_init=xavier_relu, rngs=rngs)
-            for _ in range(depth)
-        ])
-        self.n_ffn3 = ModuleStack([
-            nnx.Linear(D, D, kernel_init=xavier_relu, rngs=rngs) for _ in range(depth)
-        ])
-        self.n_a = ModuleStack([
-            nnx.Linear(D, 1, use_bias=False, kernel_init=xavier_leaky, rngs=rngs)
-            for _ in range(depth)
-        ])
+        self.n_W = ModuleStack(
+            [nnx.Linear(D, D, kernel_init=xavier, rngs=rngs) for _ in range(depth)]
+        )
+        self.n_ffn1 = ModuleStack(
+            [
+                nnx.Linear(D, D, use_bias=False, kernel_init=xavier_relu, rngs=rngs)
+                for _ in range(depth)
+            ]
+        )
+        self.n_ffn2 = ModuleStack(
+            [
+                nnx.Linear(D, D, use_bias=False, kernel_init=xavier_relu, rngs=rngs)
+                for _ in range(depth)
+            ]
+        )
+        self.n_ffn3 = ModuleStack(
+            [nnx.Linear(D, D, kernel_init=xavier_relu, rngs=rngs) for _ in range(depth)]
+        )
+        self.n_a = ModuleStack(
+            [
+                nnx.Linear(D, 1, use_bias=False, kernel_init=xavier_leaky, rngs=rngs)
+                for _ in range(depth)
+            ]
+        )
 
         # --- Per-depth user graph update layers ---
-        self.u_W = ModuleStack([
-            nnx.Linear(D, D, kernel_init=xavier, rngs=rngs) for _ in range(depth)
-        ])
-        self.u_ffn1 = ModuleStack([
-            nnx.Linear(D, D, use_bias=False, kernel_init=xavier_relu, rngs=rngs)
-            for _ in range(depth)
-        ])
-        self.u_ffn2 = ModuleStack([
-            nnx.Linear(D, D, use_bias=False, kernel_init=xavier_relu, rngs=rngs)
-            for _ in range(depth)
-        ])
-        self.u_ffn3 = ModuleStack([
-            nnx.Linear(D, D, kernel_init=xavier_relu, rngs=rngs) for _ in range(depth)
-        ])
-        self.u_a = ModuleStack([
-            nnx.Linear(D, 1, use_bias=False, kernel_init=xavier_leaky, rngs=rngs)
-            for _ in range(depth)
-        ])
+        self.u_W = ModuleStack(
+            [nnx.Linear(D, D, kernel_init=xavier, rngs=rngs) for _ in range(depth)]
+        )
+        self.u_ffn1 = ModuleStack(
+            [
+                nnx.Linear(D, D, use_bias=False, kernel_init=xavier_relu, rngs=rngs)
+                for _ in range(depth)
+            ]
+        )
+        self.u_ffn2 = ModuleStack(
+            [
+                nnx.Linear(D, D, use_bias=False, kernel_init=xavier_relu, rngs=rngs)
+                for _ in range(depth)
+            ]
+        )
+        self.u_ffn3 = ModuleStack(
+            [nnx.Linear(D, D, kernel_init=xavier_relu, rngs=rngs) for _ in range(depth)]
+        )
+        self.u_a = ModuleStack(
+            [
+                nnx.Linear(D, 1, use_bias=False, kernel_init=xavier_leaky, rngs=rngs)
+                for _ in range(depth)
+            ]
+        )
 
         # Learnable topic node embeddings — initialized here in NNX
         # (unlike PyTorch where this is assigned by ``DIGAT.__init__``).
@@ -215,7 +249,10 @@ class DIGATGraphEncoder(nnx.Module):
         # requires explicit declaration of data attributes up-front.
         self.topic_node_emb = nnx.Param(
             jax.random.uniform(
-                rngs.params(), (num_categories, D), minval=-0.1, maxval=0.1,
+                rngs.params(),
+                (num_categories, D),
+                minval=-0.1,
+                maxval=0.1,
             )
         )
 
@@ -272,11 +309,12 @@ class DIGATGraphEncoder(nnx.Module):
         hist = emb[:, : self.max_history, :]  # (B, H, D)
 
         K = self.user_news_K(hist)
-        Q = jnp.expand_dims(self.user_news_Q(news_ctx), axis=2)          # (B, D, 1)
-        scores = jnp.squeeze(jnp.matmul(K, Q), axis=2) / self.scale      # (B, H)
+        # news_ctx is referred o as "news graph context - c_n" in the paper
+        Q = jnp.expand_dims(self.user_news_Q(news_ctx), axis=2)  # (B, D, 1)
+        scores = jnp.squeeze(jnp.matmul(K, Q), axis=2) / self.scale  # (B, H)
 
-        alpha = scatter_softmax(scores, cat_indices, num_categories)     # (B, H)
-        weighted = jnp.expand_dims(alpha, axis=-1) * hist                # (B, H, D)
+        alpha = scatter_softmax(scores, cat_indices, num_categories)  # (B, H)
+        weighted = jnp.expand_dims(alpha, axis=-1) * hist  # (B, H, D)
         topic_emb = scatter_sum(weighted, cat_indices, dim=1, dim_size=num_categories)
         topic_emb = self.topic_dropout(
             jax.nn.relu(self.topic_affine(topic_emb)) + topic_emb,
@@ -307,16 +345,18 @@ class DIGATGraphEncoder(nnx.Module):
         batch_size, num_nodes, _ = emb.shape
         emb = self.input_dropout(emb, deterministic=deterministic)
         h = W_list[idx](emb)
-        K1 = jnp.expand_dims(ffn1_list[idx](emb), axis=1)   # (B, 1, N, D)
-        K2 = jnp.expand_dims(ffn2_list[idx](emb), axis=2)   # (B, N, 1, D)
+        K1 = jnp.expand_dims(ffn1_list[idx](emb), axis=1)  # (B, 1, N, D)
+        K2 = jnp.expand_dims(ffn2_list[idx](emb), axis=2)  # (B, N, 1, D)
         K3 = ffn3_list[idx](cross_ctx).reshape(batch_size, 1, 1, self.D)
         scores = jnp.squeeze(
-            a_list[idx](jax.nn.relu(K1 + K2 + K3)), axis=-1,
-        )                                                    # (B, N, N)
+            a_list[idx](jax.nn.relu(K1 + K2 + K3)),
+            axis=-1,
+        )  # (B, N, N)
         scores = jax.nn.leaky_relu(scores, negative_slope=0.2)
         scores = jnp.where(adj == 0, -1e9, scores)
         alpha = self.attn_dropout(
-            jax.nn.softmax(scores, axis=2), deterministic=deterministic,
+            jax.nn.softmax(scores, axis=2),
+            deterministic=deterministic,
         )
         return jax.nn.relu(jnp.matmul(alpha, h)) + emb
 
@@ -354,8 +394,10 @@ class DIGATGraphEncoder(nnx.Module):
         """
         det = not training
         batch_size = news_emb.shape[0]
-        topic = self.topic_node_emb.value                                  # (C, D)
-        topic_nodes = jnp.broadcast_to(topic[None, :, :], (batch_size, topic.shape[0], topic.shape[1]))
+        topic = self.topic_node_emb.value  # (C, D)
+        topic_nodes = jnp.broadcast_to(
+            topic[None, :, :], (batch_size, topic.shape[0], topic.shape[1])
+        )
         user_emb = jnp.concatenate(
             [user_news_emb, self.input_dropout(topic_nodes, deterministic=det)],
             axis=1,
@@ -363,27 +405,51 @@ class DIGATGraphEncoder(nnx.Module):
 
         news_ctx = self._news_graph_context(news_emb, news_mask, deterministic=det)
         user_ctx = self._user_graph_context(
-            user_emb, user_cat_mask, user_cat_indices, news_ctx,
-            num_categories, deterministic=det,
+            user_emb,
+            user_cat_mask,
+            user_cat_indices,
+            news_ctx,
+            num_categories,
+            deterministic=det,
         )
 
         for i in range(self.graph_depth):
             news_emb = self._update_graph(
-                i, news_emb, news_graph, user_ctx,
-                self.n_W, self.n_ffn1, self.n_ffn2, self.n_ffn3, self.n_a,
+                i,
+                news_emb,
+                news_graph,
+                user_ctx,
+                self.n_W,
+                self.n_ffn1,
+                self.n_ffn2,
+                self.n_ffn3,
+                self.n_a,
                 deterministic=det,
             )
             user_emb = self._update_graph(
-                i, user_emb, user_graph, news_ctx,
-                self.u_W, self.u_ffn1, self.u_ffn2, self.u_ffn3, self.u_a,
+                i,
+                user_emb,
+                user_graph,
+                news_ctx,
+                self.u_W,
+                self.u_ffn1,
+                self.u_ffn2,
+                self.u_ffn3,
+                self.u_a,
                 deterministic=det,
             )
             news_ctx = news_ctx + self._news_graph_context(
-                news_emb, news_mask, deterministic=det,
+                news_emb,
+                news_mask,
+                deterministic=det,
             )
             user_ctx = user_ctx + self._user_graph_context(
-                user_emb, user_cat_mask, user_cat_indices, news_ctx,
-                num_categories, deterministic=det,
+                user_emb,
+                user_cat_mask,
+                user_cat_indices,
+                news_ctx,
+                num_categories,
+                deterministic=det,
             )
 
         return news_ctx, user_ctx
@@ -420,14 +486,18 @@ class DIGAT(BaseModel):
         vocab_size = int(processed_news["vocab_size"])
         embeddings_matrix = np.asarray(processed_news["embeddings"])
         self.word_embedding = nnx.Embed(
-            num_embeddings=vocab_size, features=config.embedding_size, rngs=rngs,
+            num_embeddings=vocab_size,
+            features=config.embedding_size,
+            rngs=rngs,
         )
         self.word_embedding.embedding.value = jnp.asarray(embeddings_matrix)
 
         self.news_encoder = DIGATNewsEncoder(config, self.word_embedding, rngs=rngs)
 
         self.graph_encoder = DIGATGraphEncoder(
-            config, self.num_categories, rngs=rngs,
+            config,
+            self.num_categories,
+            rngs=rngs,
         )
 
         # No user encoder in the evaluation adapter sense — DIGAT's
@@ -496,7 +566,9 @@ class DIGAT(BaseModel):
 
         # Encode user history
         user_news_emb = self.news_encoder(
-            inputs["hist_tokens"], inputs.get("hist_mask"), training=training,
+            inputs["hist_tokens"],
+            inputs.get("hist_mask"),
+            training=training,
         )
         user_news_emb = jnp.broadcast_to(
             user_news_emb[:, None],
@@ -505,9 +577,15 @@ class DIGAT(BaseModel):
 
         # Dual graph interaction
         news_ctx, user_ctx = self.graph_encoder(
-            cand_emb, cand_graph, cand_graph_mask,
-            user_news_emb, user_graph, user_cat_mask, user_cat_indices,
-            self.num_categories, training=training,
+            cand_emb,
+            cand_graph,
+            cand_graph_mask,
+            user_news_emb,
+            user_graph,
+            user_cat_mask,
+            user_cat_indices,
+            self.num_categories,
+            training=training,
         )
 
         # Dot-product scoring

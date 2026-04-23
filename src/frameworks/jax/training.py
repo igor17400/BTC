@@ -34,9 +34,7 @@ logger = logging.getLogger(__name__)
 #   - older:  update(self, grads, **kwargs)
 #   - newer:  update(self, model, grads, **kwargs)
 # Detect at import time so the hot path inside ``@nnx.jit`` stays clean.
-_OPT_UPDATE_TAKES_MODEL = (
-    "model" in inspect.signature(nnx.Optimizer.update).parameters
-)
+_OPT_UPDATE_TAKES_MODEL = "model" in inspect.signature(nnx.Optimizer.update).parameters
 console = Console()
 
 

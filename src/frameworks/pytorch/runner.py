@@ -204,11 +204,11 @@ def run(cfg: DictConfig):
     # Train dataloader
     glory_cache: dict | None = None
     if spec.model.name.lower() == "glory":
-        from src.core.data.processing.digat import build_id_remap
-        from src.core.data.processing.glory import (
+        from src.core.data.processing.models.digat import build_id_remap
+        from src.core.data.processing.models.glory import (
+            build_neighbor_dict,
             build_news_feature_matrix,
             build_news_graph,
-            build_neighbor_dict,
         )
         from src.core.models.configs import GLORYConfig
         from src.frameworks.pytorch.dataloaders import (
@@ -234,7 +234,9 @@ def run(cfg: DictConfig):
 
         # Pack per-news features (title | entity | cat | sub | idx).
         news_features = build_news_feature_matrix(
-            processed_news, title_size=g_cfg.title_size, entity_size=g_cfg.entity_size,
+            processed_news,
+            title_size=g_cfg.title_size,
+            entity_size=g_cfg.entity_size,
         )
 
         # Build / cache the global news graph from training click trajectories.
@@ -252,14 +254,18 @@ def run(cfg: DictConfig):
             else None
         )
         glory_id_remap = build_id_remap(
-            dataset_provider, processed_news, glory_remap_path,
+            dataset_provider,
+            processed_news,
+            glory_remap_path,
         )
 
         def _apply_remap(ids: np.ndarray) -> np.ndarray:
             if glory_id_remap is None:
                 return np.clip(ids, 0, num_news - 1)
             return np.where(
-                ids < len(glory_id_remap), glory_id_remap[ids], 0,
+                ids < len(glory_id_remap),
+                glory_id_remap[ids],
+                0,
             ).astype(np.int64)
 
         def _remap_behaviors_in_place(split: str) -> None:
@@ -315,12 +321,14 @@ def run(cfg: DictConfig):
         )
         graph_path = (
             graph_cache_dir / f"glory_news_graph_type{g_cfg.use_graph_type}.pkl"
-            if graph_cache_dir is not None else None
+            if graph_cache_dir is not None
+            else None
         )
         neighbor_path = (
             graph_cache_dir
             / f"glory_neighbor_dict_type{g_cfg.use_graph_type}_dir{int(g_cfg.directed)}.pkl"
-            if graph_cache_dir is not None else None
+            if graph_cache_dir is not None
+            else None
         )
         glory_graph = build_news_graph(
             dataset_provider.train_behaviors_data,
@@ -329,7 +337,9 @@ def run(cfg: DictConfig):
             cache_path=graph_path,
         )
         glory_neighbors = build_neighbor_dict(
-            glory_graph, directed=g_cfg.directed, cache_path=neighbor_path,
+            glory_graph,
+            directed=g_cfg.directed,
+            cache_path=neighbor_path,
         )
 
         # Hold for eval reuse.
@@ -351,7 +361,8 @@ def run(cfg: DictConfig):
             hist_ids = np.asarray(tb["histories_news_ids"]).astype(np.int64)
         else:
             hist_ids = np.zeros(
-                (n_samples, g_cfg.max_history_length), dtype=np.int64,
+                (n_samples, g_cfg.max_history_length),
+                dtype=np.int64,
             )
 
         raw_cand = tb["candidate_news_ids"]
@@ -397,7 +408,7 @@ def run(cfg: DictConfig):
         # GLORY's dataloader is fully assembled; skip the generic path below.
         features, labels = None, None  # unused
     elif spec.model.name.lower() == "digat":
-        from src.core.data.processing.digat import build_digat_train_features
+        from src.core.data.processing.models.digat import build_digat_train_features
         from src.core.models.configs import DIGATConfig
 
         sag_config = spec.model.architecture.graph_encoder
@@ -409,14 +420,15 @@ def run(cfg: DictConfig):
             max_impressions_length=spec.inputs.impressions.max_length,
         )
         if hasattr(dataset_provider, "dataset_path"):
-            from src.core.data.processing.news import read_all_news
-            from src.core.data.processing.sag import construct_sag
+            from src.core.data.processing.models.sag import construct_sag
+            from src.core.data.processing.text.news import read_all_news
 
             all_news_df = read_all_news(dataset_provider.dataset_path)
             id_map = dataset_provider.news_str_id_to_int_idx
             cache_dir = dataset_provider.dataset_path / "processed"
             sag_data = construct_sag(
-                all_news_df, id_map,
+                all_news_df,
+                id_map,
                 sag_hops=digat_cfg.sag_hops,
                 sag_neighbors=digat_cfg.sag_neighbors,
                 cache_dir=cache_dir,
@@ -432,13 +444,19 @@ def run(cfg: DictConfig):
         num_categories = int(processed_news.get("num_categories", 18)) + 1
 
         # Build behaviors→SAG ID remap (the two pipelines use different int mappings)
-        from src.core.data.processing.digat import build_id_remap
-        remap_path = dataset_provider.dataset_path / "processed" / "behaviors_to_sag_remap.npy" if hasattr(dataset_provider, "dataset_path") else None
+        from src.core.data.processing.models.digat import build_id_remap
+
+        remap_path = (
+            dataset_provider.dataset_path / "processed" / "behaviors_to_sag_remap.npy"
+            if hasattr(dataset_provider, "dataset_path")
+            else None
+        )
         id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
 
         features, labels = build_digat_train_features(
             dataset_provider.train_behaviors_data,
-            processed_news, sag_data,
+            processed_news,
+            sag_data,
             max_history=digat_cfg.max_history_length,
             max_impressions=digat_cfg.max_impressions_length,
             num_categories=num_categories,
@@ -526,6 +544,7 @@ def run(cfg: DictConfig):
                 batch_size=cfg.eval.batch_size,
             )
     else:
+
         def eval_fn(model, mode="val"):
             provider = _build_eval_dataloaders(dataset_provider, cfg, mode=mode)
             behaviors_data = (
@@ -595,7 +614,9 @@ def run(cfg: DictConfig):
             if glory_remap_path is not None and glory_remap_path.exists():
                 glory_remap_path.unlink()
             glory_id_remap = build_id_remap(
-                dataset_provider, processed_news, glory_remap_path,
+                dataset_provider,
+                processed_news,
+                glory_remap_path,
             )
             _remap_behaviors_in_place("test")
 

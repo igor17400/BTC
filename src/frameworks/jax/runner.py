@@ -2,6 +2,9 @@
 
 Provides ``run(cfg)`` as the single entry point for JAX training,
 keeping train.py as a thin dispatcher.
+
+Some models require some especial logic, for instance DIGAT. Thus,
+the logic should be adapted to work with them.
 """
 
 import random
@@ -14,6 +17,12 @@ from omegaconf import DictConfig
 from rich.progress import Progress
 
 import wandb
+from src.core.data.processing.models.digat import (
+    build_digat_train_features,
+    build_id_remap,
+)
+from src.core.data.processing.models.sag import construct_sag
+from src.core.data.processing.text.news import read_all_news
 from src.core.io.logging import (
     console,
     log_test_results,
@@ -23,7 +32,11 @@ from src.core.io.logging import (
 from src.core.io.saving import get_output_run_dir
 from src.core.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
+from src.core.models.configs import DIGATConfig
 from src.core.models.spec import build_model_from_spec
+from src.frameworks.jax.dataloaders import create_train_dataloader
+from src.frameworks.jax.evaluation import get_evaluator
+from src.frameworks.jax.training import training_loop
 
 
 def _build_train_features(dataset_provider) -> tuple:
@@ -151,9 +164,6 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
 
 def run(cfg: DictConfig):
     """Run training with JAX/Flax NNX framework."""
-    from src.frameworks.jax.dataloaders import create_train_dataloader
-    from src.frameworks.jax.evaluation import get_evaluator
-    from src.frameworks.jax.training import training_loop
 
     start_time = time.time()
     console.log("[bold]Initializing JAX/Flax NNX training...[/bold]")
@@ -183,12 +193,6 @@ def run(cfg: DictConfig):
     id_remap = None
     remap_path = None
     if spec.model.name.lower() == "digat":
-        from src.core.data.processing.digat import (
-            build_digat_train_features,
-            build_id_remap,
-        )
-        from src.core.models.configs import DIGATConfig
-
         sag_config = spec.model.architecture.graph_encoder
         digat_cfg = DIGATConfig(
             sag_hops=sag_config.get("sag_hops", 2),
@@ -198,14 +202,12 @@ def run(cfg: DictConfig):
             max_impressions_length=spec.inputs.impressions.max_length,
         )
         if hasattr(dataset_provider, "dataset_path"):
-            from src.core.data.processing.news import read_all_news
-            from src.core.data.processing.sag import construct_sag
-
             all_news_df = read_all_news(dataset_provider.dataset_path)
             id_map = dataset_provider.news_str_id_to_int_idx
             cache_dir = dataset_provider.dataset_path / "processed"
             sag_data = construct_sag(
-                all_news_df, id_map,
+                all_news_df,
+                id_map,
                 sag_hops=digat_cfg.sag_hops,
                 sag_neighbors=digat_cfg.sag_neighbors,
                 cache_dir=cache_dir,
@@ -230,7 +232,8 @@ def run(cfg: DictConfig):
 
         features, labels = build_digat_train_features(
             dataset_provider.train_behaviors_data,
-            processed_news, sag_data,
+            processed_news,
+            sag_data,
             max_history=digat_cfg.max_history_length,
             max_impressions=digat_cfg.max_impressions_length,
             num_categories=num_categories,
@@ -319,7 +322,9 @@ def run(cfg: DictConfig):
     # Auxiliary loss (e.g. CROWN category prediction)
     aux_loss_fn = None
     if hasattr(model, "get_auxiliary_loss"):
-        aux_loss_fn = lambda m: m.get_auxiliary_loss()
+
+        def aux_loss_fn(m):
+            return m.get_auxiliary_loss()
 
     # Train
     best_metrics = training_loop(
@@ -343,12 +348,12 @@ def run(cfg: DictConfig):
         if not dataset_provider.test_behaviors_data:
             dataset_provider._load_data("test")
 
-        # DIGAT: rebuild id_remap now that test data is loaded. It was
-        # built at startup before test behaviors existed, so test-only
-        # news IDs were mapped to 0 (padding), silently corrupting
         # test metrics.
         if spec.model.name.lower() == "digat":
-            from src.core.data.processing.digat import build_id_remap as _build_remap
+            from src.core.data.processing.models.digat import (
+                build_id_remap as _build_remap,
+            )
+
             if remap_path is not None and remap_path.exists():
                 remap_path.unlink()
             id_remap = _build_remap(dataset_provider, processed_news, remap_path)

@@ -15,7 +15,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-
 # ======================================================================
 # Container utilities
 # ======================================================================
@@ -46,9 +45,7 @@ class ModuleStack(nnx.Module):
 # ======================================================================
 
 
-def scatter_softmax(
-    src: jax.Array, index: jax.Array, num_groups: int
-) -> jax.Array:
+def scatter_softmax(src: jax.Array, index: jax.Array, num_groups: int) -> jax.Array:
     """Per-group softmax without ``torch_scatter``.
 
     Args:
@@ -65,27 +62,23 @@ def scatter_softmax(
     # Max per group (for numerical stability): use a one-hot mask to
     # restrict each group's max computation to the items that belong
     # to it.
-    group_range = jnp.arange(num_groups)[None, None, :]          # (1, 1, G)
-    mask = idx[:, :, None] == group_range                         # (B, N, G)
+    group_range = jnp.arange(num_groups)[None, None, :]  # (1, 1, G)
+    mask = idx[:, :, None] == group_range  # (B, N, G)
     neg_inf = jnp.finfo(src.dtype).min
-    masked = jnp.where(mask, src[:, :, None], neg_inf)            # (B, N, G)
-    group_max = jnp.max(masked, axis=1)                            # (B, G)
-    element_max = jnp.take_along_axis(group_max, idx, axis=1)     # (B, N)
+    masked = jnp.where(mask, src[:, :, None], neg_inf)  # (B, N, G)
+    group_max = jnp.max(masked, axis=1)  # (B, G)
+    element_max = jnp.take_along_axis(group_max, idx, axis=1)  # (B, N)
 
     exp_src = jnp.exp(src - element_max)
 
     # Sum per group via ``jnp.add.at`` equivalent using one-hot scatter.
-    group_sum = jnp.sum(
-        jnp.where(mask, exp_src[:, :, None], 0.0), axis=1
-    )                                                              # (B, G)
-    element_sum = jnp.take_along_axis(group_sum, idx, axis=1)     # (B, N)
+    group_sum = jnp.sum(jnp.where(mask, exp_src[:, :, None], 0.0), axis=1)  # (B, G)
+    element_sum = jnp.take_along_axis(group_sum, idx, axis=1)  # (B, N)
 
     return exp_src / (element_sum + 1e-10)
 
 
-def scatter_sum(
-    src: jax.Array, index: jax.Array, dim: int, dim_size: int
-) -> jax.Array:
+def scatter_sum(src: jax.Array, index: jax.Array, dim: int, dim_size: int) -> jax.Array:
     """Grouped sum without ``torch_scatter``.
 
     Args:
@@ -134,8 +127,8 @@ class ScaledDotProductAttention(nnx.Module):
         mask: jax.Array | None = None,
     ) -> jax.Array:
         # features: (B, N, F), query: (B, Q)
-        keys = self.K(features)                             # (B, N, A)
-        q = self.Q(query)[:, :, None]                       # (B, A, 1)
+        keys = self.K(features)  # (B, N, A)
+        q = self.Q(query)[:, :, None]  # (B, A, 1)
         scores = jnp.squeeze(jnp.matmul(keys, q), axis=-1) / self.scale  # (B, N)
         if mask is not None:
             scores = jnp.where(mask == 0, -1e9, scores)
@@ -156,15 +149,15 @@ class AdditiveAttention(nnx.Module):
         self.affine = nnx.Linear(feature_dim, attention_dim, use_bias=True, rngs=rngs)
         self.project = nnx.Linear(attention_dim, 1, use_bias=False, rngs=rngs)
 
-    def __call__(
-        self, features: jax.Array, mask: jax.Array | None = None
-    ) -> jax.Array:
+    def __call__(self, features: jax.Array, mask: jax.Array | None = None) -> jax.Array:
         # features: (B, N, F)
-        scores = jnp.squeeze(self.project(jnp.tanh(self.affine(features))), axis=-1)  # (B, N)
+        scores = jnp.squeeze(
+            self.project(jnp.tanh(self.affine(features))), axis=-1
+        )  # (B, N)
         if mask is not None:
             scores = jnp.where(mask == 0, -1e9, scores)
-        weights = jax.nn.softmax(scores, axis=1)[:, None, :]           # (B, 1, N)
-        return jnp.squeeze(jnp.matmul(weights, features), axis=1)      # (B, F)
+        weights = jax.nn.softmax(scores, axis=1)[:, None, :]  # (B, 1, N)
+        return jnp.squeeze(jnp.matmul(weights, features), axis=1)  # (B, F)
 
 
 class MultiHeadSelfAttention(nnx.Module):

@@ -343,18 +343,18 @@ class GLORYTrainDataset(Dataset):
     def __init__(
         self,
         *,
-        hist_ids: np.ndarray,           # (N_samples, H) int — history news IDs
-        cand_ids: np.ndarray,           # (N_samples, C) int — candidate news IDs
-        news_features: np.ndarray,      # (num_news, feat_dim) int — packed features
-        graph_edge_index: np.ndarray,   # (2, E) int64 — full graph edges
-        graph_edge_attr: np.ndarray,    # (E,) int64 — full graph edge weights
+        hist_ids: np.ndarray,  # (N_samples, H) int — history news IDs
+        cand_ids: np.ndarray,  # (N_samples, C) int — candidate news IDs
+        news_features: np.ndarray,  # (num_news, feat_dim) int — packed features
+        graph_edge_index: np.ndarray,  # (2, E) int64 — full graph edges
+        graph_edge_attr: np.ndarray,  # (E,) int64 — full graph edge weights
         neighbor_dict: dict[int, list[int]],
-        labels: np.ndarray,             # (N_samples, C) bool/int
+        labels: np.ndarray,  # (N_samples, C) bool/int
         his_size: int,
         k_hops: int,
         num_neighbors: int,
     ):
-        from src.core.data.processing.glory import (  # noqa: F401 — lazy import
+        from src.core.data.processing.models.glory import (  # noqa: F401 — lazy import
             build_csr_in_adjacency,
             extract_edges_for_subgraph,
             sample_subgraph,
@@ -388,11 +388,17 @@ class GLORYTrainDataset(Dataset):
         label = self.labels[idx]
 
         node_ids, hist_mapping = self._sample_subgraph(
-            hist, self.neighbor_dict, self.k_hops, self.num_neighbors,
+            hist,
+            self.neighbor_dict,
+            self.k_hops,
+            self.num_neighbors,
         )
         sub_edges, _ = self._extract_edges(
-            node_ids, self.edge_index, self.edge_attr,
-            csr=self._csr, num_nodes=self.num_nodes,
+            node_ids,
+            self.edge_index,
+            self.edge_attr,
+            csr=self._csr,
+            num_nodes=self.num_nodes,
         )
         sub_x = self.news_features[node_ids]
         cand_features = self.news_features[cand]

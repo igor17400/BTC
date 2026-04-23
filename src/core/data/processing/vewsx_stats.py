@@ -228,7 +228,9 @@ def generate_vewsx_stats(
                 article_df.to_parquet(article_path, index=False)
                 logger.info(f"Saved {len(article_df)} article stats to {article_path}")
             except ImportError:
-                logger.warning("pyarrow not installed — skipping VewsX article stats (only needed for visualization).")
+                logger.warning(
+                    "pyarrow not installed — skipping VewsX article stats (only needed for visualization)."
+                )
 
     if not user_path.exists() or force:
         logger.info("Computing VewsX user statistics...")
@@ -238,4 +240,6 @@ def generate_vewsx_stats(
                 user_df.to_parquet(user_path, index=False)
                 logger.info(f"Saved {len(user_df)} user stats to {user_path}")
             except ImportError:
-                logger.warning("pyarrow not installed — skipping VewsX user stats (only needed for visualization).")
+                logger.warning(
+                    "pyarrow not installed — skipping VewsX user stats (only needed for visualization)."
+                )

@@ -126,34 +126,42 @@ def build_user_graphs(
 ) -> dict[str, np.ndarray]:
     """Build user-topic graph adjacency per behavior.
 
-    Graph layout: nodes ``[0..H-1]`` = history news,
-    ``[H..H+C-1]`` = topic nodes.  Edge types: news↔topic,
-    news↔news (same topic), topic↔topic, self-loops on diagonal.
+    Graph layout:
+    - Nodes
+        - ``[0..H-1]`` = history news,
+        - ``[H..H+C-1]`` = topic nodes.
+    - Edge types:
+        - news↔topic,
+        - news↔news (same topic),
+        - topic↔topic,
+        - self-loops on diagonal.
 
     Args:
-        history_categories: ``(N, H)`` int — category index per history
+        history_categories: ``(B, H)`` int — category index per history
             news.  Padding slots should have value 0.
         max_history: H.
         num_categories: C (including the +1 padding category).
 
     Returns:
-        Dict with keys ``"user_graph"`` (N, H+C, H+C),
-        ``"user_category_mask"`` (N, C), and
-        ``"user_category_indices"`` (N, H).
+        Dict with keys ``"user_graph"`` (B, H+C, H+C),
+        ``"user_category_mask"`` (B, C), and
+        ``"user_category_indices"`` (B, H).
     """
-    N, H = history_categories.shape
+    B, H = history_categories.shape  # B (Batch), H (History)
     graph_size = max_history + num_categories
 
-    user_graph = np.zeros((N, graph_size, graph_size), dtype=np.bool_)
-    user_category_mask = np.zeros((N, num_categories), dtype=np.bool_)
-    user_category_indices = np.full((N, max_history), num_categories - 1, dtype=np.int64)
+    user_graph = np.zeros((B, graph_size, graph_size), dtype=np.bool_)
+    user_category_mask = np.zeros((B, num_categories), dtype=np.bool_)
+    user_category_indices = np.full(
+        (B, max_history), num_categories - 1, dtype=np.int64
+    )
 
     diag = np.eye(graph_size, dtype=np.bool_)
     user_graph[:] = diag[None, :, :]
 
-    valid = history_categories > 0  # (N, H) — 0 = padding
+    valid = history_categories > 0  # (B, H) — 0 = padding
 
-    for b in range(N):
+    for b in range(B):
         active_cats: set[int] = set()
         for i in range(H):
             if not valid[b, i]:
@@ -225,12 +233,12 @@ def build_digat_train_features(
     Returns:
         ``(features_dict, labels)`` ready for the training dataloader.
     """
-    news_tokens = processed_news["tokens"]       # (num_news, T)
-    news_node_ID = sag_data["news_node_ID"]      # (num_news, G_n)
-    news_graph = sag_data["news_graph"]          # (num_news, G_n, G_n)
+    news_tokens = processed_news["tokens"]  # (num_news, T)
+    news_node_ID = sag_data["news_node_ID"]  # (num_news, G_n)
+    news_graph = sag_data["news_graph"]  # (num_news, G_n, G_n)
     news_graph_mask = sag_data["news_graph_mask"]  # (num_news, G_n)
 
-    hist_tokens = np.asarray(behaviors_data["history_news_tokens"])    # (N, H, T)
+    hist_tokens = np.asarray(behaviors_data["history_news_tokens"])  # (N, H, T)
     hist_categories = np.asarray(behaviors_data["history_news_categories"])  # (N, H)
     raw_cand_ids = np.asarray(behaviors_data["candidate_news_ids"])
     if raw_cand_ids.dtype.kind in ("U", "S", "O") and news_str_id_to_int is not None:
@@ -241,35 +249,31 @@ def build_digat_train_features(
 
     num_sag_news = news_node_ID.shape[0]
     if id_remap is not None:
-        cand_ids = np.where(
-            cand_ids < len(id_remap), id_remap[cand_ids], 0
-        ).astype(np.int64)
+        cand_ids = np.where(cand_ids < len(id_remap), id_remap[cand_ids], 0).astype(
+            np.int64
+        )
         logger.info(
-            f"Remapped candidate IDs via remap array "
-            f"({(cand_ids == 0).sum()} unmapped)"
+            f"Remapped candidate IDs via remap array ({(cand_ids == 0).sum()} unmapped)"
         )
     elif cand_ids.max() >= num_sag_news:
-        logger.warning(
-            f"Clamping {(cand_ids >= num_sag_news).sum()} out-of-range IDs"
-        )
+        logger.warning(f"Clamping {(cand_ids >= num_sag_news).sum()} out-of-range IDs")
         cand_ids = np.clip(cand_ids, 0, num_sag_news - 1)
 
     labels = np.asarray(behaviors_data["labels"])  # (N, C)
 
     N = hist_tokens.shape[0]
-    T = max_title_length
 
     logger.info("Building DIGAT candidate SAG features...")
-    cand_sag_node_ids = news_node_ID[cand_ids]          # (N, C, G_n)
-    cand_tokens = news_tokens[cand_sag_node_ids]        # (N, C, G_n, T)
-    cand_mask = (cand_tokens != 0).astype(np.float32)   # (N, C, G_n, T)
-    cand_graph = news_graph[cand_ids]                   # (N, C, G_n, G_n)
-    cand_graph_mask = news_graph_mask[cand_ids]         # (N, C, G_n)
+    cand_sag_node_ids = news_node_ID[cand_ids]  # (N, C, G_n)
+    cand_tokens = news_tokens[cand_sag_node_ids]  # (N, C, G_n, T)
+    cand_mask = (cand_tokens != 0).astype(np.float32)  # (N, C, G_n, T)
+    cand_graph = news_graph[cand_ids]  # (N, C, G_n, G_n)
+    cand_graph_mask = news_graph_mask[cand_ids]  # (N, C, G_n)
 
     logger.info("Building DIGAT user-topic graphs...")
     user_data = build_user_graphs(hist_categories, max_history, num_categories)
 
-    hist_mask = (hist_tokens != 0).astype(np.float32)   # (N, H, T)
+    hist_mask = (hist_tokens != 0).astype(np.float32)  # (N, H, T)
 
     features = {
         "hist_tokens": hist_tokens,
