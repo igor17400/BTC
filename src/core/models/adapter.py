@@ -122,6 +122,68 @@ class FrameworkAdapter(Protocol):
         """
         ...
 
+    # ------------------------------------------------------------------
+    # GLORY-specific methods (optional — only needed by GLORY adapters)
+    # ------------------------------------------------------------------
+
+    def encode_glory_news(
+        self,
+        news_encoder: Any,
+        news_features: np.ndarray,
+        batch_size: int,
+    ) -> np.ndarray:
+        """Run GLORY's local news encoder on the full corpus.
+
+        Args:
+            news_encoder: Framework-native ``GLORYNewsEncoder``.
+            news_features: ``(num_news, feat_dim)`` int packed features.
+            batch_size: Mini-batch size for the loop.
+
+        Returns:
+            ``(num_news, D)`` float embeddings.
+        """
+        ...
+
+    def encode_glory_global(
+        self,
+        graph_encoder: Any,
+        all_news_emb: np.ndarray,
+        edge_index: np.ndarray,
+    ) -> np.ndarray:
+        """Run GLORY's global GatedGraphConv on the full news graph.
+
+        Args:
+            graph_encoder: Framework-native ``GatedGraphConv`` module.
+            all_news_emb: ``(num_news, D)`` node features.
+            edge_index: ``(2, E)`` edges.
+
+        Returns:
+            ``(num_news, D)`` graph-enhanced embeddings.
+        """
+        ...
+
+    def score_glory_impression(
+        self,
+        click_encoder: Any,
+        user_encoder: Any,
+        candidate_encoder: Any,
+        click_predictor: Any,
+        clicked_title: np.ndarray,
+        clicked_graph: np.ndarray,
+        cand_local: np.ndarray,
+    ) -> np.ndarray:
+        """Fuse + score a single impression's candidates.
+
+        Args:
+            clicked_title: ``(H, D)`` locally-encoded clicked news.
+            clicked_graph: ``(H, D)`` globally-enhanced clicked news.
+            cand_local: ``(C, D)`` locally-encoded candidates.
+
+        Returns:
+            ``(C,)`` relevance scores.
+        """
+        ...
+
     def score_digat_impression(
         self,
         graph_encoder: Any,

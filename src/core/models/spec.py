@@ -185,12 +185,39 @@ def spec_to_digat_config(spec: DictConfig) -> "DIGATConfig":
     )
 
 
+def spec_to_glory_config(spec: DictConfig) -> "GLORYConfig":
+    """Convert a parsed GLORY spec into GLORYConfig."""
+    from src.core.models.configs import GLORYConfig
+
+    ne = spec.model.architecture.news_encoder
+    ge = spec.model.architecture.graph_encoder
+    return GLORYConfig(
+        word_emb_dim=spec.model.embedding.size,
+        head_num=ne.get("head_num", 20),
+        head_dim=ne.get("head_dim", 20),
+        attention_hidden_dim=ne.get("attention_hidden_dim", 200),
+        dropout_rate=spec.model.dropout_rate,
+        title_size=spec.inputs.title.max_length,
+        entity_size=spec.inputs.get("entity", {}).get("max_length", 5),
+        max_history_length=spec.inputs.history.max_length,
+        max_impressions_length=spec.inputs.impressions.max_length,
+        use_graph_type=ge.get("use_graph_type", 0),
+        directed=ge.get("directed", True),
+        gnn_num_layers=ge.get("gnn_num_layers", 3),
+        k_hops=ge.get("k_hops", 2),
+        num_neighbors=ge.get("num_neighbors", 8),
+        use_entity=spec.model.get("use_entity", False),
+        process_user_id=spec.inputs.get("process_user_id", False),
+    )
+
+
 _SPEC_CONVERTERS = {
     "nrms": spec_to_nrms_config,
     "naml": spec_to_naml_config,
     "lstur": spec_to_lstur_config,
     "crown": spec_to_crown_config,
     "digat": spec_to_digat_config,
+    "glory": spec_to_glory_config,
     "pprec": spec_to_pprec_config,
 }
 
@@ -232,6 +259,7 @@ _MODEL_CLASS_PATHS = {
         "lstur": "src.frameworks.pytorch.models.lstur.LSTUR",
         "crown": "src.frameworks.pytorch.models.crown.CROWN",
         "digat": "src.frameworks.pytorch.models.digat.DIGAT",
+        "glory": "src.frameworks.pytorch.models.glory.GLORY",
         "pprec": "src.frameworks.pytorch.models.pprec.PPRec",
     },
     "jax": {

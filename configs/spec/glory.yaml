@@ -1,0 +1,59 @@
+model:
+  name: glory
+  architecture:
+    news_encoder:
+      type: mha_pool
+      head_num: 20
+      head_dim: 20
+      attention_hidden_dim: 200
+    graph_encoder:
+      type: gated_graph_conv
+      gnn_num_layers: 3
+      use_graph_type: 0  # 0 = trajectory, 1 = co-occurrence
+      directed: true
+      k_hops: 2
+      num_neighbors: 8
+    click_predictor:
+      type: dot_product
+  embedding:
+    size: 300
+    trainable: true
+  dropout_rate: 0.2
+  seed: 42
+  use_entity: false  # v1: entity path disabled
+
+inputs:
+  title: { max_length: 30 }
+  entity: { max_length: 5 }
+  history: { max_length: 50 }
+  impressions: { max_length: 5 }
+  process_title: true
+  process_abstract: false
+  process_category: true
+  process_subcategory: true
+  process_user_id: false
+
+training:
+  loss:
+    name: categorical_crossentropy
+    from_logits: true
+    reduction: sum_over_batch_size
+    label_smoothing: 0.0
+  optimizer: adam
+  learning_rate: 0.0002  # paper default
+  batch_size: 32         # paper default
+  grad_accum_steps: 1
+  num_epochs: 20         # paper default (small)
+  gradient_clip_val: 1.0
+  early_stopping:
+    patience: 5
+    min_improvement: 0.001
+  negative_sampling:
+    strategy: random
+    candidates: 4
+
+evaluation:
+  mode: fast
+  evaluator: default      # GLORY uses its own evaluator path (runner branches)
+  metrics: [auc, mrr, ndcg@5, ndcg@10]
+  batch_size: 256

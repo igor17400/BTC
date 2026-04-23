@@ -141,6 +141,73 @@ class PyTorchAdapter:
             ctx = graph_encoder._news_graph_context(sag_emb_t, sag_mask_t)
         return ctx.detach().cpu().numpy()
 
+    # ------------------------------------------------------------------
+    # GLORY-specific methods
+    # ------------------------------------------------------------------
+
+    def encode_glory_news(
+        self,
+        news_encoder: Any,
+        news_features: Any,
+        batch_size: int,
+    ) -> Any:
+        """Run GLORY local news encoder over the full corpus."""
+        news_encoder.eval()
+        device = next(news_encoder.parameters()).device
+        num_news = news_features.shape[0]
+        out = np.zeros((num_news, news_encoder.news_dim), dtype=np.float32)
+        with torch.no_grad():
+            for start in range(0, num_news, batch_size):
+                end = min(start + batch_size, num_news)
+                batch = torch.as_tensor(
+                    news_features[start:end], dtype=torch.long,
+                ).to(device).unsqueeze(0)             # (1, B, feat)
+                emb = news_encoder(batch).squeeze(0)   # (B, D)
+                out[start:end] = emb.detach().cpu().numpy()
+        return out
+
+    def encode_glory_global(
+        self,
+        graph_encoder: Any,
+        all_news_emb: Any,
+        edge_index: Any,
+    ) -> Any:
+        """Run the global GatedGraphConv on the full news graph."""
+        graph_encoder.eval()
+        device = next(graph_encoder.parameters()).device
+        x = torch.as_tensor(all_news_emb, dtype=torch.float32).to(device)
+        ei = torch.as_tensor(edge_index, dtype=torch.long).to(device)
+        with torch.no_grad():
+            out = graph_encoder(x, ei)
+        return out.detach().cpu().numpy()
+
+    def score_glory_impression(
+        self,
+        click_encoder: Any,
+        user_encoder: Any,
+        candidate_encoder: Any,
+        click_predictor: Any,
+        clicked_title: Any,
+        clicked_graph: Any,
+        cand_local: Any,
+    ) -> Any:
+        """Fuse + score a single impression's candidates."""
+        click_encoder.eval()
+        user_encoder.eval()
+        candidate_encoder.eval()
+        device = next(click_encoder.parameters()).device
+
+        # Add batch dim for the encoders.
+        ct = torch.as_tensor(clicked_title, dtype=torch.float32).to(device).unsqueeze(0)   # (1, H, D)
+        cg = torch.as_tensor(clicked_graph, dtype=torch.float32).to(device).unsqueeze(0)
+        cl = torch.as_tensor(cand_local, dtype=torch.float32).to(device).unsqueeze(0)      # (1, C, D)
+        with torch.no_grad():
+            fused = click_encoder(ct, cg)                   # (1, H, D)
+            user_emb = user_encoder(fused)                  # (1, D)
+            cand_final = candidate_encoder(cl)              # (1, C, D)
+            scores = click_predictor(cand_final, user_emb)  # (1, C)
+        return scores.squeeze(0).detach().cpu().numpy()
+
     def score_digat_impression(
         self,
         graph_encoder: Any,

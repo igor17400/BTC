@@ -309,3 +309,168 @@ class ImpressionIterator:
 
     def __len__(self) -> int:
         return self.num_impressions
+
+
+# ------------------------------------------------------------------
+# GLORY training dataloader (on-the-fly subgraph sampling)
+# ------------------------------------------------------------------
+#
+# GLORY samples a k-hop subgraph per behavior on the fly and concatenates
+# the per-sample subgraphs into one batched graph via node-id offsets.
+# This matches the reference implementation's
+# ``torch_geometric.data.Batch.from_data_list`` without pulling in
+# ``torch_geometric`` as a dependency.  Each batch yields a
+# ``(features_dict, labels)`` pair compatible with the standard training
+# loop.  The features dict contains:
+#
+# - ``subgraph_x``: ``(total_nodes, feature_dim)`` — stacked node
+#   features for all subgraphs in the batch.
+# - ``subgraph_edge_index``: ``(2, total_edges)`` — edges with per-sample
+#   offsets already applied.
+# - ``mapping_idx``: ``(B, his_size)`` — node index of each clicked
+#   history slot within ``subgraph_x`` (``-1`` = padding).
+# - ``cand_tokens``: ``(B, npratio+1, feature_dim)``.
+
+
+class GLORYTrainDataset(Dataset):
+    """Per-sample subgraph builder for GLORY training.
+
+    ``__getitem__`` returns a dict of numpy arrays describing one
+    sample's subgraph; the custom :func:`glory_collate` concatenates
+    these into a batched tensor dict.
+    """
+
+    def __init__(
+        self,
+        *,
+        hist_ids: np.ndarray,           # (N_samples, H) int — history news IDs
+        cand_ids: np.ndarray,           # (N_samples, C) int — candidate news IDs
+        news_features: np.ndarray,      # (num_news, feat_dim) int — packed features
+        graph_edge_index: np.ndarray,   # (2, E) int64 — full graph edges
+        graph_edge_attr: np.ndarray,    # (E,) int64 — full graph edge weights
+        neighbor_dict: dict[int, list[int]],
+        labels: np.ndarray,             # (N_samples, C) bool/int
+        his_size: int,
+        k_hops: int,
+        num_neighbors: int,
+    ):
+        from src.core.data.processing.glory import (  # noqa: F401 — lazy import
+            build_csr_in_adjacency,
+            extract_edges_for_subgraph,
+            sample_subgraph,
+        )
+
+        self.hist_ids = np.asarray(hist_ids).astype(np.int64)
+        self.cand_ids = np.asarray(cand_ids).astype(np.int64)
+        self.news_features = np.asarray(news_features).astype(np.int32)
+        self.edge_index = np.asarray(graph_edge_index).astype(np.int64)
+        self.edge_attr = np.asarray(graph_edge_attr).astype(np.int64)
+        self.neighbor_dict = neighbor_dict
+        self.labels = np.asarray(labels)
+        self.his_size = int(his_size)
+        self.k_hops = int(k_hops)
+        self.num_neighbors = int(num_neighbors)
+        self._sample_subgraph = sample_subgraph
+        self._extract_edges = extract_edges_for_subgraph
+        # Pre-build CSR incoming-adjacency so per-sample subgraph
+        # extraction is O(|subgraph| · avg_in_degree) instead of
+        # O(|full_graph_edges|).  Without this the dataloader is the
+        # training bottleneck.
+        self.num_nodes = int(news_features.shape[0])
+        self._csr = build_csr_in_adjacency(self.edge_index, self.num_nodes)
+
+    def __len__(self) -> int:
+        return self.hist_ids.shape[0]
+
+    def __getitem__(self, idx: int) -> dict[str, np.ndarray]:
+        hist = self.hist_ids[idx]
+        cand = self.cand_ids[idx]
+        label = self.labels[idx]
+
+        node_ids, hist_mapping = self._sample_subgraph(
+            hist, self.neighbor_dict, self.k_hops, self.num_neighbors,
+        )
+        sub_edges, _ = self._extract_edges(
+            node_ids, self.edge_index, self.edge_attr,
+            csr=self._csr, num_nodes=self.num_nodes,
+        )
+        sub_x = self.news_features[node_ids]
+        cand_features = self.news_features[cand]
+
+        # Left-pad mapping to ``his_size`` with -1 sentinels.
+        padded_mapping = np.full(self.his_size, -1, dtype=np.int64)
+        hist_valid = hist[hist > 0]
+        n_valid = min(hist_valid.size, self.his_size)
+        if n_valid > 0:
+            padded_mapping[-n_valid:] = hist_mapping[-n_valid:]
+
+        return {
+            "sub_x": sub_x,
+            "sub_edge_index": sub_edges,
+            "mapping_idx": padded_mapping,
+            "cand_tokens": cand_features,
+            "label": label,
+        }
+
+
+def glory_collate(
+    samples: list[dict[str, np.ndarray]],
+) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    """Concatenate per-sample GLORY subgraphs into a single batched graph.
+
+    Node ids are offset per-sample so edges remain valid, and
+    ``mapping_idx`` is offset in the same way so each history slot
+    indexes the correct node in the concatenated array.
+    """
+    sub_xs: list[np.ndarray] = []
+    sub_edges: list[np.ndarray] = []
+    mappings: list[np.ndarray] = []
+    cand_tokens: list[np.ndarray] = []
+    labels: list[np.ndarray] = []
+
+    offset = 0
+    for s in samples:
+        n = s["sub_x"].shape[0]
+        sub_xs.append(s["sub_x"])
+        if s["sub_edge_index"].size > 0:
+            sub_edges.append(s["sub_edge_index"] + offset)
+        m = s["mapping_idx"].copy()
+        valid = m != -1
+        m[valid] = m[valid] + offset
+        mappings.append(m)
+        cand_tokens.append(s["cand_tokens"])
+        labels.append(s["label"])
+        offset += n
+
+    batched = {
+        "subgraph_x": torch.from_numpy(np.concatenate(sub_xs, axis=0)).long(),
+        "subgraph_edge_index": (
+            torch.from_numpy(np.concatenate(sub_edges, axis=1)).long()
+            if sub_edges
+            else torch.zeros((2, 0), dtype=torch.long)
+        ),
+        "mapping_idx": torch.from_numpy(np.stack(mappings, axis=0)).long(),
+        "cand_tokens": torch.from_numpy(np.stack(cand_tokens, axis=0)).long(),
+    }
+    labels_t = torch.from_numpy(np.stack(labels, axis=0)).float()
+    return batched, labels_t
+
+
+def create_glory_train_dataloader(
+    *,
+    dataset: GLORYTrainDataset,
+    batch_size: int,
+    shuffle: bool = True,
+    num_workers: int = 0,
+    pin_memory: bool = False,
+) -> DataLoader:
+    """Create the training DataLoader for GLORY (variable-size subgraphs)."""
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=pin_memory,
+        collate_fn=glory_collate,
+        drop_last=False,
+    )

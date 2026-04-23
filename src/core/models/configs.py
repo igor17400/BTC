@@ -122,6 +122,55 @@ class CROWNConfig:
 
 
 @dataclass
+class GLORYConfig:
+    """Configuration for GLORY (RecSys 2023).
+
+    Global Graph-Enhanced Personalized News Recommendations.
+    Defaults match the reference ``configs/small.yaml`` +
+    ``configs/model/default.yaml`` from the GLORY repo.
+    """
+
+    # Word / news dimensions
+    word_emb_dim: int = 300
+    head_num: int = 20
+    head_dim: int = 20
+    attention_hidden_dim: int = 200
+    dropout_rate: float = 0.2
+
+    # Input features (matches GLORY's ``news_input`` packing:
+    # [title, entity, category, subcategory, news_idx] = 30+5+1+1+1 = 38)
+    title_size: int = 30
+    entity_size: int = 5
+    max_history_length: int = 50
+    max_impressions_length: int = 5
+
+    # Global news graph
+    use_graph_type: int = 0         # 0 = trajectory, 1 = co-occurrence
+    directed: bool = True
+    gnn_num_layers: int = 3
+    k_hops: int = 2                 # subgraph sampling depth
+    num_neighbors: int = 8          # max neighbors per node per hop
+
+    # Entity support (off in v1 — add later)
+    use_entity: bool = False
+    entity_emb_dim: int = 100
+    entity_neighbors: int = 10
+
+    # Standard
+    process_user_id: bool = False
+    gradient_clip_norm: float = 1.0
+
+    @property
+    def news_embedding_dim(self) -> int:
+        return self.head_num * self.head_dim
+
+    @property
+    def news_feature_dim(self) -> int:
+        # [title | entity | category | subcategory | news_idx]
+        return self.title_size + self.entity_size + 3
+
+
+@dataclass
 class DIGATConfig:
     """Configuration for DIGAT (EMNLP 2022 Findings).
 
