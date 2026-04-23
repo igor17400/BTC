@@ -177,8 +177,70 @@ def run(cfg: DictConfig):
     model = build_model_from_spec(spec, "jax", processed_news, **extra_kwargs)
     console.log(f"Model {spec.model.name} instantiated for JAX.")
 
-    # Train dataloader (isomorphic with Keras/PyTorch)
-    features, labels = _build_train_features(dataset_provider)
+    # Train features: DIGAT assembles its own tensors via SAG preprocessing;
+    # every other model follows the standard pipeline.
+    sag_data = None
+    id_remap = None
+    remap_path = None
+    if spec.model.name.lower() == "digat":
+        from src.core.data.processing.digat import (
+            build_digat_train_features,
+            build_id_remap,
+        )
+        from src.core.models.configs import DIGATConfig
+
+        sag_config = spec.model.architecture.graph_encoder
+        digat_cfg = DIGATConfig(
+            sag_hops=sag_config.get("sag_hops", 2),
+            sag_neighbors=sag_config.get("sag_neighbors", 5),
+            max_title_length=spec.inputs.title.max_length,
+            max_history_length=spec.inputs.history.max_length,
+            max_impressions_length=spec.inputs.impressions.max_length,
+        )
+        if hasattr(dataset_provider, "dataset_path"):
+            from src.core.data.processing.news import read_all_news
+            from src.core.data.processing.sag import construct_sag
+
+            all_news_df = read_all_news(dataset_provider.dataset_path)
+            id_map = dataset_provider.news_str_id_to_int_idx
+            cache_dir = dataset_provider.dataset_path / "processed"
+            sag_data = construct_sag(
+                all_news_df, id_map,
+                sag_hops=digat_cfg.sag_hops,
+                sag_neighbors=digat_cfg.sag_neighbors,
+                cache_dir=cache_dir,
+            )
+        else:
+            num_news = processed_news["tokens"].shape[0]
+            G = digat_cfg.news_graph_size
+            sag_data = {
+                "news_node_ID": np.zeros((num_news, G), dtype=np.int32),
+                "news_graph": np.eye(G, dtype=np.bool_)[None].repeat(num_news, axis=0),
+                "news_graph_mask": np.ones((num_news, G), dtype=np.bool_),
+            }
+        num_categories = int(processed_news.get("num_categories", 18)) + 1
+
+        # Build behaviors→SAG ID remap (the two pipelines use different int mappings)
+        remap_path = (
+            dataset_provider.dataset_path / "processed" / "behaviors_to_sag_remap.npy"
+            if hasattr(dataset_provider, "dataset_path")
+            else None
+        )
+        id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
+
+        features, labels = build_digat_train_features(
+            dataset_provider.train_behaviors_data,
+            processed_news, sag_data,
+            max_history=digat_cfg.max_history_length,
+            max_impressions=digat_cfg.max_impressions_length,
+            num_categories=num_categories,
+            news_graph_size=digat_cfg.news_graph_size,
+            max_title_length=digat_cfg.max_title_length,
+            id_remap=id_remap,
+        )
+    else:
+        features, labels = _build_train_features(dataset_provider)
+
     train_dataloader = create_train_dataloader(
         features=features,
         labels=labels,
@@ -196,29 +258,55 @@ def run(cfg: DictConfig):
     output_run_dir = get_output_run_dir(cfg)
     output_run_dir.mkdir(parents=True, exist_ok=True)
 
-    # Evaluation function (called at end of each epoch)
-    evaluate = get_evaluator(spec)
+    # Evaluation function (called at end of each epoch). DIGAT uses a
+    # dedicated evaluator because its dual graph interaction requires
+    # co-computing news and user contexts per impression; standard
+    # models go through the registry.
+    if spec.model.name.lower() == "digat":
+        from src.core.models.evaluations.digat import digat_evaluate
+        from src.frameworks.jax.models.adapter import JAXAdapter
 
-    def eval_fn(model, mode="val", **kwargs):
-        news_dl, user_dl, imp_iter = _build_eval_dataloaders(
-            dataset_provider, cfg, mode=mode
-        )
-        behaviors_data = (
-            dataset_provider.val_behaviors_data
-            if mode == "val"
-            else dataset_provider.test_behaviors_data
-        )
-        with Progress(transient=True) as progress:
-            return evaluate(
-                model=model,
-                news_dataloader=news_dl,
-                user_hist_dataloader=user_dl,
-                impression_iterator=imp_iter,
-                behaviors_data=behaviors_data,
+        _adapter = JAXAdapter()
+
+        def eval_fn(model, mode="val", **kwargs):
+            return digat_evaluate(
+                news_encoder=model.news_encoder,
+                graph_encoder=model.graph_encoder,
+                dataset_provider=dataset_provider,
+                processed_news=processed_news,
+                sag_data=sag_data,
+                adapter=_adapter,
                 metrics_calculator=metrics_engine,
-                progress=progress,
-                int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
+                D=model.D,
+                num_categories=model.num_categories,
+                max_history=model.max_history,
+                mode=mode,
+                batch_size=cfg.eval.batch_size,
+                id_remap=id_remap,
             )
+    else:
+        evaluate = get_evaluator(spec)
+
+        def eval_fn(model, mode="val", **kwargs):
+            news_dl, user_dl, imp_iter = _build_eval_dataloaders(
+                dataset_provider, cfg, mode=mode
+            )
+            behaviors_data = (
+                dataset_provider.val_behaviors_data
+                if mode == "val"
+                else dataset_provider.test_behaviors_data
+            )
+            with Progress(transient=True) as progress:
+                return evaluate(
+                    model=model,
+                    news_dataloader=news_dl,
+                    user_hist_dataloader=user_dl,
+                    impression_iterator=imp_iter,
+                    behaviors_data=behaviors_data,
+                    metrics_calculator=metrics_engine,
+                    progress=progress,
+                    int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
+                )
 
     # Loss function from config
     loss_fn = get_loss(
@@ -254,6 +342,17 @@ def run(cfg: DictConfig):
         # Load test data (not loaded during mode="train" init)
         if not dataset_provider.test_behaviors_data:
             dataset_provider._load_data("test")
+
+        # DIGAT: rebuild id_remap now that test data is loaded. It was
+        # built at startup before test behaviors existed, so test-only
+        # news IDs were mapped to 0 (padding), silently corrupting
+        # test metrics.
+        if spec.model.name.lower() == "digat":
+            from src.core.data.processing.digat import build_id_remap as _build_remap
+            if remap_path is not None and remap_path.exists():
+                remap_path.unlink()
+            id_remap = _build_remap(dataset_provider, processed_news, remap_path)
+
         test_metrics = eval_fn(model, mode="test")
         log_test_results(test_metrics)
 

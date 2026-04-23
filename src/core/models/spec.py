@@ -240,6 +240,7 @@ _MODEL_CLASS_PATHS = {
         "lstur": "src.frameworks.jax.models.lstur.LSTUR",
         "crown": "src.frameworks.jax.models.crown.CROWN",
         "pprec": "src.frameworks.jax.models.pprec.PPRec",
+        "digat": "src.frameworks.jax.models.digat.DIGAT",
     },
 }
 

@@ -9,6 +9,7 @@ Key design choices:
 
 from __future__ import annotations
 
+import inspect
 import logging
 import time
 from pathlib import Path
@@ -28,6 +29,14 @@ from src.core.io.logging import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Flax NNX's ``Optimizer.update`` signature changed in 0.10.5:
+#   - older:  update(self, grads, **kwargs)
+#   - newer:  update(self, model, grads, **kwargs)
+# Detect at import time so the hot path inside ``@nnx.jit`` stays clean.
+_OPT_UPDATE_TAKES_MODEL = (
+    "model" in inspect.signature(nnx.Optimizer.update).parameters
+)
 console = Console()
 
 
@@ -65,7 +74,10 @@ def make_train_step(loss_fn, get_aux_loss=None):
             return total
 
         loss, grads = nnx.value_and_grad(_loss)(model)
-        optimizer.update(model, grads)
+        if _OPT_UPDATE_TAKES_MODEL:
+            optimizer.update(model, grads)
+        else:
+            optimizer.update(grads)
         return loss
 
     return train_step
