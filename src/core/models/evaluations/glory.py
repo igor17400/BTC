@@ -101,6 +101,12 @@ def glory_evaluate(
     group_labels: list[np.ndarray] = []
     group_preds: list[np.ndarray] = []
 
+    scoring_progress = create_progress(transient=True)
+    scoring_progress.start()
+    scoring_task = scoring_progress.add_task(
+        "Scoring GLORY impressions...", total=num_impressions
+    )
+
     for idx in range(num_impressions):
         hist = hist_ids_all[idx]
         hist_valid_mask = hist > 0
@@ -134,6 +140,10 @@ def glory_evaluate(
         )  # (C,)
         group_labels.append(labels)
         group_preds.append(scores)
+        scoring_progress.advance(scoring_task)
+
+    scoring_progress.remove_task(scoring_task)
+    scoring_progress.stop()
 
     with create_progress(transient=True) as progress:
         metrics = compute_metrics(

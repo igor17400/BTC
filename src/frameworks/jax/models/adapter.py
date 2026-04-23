@@ -15,7 +15,6 @@ import jax.numpy as jnp
 import numpy as np
 from flax import nnx
 
-
 # DIGAT eval pads each impression's candidate count up to this value so
 # the JIT-compiled scoring function has a single stable shape.  7824 val
 # + 72903 test MIND-small impressions average ~37 candidates with a long
@@ -29,14 +28,14 @@ _DIGAT_MAX_C = 512
 @nnx.jit(static_argnums=(8,))
 def _score_digat_impression_core(
     graph_encoder: nnx.Module,
-    cand_sag_emb: jax.Array,          # (max_C, G_n, D)
-    cand_sag_graph: jax.Array,        # (max_C, G_n, G_n)
-    cand_sag_mask: jax.Array,         # (max_C, G_n)
-    user_hist_emb: jax.Array,         # (H, D)
-    u_graph: jax.Array,               # (G_u, G_u)
-    u_cat_mask: jax.Array,            # (num_cat,)
-    u_cat_indices: jax.Array,         # (H,)
-    num_categories: int,              # static
+    cand_sag_emb: jax.Array,  # (max_C, G_n, D)
+    cand_sag_graph: jax.Array,  # (max_C, G_n, G_n)
+    cand_sag_mask: jax.Array,  # (max_C, G_n)
+    user_hist_emb: jax.Array,  # (H, D)
+    u_graph: jax.Array,  # (G_u, G_u)
+    u_cat_mask: jax.Array,  # (num_cat,)
+    u_cat_indices: jax.Array,  # (H,)
+    num_categories: int,  # static
 ) -> jax.Array:
     """JIT-compiled per-impression scoring with fixed max candidate count.
 
@@ -55,9 +54,15 @@ def _score_digat_impression_core(
     u_cat_idx_b = jnp.broadcast_to(u_cat_indices[None, :], (C, H))
 
     news_ctx, user_ctx = graph_encoder(
-        cand_sag_emb, cand_sag_graph, cand_sag_mask,
-        hist_b, u_graph_b, u_cat_mask_b, u_cat_idx_b,
-        num_categories, training=False,
+        cand_sag_emb,
+        cand_sag_graph,
+        cand_sag_mask,
+        hist_b,
+        u_graph_b,
+        u_cat_mask_b,
+        u_cat_idx_b,
+        num_categories,
+        training=False,
     )
     return jnp.sum(news_ctx * user_ctx, axis=-1)
 
@@ -100,9 +105,7 @@ class JAXAdapter:
             vec = encoder(features, training=False)
         return np.asarray(vec)
 
-    def run_activity_gater(
-        self, gater: Any, user_vecs: Any
-    ) -> np.ndarray:
+    def run_activity_gater(self, gater: Any, user_vecs: Any) -> np.ndarray:
         """Run the ActivityGater on a batch of user vectors.
 
         Args:
@@ -134,7 +137,9 @@ class JAXAdapter:
             ``(C,)`` numpy array of popularity scores.
         """
         bias_jnp = jnp.asarray(bias_vecs)
-        recency_jnp = jnp.asarray(recency).astype(jnp.int32) if recency is not None else None
+        recency_jnp = (
+            jnp.asarray(recency).astype(jnp.int32) if recency is not None else None
+        )
         ctr_jnp = jnp.asarray(ctr).astype(jnp.float32) if ctr is not None else None
         pop_scores = predictor(
             bias_jnp, recency_indices=recency_jnp, ctr_values=ctr_jnp
@@ -168,7 +173,9 @@ class JAXAdapter:
         sag_emb_j = jnp.asarray(sag_emb).astype(jnp.float32)
         sag_mask_j = jnp.asarray(sag_mask).astype(jnp.float32)
         ctx = graph_encoder._news_graph_context(
-            sag_emb_j, sag_mask_j, deterministic=True,
+            sag_emb_j,
+            sag_mask_j,
+            deterministic=True,
         )
         return np.asarray(ctx)
 
@@ -210,14 +217,17 @@ class JAXAdapter:
             # adjacency (self-loops only) so the graph encoder produces
             # finite values.  Their scores are discarded.
             cand_sag_emb = np.concatenate(
-                [cand_sag_emb, np.zeros((pad, G_n, D), dtype=np.float32)], axis=0,
+                [cand_sag_emb, np.zeros((pad, G_n, D), dtype=np.float32)],
+                axis=0,
             )
             eye = np.eye(G_n, dtype=np.float32)
             cand_sag_graph = np.concatenate(
-                [cand_sag_graph, np.broadcast_to(eye[None], (pad, G_n, G_n))], axis=0,
+                [cand_sag_graph, np.broadcast_to(eye[None], (pad, G_n, G_n))],
+                axis=0,
             )
             cand_sag_mask = np.concatenate(
-                [cand_sag_mask, np.ones((pad, G_n), dtype=np.float32)], axis=0,
+                [cand_sag_mask, np.ones((pad, G_n), dtype=np.float32)],
+                axis=0,
             )
 
         cand_emb_j = jnp.asarray(cand_sag_emb, dtype=jnp.float32)
@@ -230,8 +240,13 @@ class JAXAdapter:
 
         scores = _score_digat_impression_core(
             graph_encoder,
-            cand_emb_j, cand_graph_j, cand_mask_j,
-            hist_j, u_graph_j, u_cat_mask_j, u_cat_idx_j,
+            cand_emb_j,
+            cand_graph_j,
+            cand_mask_j,
+            hist_j,
+            u_graph_j,
+            u_cat_mask_j,
+            u_cat_idx_j,
             num_categories,
         )
         return np.asarray(scores)[:C]

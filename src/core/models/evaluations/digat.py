@@ -151,6 +151,12 @@ def digat_evaluate(
     num_impressions = len(impression_ids)
     logger.info(f"Scoring {num_impressions} impressions...")
 
+    scoring_progress = create_progress(transient=True)
+    scoring_progress.start()
+    scoring_task = scoring_progress.add_task(
+        "Scoring DIGAT impressions...", total=num_impressions
+    )
+
     for idx in range(num_impressions):
         imp_labels = np.asarray(labels_all[idx])
 
@@ -202,6 +208,10 @@ def digat_evaluate(
 
         group_labels.append(imp_labels)
         group_preds.append(scores)
+        scoring_progress.advance(scoring_task)
+
+    scoring_progress.remove_task(scoring_task)
+    scoring_progress.stop()
 
     # ------------------------------------------------------------------
     # 4. Compute metrics
