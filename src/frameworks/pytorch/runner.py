@@ -309,10 +309,12 @@ def run(cfg: DictConfig):
                         )
             setattr(dataset_provider, f"{split}_behaviors_data", data)
 
-        # Apply remap to train + val up-front; test is lazy-loaded and
-        # gets remapped just before the test-eval call.
+        # Remap train behaviors in-place: the graph builder and
+        # GLORYTrainDataset need feature-space IDs.  Val and test are
+        # NOT remapped in-place — their remap is applied at eval time
+        # inside ``glory_evaluate`` to avoid corrupting the remap array
+        # when it is rebuilt for the test split.
         _remap_behaviors_in_place("train")
-        _remap_behaviors_in_place("val")
         tb = dataset_provider.train_behaviors_data
         graph_cache_dir = (
             dataset_provider.dataset_path / "processed"
@@ -542,6 +544,7 @@ def run(cfg: DictConfig):
                 his_size=glory_cache["cfg"].max_history_length,
                 mode=mode,
                 batch_size=cfg.eval.batch_size,
+                id_remap=glory_id_remap,
             )
     else:
 
@@ -608,17 +611,23 @@ def run(cfg: DictConfig):
                 remap_path.unlink()
             id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
 
-        # GLORY: rebuild id_remap AND remap the newly-loaded test split
-        # into feature-space (train/val were remapped at init).
+        # GLORY: rebuild id_remap now that test data is loaded.  Train
+        # behaviors were remapped in-place (feature-space IDs), so we
+        # must hide them from ``build_id_remap`` to avoid namespace
+        # collisions between feature-space and behavior-space IDs.
         if spec.model.name.lower() == "glory":
             if glory_remap_path is not None and glory_remap_path.exists():
                 glory_remap_path.unlink()
+            # Temporarily hide remapped train data so build_id_remap
+            # only reads val + test (which still have behavior-space IDs).
+            _saved_train = dataset_provider.train_behaviors_data
+            dataset_provider.train_behaviors_data = {}
             glory_id_remap = build_id_remap(
                 dataset_provider,
                 processed_news,
                 glory_remap_path,
             )
-            _remap_behaviors_in_place("test")
+            dataset_provider.train_behaviors_data = _saved_train
 
         test_metrics = eval_fn(model, mode="test")
         if test_metrics:

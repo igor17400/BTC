@@ -50,6 +50,7 @@ def glory_evaluate(
     his_size: int,
     mode: str = "val",
     batch_size: int = 256,
+    id_remap: np.ndarray | None = None,
 ) -> dict[str, float]:
     """Evaluate GLORY on the dev or test set.
 
@@ -91,7 +92,13 @@ def glory_evaluate(
             "num_impressions": 0,
         }
 
-    hist_ids_all = np.asarray(behaviors["histories_news_ids"]).astype(np.int64)
+    hist_ids_raw = np.asarray(behaviors["histories_news_ids"]).astype(np.int64)
+    if id_remap is not None:
+        hist_ids_all = np.where(
+            hist_ids_raw < len(id_remap), id_remap[hist_ids_raw], 0
+        ).astype(np.int64)
+    else:
+        hist_ids_all = np.clip(hist_ids_raw, 0, num_news - 1)
     impression_ids = np.asarray(behaviors["impression_ids"])
     labels_all = behaviors["labels"]
 
@@ -118,7 +125,12 @@ def glory_evaluate(
         cand_ids_raw = np.asarray(behaviors["candidate_news_ids"][idx]).astype(np.int64)
         if cand_ids_raw.ndim == 0:
             cand_ids_raw = cand_ids_raw.reshape(1)
-        cand_ids = np.clip(cand_ids_raw, 0, num_news - 1)
+        if id_remap is not None:
+            cand_ids = np.where(
+                cand_ids_raw < len(id_remap), id_remap[cand_ids_raw], 0
+            ).astype(np.int64)
+        else:
+            cand_ids = np.clip(cand_ids_raw, 0, num_news - 1)
 
         labels = np.asarray(labels_all[idx])
         if labels.size == 0:
