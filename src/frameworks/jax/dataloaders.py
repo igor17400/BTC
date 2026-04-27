@@ -344,3 +344,120 @@ class ImpressionIterator:
 
     def __len__(self) -> int:
         return self.num_impressions
+
+
+# ---------------------------------------------------------------------------
+# GLORY training dataloader (variable-size subgraphs → JAX arrays)
+# ---------------------------------------------------------------------------
+
+
+# Padding constants for GLORY JAX (fixed shapes → single JIT compilation).
+# Profiled on MIND-small with batch_size=32, k_hops=2, num_neighbors=8:
+#   per-sample nodes: mean=528, p99=741
+#   per-batch total nodes: mean=16.9k, p99=17.8k
+#   per-batch total edges: mean=585k, p99=644k
+_GLORY_MAX_NODES = 20480
+_GLORY_MAX_EDGES = 720896
+
+
+def _glory_collate_jax(
+    samples: list[dict[str, np.ndarray]],
+) -> tuple[dict[str, jnp.ndarray], jnp.ndarray]:
+    """Concatenate and pad GLORY subgraphs to fixed shapes for JIT.
+
+    Concatenates per-sample subgraphs (same as PyTorch) then pads to
+    ``_GLORY_MAX_NODES`` / ``_GLORY_MAX_EDGES`` so every batch has
+    identical tensor shapes.  XLA compiles once and reuses the compiled
+    kernel for all batches.
+
+    Padded nodes get zero features; padded edges are self-loops on
+    node 0 (harmless for scatter-add).  A ``num_real_nodes`` int is
+    included so the model can slice or mask if needed.
+    """
+    sub_xs: list[np.ndarray] = []
+    sub_edges: list[np.ndarray] = []
+    mappings: list[np.ndarray] = []
+    cand_tokens: list[np.ndarray] = []
+    labels: list[np.ndarray] = []
+
+    offset = 0
+    for s in samples:
+        n = s["sub_x"].shape[0]
+        sub_xs.append(s["sub_x"])
+        if s["sub_edge_index"].size > 0:
+            sub_edges.append(s["sub_edge_index"] + offset)
+        m = s["mapping_idx"].copy()
+        valid = m != -1
+        m[valid] = m[valid] + offset
+        mappings.append(m)
+        cand_tokens.append(s["cand_tokens"])
+        labels.append(s["label"])
+        offset += n
+
+    # Concatenate real data.
+    real_x = np.concatenate(sub_xs, axis=0)                    # (N_real, feat)
+    real_edges = (
+        np.concatenate(sub_edges, axis=1) if sub_edges
+        else np.zeros((2, 0), dtype=np.int64)
+    )                                                           # (2, E_real)
+    N_real = real_x.shape[0]
+    E_real = real_edges.shape[1]
+    feat_dim = real_x.shape[1]
+
+    # Pad nodes.
+    if N_real > _GLORY_MAX_NODES:
+        # Rare overflow — clip (some subgraphs will index padding,
+        # producing slightly noisy gradients for this one batch).
+        real_x = real_x[:_GLORY_MAX_NODES]
+        N_real = _GLORY_MAX_NODES
+    node_pad = _GLORY_MAX_NODES - N_real
+    padded_x = np.concatenate(
+        [real_x, np.zeros((node_pad, feat_dim), dtype=real_x.dtype)], axis=0,
+    ) if node_pad > 0 else real_x
+
+    # Pad edges (self-loops on node 0 — harmless for scatter-add).
+    if E_real > _GLORY_MAX_EDGES:
+        real_edges = real_edges[:, :_GLORY_MAX_EDGES]
+        E_real = _GLORY_MAX_EDGES
+    edge_pad = _GLORY_MAX_EDGES - E_real
+    if edge_pad > 0:
+        pad_edges = np.zeros((2, edge_pad), dtype=real_edges.dtype)
+        padded_edges = np.concatenate([real_edges, pad_edges], axis=1)
+    else:
+        padded_edges = real_edges
+
+    batched = {
+        "subgraph_x": jnp.asarray(padded_x, dtype=jnp.int32),
+        "subgraph_edge_index": jnp.asarray(padded_edges, dtype=jnp.int32),
+        "mapping_idx": jnp.asarray(np.stack(mappings, axis=0), dtype=jnp.int32),
+        "cand_tokens": jnp.asarray(np.stack(cand_tokens, axis=0), dtype=jnp.int32),
+        "num_real_nodes": jnp.array(N_real, dtype=jnp.int32),
+    }
+    labels_j = jnp.asarray(np.stack(labels, axis=0), dtype=jnp.float32)
+    return batched, labels_j
+
+
+def create_glory_jax_dataloader(
+    *,
+    dataset,
+    batch_size: int,
+    shuffle: bool = True,
+    num_workers: int = 0,
+):
+    """Create a GLORY training dataloader that yields JAX arrays.
+
+    Reuses PyTorch's ``DataLoader`` for multi-process subgraph sampling
+    (the dataset ``__getitem__`` returns numpy arrays) and converts
+    to fixed-shape JAX arrays in the collate function.
+    """
+    from torch.utils.data import DataLoader
+
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=shuffle,
+        num_workers=num_workers,
+        pin_memory=False,
+        collate_fn=_glory_collate_jax,
+        drop_last=True,  # Drop last to keep batch size consistent for JIT
+    )

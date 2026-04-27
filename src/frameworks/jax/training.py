@@ -43,26 +43,29 @@ console = Console()
 # ---------------------------------------------------------------------------
 
 
-def make_train_step(loss_fn, get_aux_loss=None):
-    """Create a JIT-compiled training step that uses the given loss function.
+def make_train_step(loss_fn, get_aux_loss=None, use_jit: bool = True):
+    """Create a training step that uses the given loss function.
 
     Args:
         loss_fn: Callable ``(y_true, y_pred) -> scalar`` loss function.
         get_aux_loss: Optional callable ``(model) -> scalar`` that returns
             an auxiliary loss term (e.g. CROWN category prediction).
+        use_jit: Whether to JIT-compile the step.  Set ``False`` for
+            models with variable-sized inputs (e.g. GLORY subgraphs)
+            where shapes change every batch.
 
     Returns:
-        A JIT-compiled ``train_step(model, optimizer, features, labels)`` function.
+        A ``train_step(model, optimizer, features, labels)`` function,
+        optionally JIT-compiled.
     """
 
-    @nnx.jit
     def train_step(
         model: nnx.Module,
         optimizer: nnx.Optimizer,
         batch_features: dict[str, jnp.ndarray],
         batch_labels: jnp.ndarray,
     ) -> jnp.ndarray:
-        """Single JIT-compiled training step."""
+        """Single training step."""
 
         def _loss(model):
             preds = model(batch_features, training=True)
@@ -77,6 +80,9 @@ def make_train_step(loss_fn, get_aux_loss=None):
         else:
             optimizer.update(grads)
         return loss
+
+    if use_jit:
+        train_step = nnx.jit(train_step)
 
     return train_step
 
@@ -146,9 +152,11 @@ def training_loop(
     num_epochs: int = 10,
     learning_rate: float = 1e-4,
     weight_decay: float = 0.0,
+    gradient_clip_norm: float = 0.0,
     early_stopping_patience: int = 5,
     loss_fn=None,
     get_aux_loss=None,
+    use_jit: bool = True,
     # Optional evaluation hooks
     eval_fn=None,
     eval_kwargs: dict[str, Any] | None = None,
@@ -187,23 +195,28 @@ def training_loop(
 
         loss_fn = categorical_cross_entropy
 
-    train_step = make_train_step(loss_fn, get_aux_loss=get_aux_loss)
+    train_step = make_train_step(loss_fn, get_aux_loss=get_aux_loss, use_jit=use_jit)
 
     # ---- Optimiser -------------------------------------------------------
+    components = []
+    if gradient_clip_norm > 0:
+        components.append(optax.clip_by_global_norm(gradient_clip_norm))
     if weight_decay > 0:
-        tx = optax.adamw(learning_rate, weight_decay=weight_decay)
+        components.append(optax.adamw(learning_rate, weight_decay=weight_decay))
     else:
-        tx = optax.adam(learning_rate)
+        components.append(optax.adam(learning_rate))
+    tx = optax.chain(*components) if len(components) > 1 else components[0]
 
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
 
     # ---- JIT warmup ------------------------------------------------------
-    try:
-        first_batch = next(iter(train_dataloader), None)
-        if first_batch is not None:
-            warmup_jit(model, optimizer, train_step, first_batch)
-    except Exception as exc:
-        logger.warning("JIT warmup skipped: %s", exc)
+    if use_jit:
+        try:
+            first_batch = next(iter(train_dataloader), None)
+            if first_batch is not None:
+                warmup_jit(model, optimizer, train_step, first_batch)
+        except Exception as exc:
+            logger.warning("JIT warmup skipped: %s", exc)
 
     # ---- Early stopping --------------------------------------------------
     stopper = EarlyStopping(patience=early_stopping_patience)
@@ -217,6 +230,9 @@ def training_loop(
         progress = create_progress()
         progress.start()
         own_progress = True
+
+    # ---- Best checkpoint (in-memory) ----------------------------------------
+    best_state = None
 
     # ---- Timing ----------------------------------------------------------
     timing: dict[str, Any] = {
@@ -288,6 +304,9 @@ def training_loop(
                         "average_metric_value": avg_metric,
                         **{f"val_{k}": v for k, v in val_metrics.items()},
                     }
+                    # Deep-copy best model state so later NaN corruption
+                    # doesn't propagate into the saved checkpoint.
+                    best_state = jax.tree.map(lambda x: x.copy(), nnx.state(model))
 
             # Log epoch (shared format)
             log_epoch_end(
@@ -318,6 +337,14 @@ def training_loop(
         progress.remove_task(overall_task)
         if own_progress:
             progress.stop()
+
+    # Restore best model state so test eval uses the best weights.
+    if best_state is not None:
+        nnx.update(model, best_state)
+        logger.info(
+            "Restored best model state from epoch %d",
+            best_metrics.get("epoch_number", "?"),
+        )
 
     timing["total_training_time"] = time.time() - experiment_start
     best_metrics["timing"] = timing

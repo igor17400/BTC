@@ -269,6 +269,7 @@ _MODEL_CLASS_PATHS = {
         "crown": "src.frameworks.jax.models.crown.CROWN",
         "pprec": "src.frameworks.jax.models.pprec.PPRec",
         "digat": "src.frameworks.jax.models.digat.DIGAT",
+        "glory": "src.frameworks.jax.models.glory.GLORY",
     },
 }
 

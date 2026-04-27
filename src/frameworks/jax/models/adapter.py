@@ -250,3 +250,60 @@ class JAXAdapter:
             num_categories,
         )
         return np.asarray(scores)[:C]
+
+    # ------------------------------------------------------------------
+    # GLORY-specific methods
+    # ------------------------------------------------------------------
+
+    def encode_glory_news(
+        self,
+        news_encoder: Any,
+        news_features: Any,
+        batch_size: int,
+    ) -> np.ndarray:
+        """Run GLORY local news encoder over the full corpus."""
+        num_news = news_features.shape[0]
+        news_dim = news_encoder.news_dim
+        out = np.zeros((num_news, news_dim), dtype=np.float32)
+        for start in range(0, num_news, batch_size):
+            end = min(start + batch_size, num_news)
+            batch = jnp.asarray(news_features[start:end], dtype=jnp.int32)
+            emb = news_encoder(
+                batch[None, :, :], training=False,
+            ).squeeze(axis=0)  # (B, D)
+            out[start:end] = np.asarray(emb)
+        return out
+
+    def encode_glory_global(
+        self,
+        graph_encoder: Any,
+        all_news_emb: Any,
+        edge_index: Any,
+    ) -> np.ndarray:
+        """Run the global GatedGraphConv on the full news graph."""
+        x = jnp.asarray(all_news_emb, dtype=jnp.float32)
+        ei = jnp.asarray(edge_index, dtype=jnp.int32)
+        out = graph_encoder(x, ei)
+        return np.asarray(out)
+
+    def score_glory_impression(
+        self,
+        click_encoder: Any,
+        user_encoder: Any,
+        candidate_encoder: Any,
+        click_predictor: Any,
+        clicked_title: Any,
+        clicked_graph: Any,
+        cand_local: Any,
+    ) -> np.ndarray:
+        """Fuse + score a single impression's candidates."""
+        ct = jnp.asarray(clicked_title, dtype=jnp.float32)[None]   # (1, H, D)
+        cg = jnp.asarray(clicked_graph, dtype=jnp.float32)[None]
+        cl = jnp.asarray(cand_local, dtype=jnp.float32)[None]      # (1, C, D)
+
+        fused = click_encoder(ct, cg)                   # (1, H, D)
+        user_emb = user_encoder(fused)                  # (1, D)
+        cand_final = candidate_encoder(cl)              # (1, C, D)
+        # Dot-product scoring
+        scores = jnp.sum(cand_final * user_emb[:, None, :], axis=-1)  # (1, C)
+        return np.asarray(scores.squeeze(axis=0))
