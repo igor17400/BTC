@@ -241,8 +241,13 @@ def build_digat_train_features(
     hist_tokens = np.asarray(behaviors_data["history_news_tokens"])  # (N, H, T)
     hist_categories = np.asarray(behaviors_data["history_news_categories"])  # (N, H)
     raw_cand_ids = np.asarray(behaviors_data["candidate_news_ids"])
-    if raw_cand_ids.dtype.kind in ("U", "S", "O") and news_str_id_to_int is not None:
-        vfunc = np.vectorize(lambda x: news_str_id_to_int.get(str(x), 0))
+    if raw_cand_ids.dtype.kind in ("U", "S", "O"):
+        if news_str_id_to_int is not None:
+            vfunc = np.vectorize(lambda x: news_str_id_to_int.get(str(x), 0))
+        else:
+            # Fallback: extract numeric part from string IDs (e.g. "N82" → 82).
+            import re
+            vfunc = np.vectorize(lambda x: int(re.sub(r"[^0-9]", "", str(x)) or 0))
         cand_ids = vfunc(raw_cand_ids).astype(np.int64)
     else:
         cand_ids = raw_cand_ids.astype(np.int64)

@@ -427,14 +427,14 @@ def _glory_collate_jax(
         padded_edges = real_edges
 
     batched = {
-        "subgraph_x": jnp.asarray(padded_x, dtype=jnp.int32),
-        "subgraph_edge_index": jnp.asarray(padded_edges, dtype=jnp.int32),
-        "mapping_idx": jnp.asarray(np.stack(mappings, axis=0), dtype=jnp.int32),
-        "cand_tokens": jnp.asarray(np.stack(cand_tokens, axis=0), dtype=jnp.int32),
-        "num_real_nodes": jnp.array(N_real, dtype=jnp.int32),
+        "subgraph_x": np.asarray(padded_x, dtype=np.int32),
+        "subgraph_edge_index": np.asarray(padded_edges, dtype=np.int64),
+        "mapping_idx": np.stack(mappings, axis=0).astype(np.int32),
+        "cand_tokens": np.stack(cand_tokens, axis=0).astype(np.int32),
+        "num_real_nodes": np.array(N_real, dtype=np.int32),
     }
-    labels_j = jnp.asarray(np.stack(labels, axis=0), dtype=jnp.float32)
-    return batched, labels_j
+    labels_out = np.stack(labels, axis=0).astype(np.float32)
+    return batched, labels_out
 
 
 def create_glory_jax_dataloader(

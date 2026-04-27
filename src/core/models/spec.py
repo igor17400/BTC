@@ -251,7 +251,9 @@ _MODEL_CLASS_PATHS = {
         "naml": "src.frameworks.keras.models.naml.NAML",
         "lstur": "src.frameworks.keras.models.lstur.LSTUR",
         "crown": "src.frameworks.keras.models.crown.CROWN",
+        "digat": "src.frameworks.keras.models.digat.DIGAT",
         "pprec": "src.frameworks.keras.models.pprec.PPRec",
+        "glory": "src.frameworks.keras.models.glory.GLORY",
     },
     "pytorch": {
         "nrms": "src.frameworks.pytorch.models.nrms.NRMS",
