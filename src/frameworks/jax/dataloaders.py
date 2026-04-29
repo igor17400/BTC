@@ -415,13 +415,15 @@ def _glory_collate_jax(
         [real_x, np.zeros((node_pad, feat_dim), dtype=real_x.dtype)], axis=0,
     ) if node_pad > 0 else real_x
 
-    # Pad edges (self-loops on node 0 — harmless for scatter-add).
+    # Pad edges — point at the last (isolated) padding node so
+    # scatter-add doesn't accumulate messages on real nodes.
+    pad_node_idx = _GLORY_MAX_NODES - 1
     if E_real > _GLORY_MAX_EDGES:
         real_edges = real_edges[:, :_GLORY_MAX_EDGES]
         E_real = _GLORY_MAX_EDGES
     edge_pad = _GLORY_MAX_EDGES - E_real
     if edge_pad > 0:
-        pad_edges = np.zeros((2, edge_pad), dtype=real_edges.dtype)
+        pad_edges = np.full((2, edge_pad), pad_node_idx, dtype=real_edges.dtype)
         padded_edges = np.concatenate([real_edges, pad_edges], axis=1)
     else:
         padded_edges = real_edges

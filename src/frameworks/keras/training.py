@@ -192,16 +192,6 @@ def training_loop(
     wandb_history = {} if cfg.logging.enable_wandb else None
     log_training_start(cfg.model_name, framework, cfg.train.num_epochs)
 
-    # JIT warmup
-    try:
-        from src.frameworks.keras.utils import warmup_jit_compilation
-
-        first_batch = next(iter(train_dataset), None)
-        if first_batch is not None:
-            warmup_jit_compilation(model, first_batch)
-            console.log("JIT warmup completed.")
-    except Exception as e:
-        console.log(f"[yellow]JIT warmup skipped: {e}[/yellow]")
 
     # Steps per epoch
     steps_per_epoch = len(train_dataset) if hasattr(train_dataset, "__len__") else None

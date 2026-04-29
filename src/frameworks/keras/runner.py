@@ -236,7 +236,7 @@ def run(cfg: DictConfig):
     clip_val = cfg.train.get("gradient_clip_val", 0.0)
     optimizer = keras.optimizers.Adam(
         learning_rate=cfg.train.learning_rate,
-        clipnorm=clip_val if clip_val > 0 else None,
+        global_clipnorm=clip_val if clip_val > 0 else None,
     )
     loss_fn = get_loss(
         loss_name=spec.training.loss.name,

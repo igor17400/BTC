@@ -38,6 +38,9 @@ class ScaledDotProductAttention(keras.layers.Layer):
 
     def call(self, Q, K, V, attn_mask=None):
         scores = ops.matmul(Q, ops.swapaxes(K, -1, -2)) / math.sqrt(self.d_k)
+        # Numerically stable exp: subtract max to prevent overflow.
+        # Mathematically equivalent to raw exp() after normalization.
+        scores = scores - ops.max(scores, axis=-1, keepdims=True)
         scores = ops.exp(scores)
         if attn_mask is not None:
             scores = scores * ops.expand_dims(attn_mask, axis=-2)
@@ -138,7 +141,9 @@ class AttentionPooling(keras.layers.Layer):
     def call(self, x, attn_mask=None):
         # x: (B, N, E)
         e = ops.tanh(self.att_fc1(x))
-        alpha = ops.exp(self.att_fc2(e))  # (B, N, 1)
+        raw = self.att_fc2(e)  # (B, N, 1)
+        # Numerically stable exp: subtract max to prevent overflow.
+        alpha = ops.exp(raw - ops.max(raw, axis=1, keepdims=True))
         if attn_mask is not None:
             alpha = alpha * ops.expand_dims(attn_mask, axis=2)
         alpha = alpha / (ops.sum(alpha, axis=1, keepdims=True) + 1e-8)
@@ -207,17 +212,21 @@ class GRUCell(keras.layers.Layer):
     def __init__(self, input_size: int, hidden_size: int, **kwargs):
         super().__init__(**kwargs)
         self.hidden_size = hidden_size
+        # Match PyTorch nn.GRUCell: uniform(-1/sqrt(H), 1/sqrt(H)) for
+        # both kernels and biases.
+        k = 1.0 / math.sqrt(hidden_size)
+        uniform_init = keras.initializers.RandomUniform(-k, k)
         # Input-to-hidden weights for r, z, n gates (stacked).
         self.W_ih = layers.Dense(
             3 * hidden_size, use_bias=True,
-            kernel_initializer="glorot_uniform",
-            bias_initializer="zeros",
+            kernel_initializer=uniform_init,
+            bias_initializer=uniform_init,
         )
         # Hidden-to-hidden weights for r, z, n gates (stacked).
         self.W_hh = layers.Dense(
             3 * hidden_size, use_bias=True,
-            kernel_initializer="glorot_uniform",
-            bias_initializer="zeros",
+            kernel_initializer=uniform_init,
+            bias_initializer=uniform_init,
         )
 
     def call(self, x, h):
@@ -270,16 +279,30 @@ class GatedGraphConv(keras.layers.Layer):
         self.num_layers = num_layers
 
     def build(self, input_shape):
+        # Initialize each layer's weight slice independently so fan_in/fan_out
+        # are computed on the 2D (out_channels, out_channels) shape, matching
+        # PyTorch's per-slice xavier_uniform_ and the JAX port.
+        # Use keras.ops.convert_to_numpy to handle both JAX and torch backends
+        # (torch initializers may return CUDA tensors that raw np.array rejects).
+        import numpy as _np
+        initializer = keras.initializers.GlorotUniform()
+        slices = [
+            keras.ops.convert_to_numpy(
+                initializer(shape=(self.out_channels, self.out_channels))
+            )
+            for _ in range(self.num_layers)
+        ]
+        stacked = _np.stack(slices, axis=0)
         self.weight = self.add_weight(
             name="weight",
             shape=(self.num_layers, self.out_channels, self.out_channels),
-            initializer="glorot_uniform",
+            initializer=lambda shape, dtype=None: stacked,
             trainable=True,
         )
         self.rnn = GRUCell(self.out_channels, self.out_channels, name="gru_cell")
         super().build(input_shape)
 
-    def call(self, x, edge_index):
+    def call(self, x, edge_index, real_mask=None):
         """Propagate features across a graph.
 
         Args:
@@ -287,6 +310,12 @@ class GatedGraphConv(keras.layers.Layer):
                 ``(N, out_channels)`` if ``F_in < out_channels``.
             edge_index: ``(2, E)`` int tensor of directed edges
                 ``(src, dst)`` -- messages flow src -> dst.
+            real_mask: optional ``(N, 1)`` bool mask — True for real
+                nodes, False for padding.  When provided, padding node
+                states are zeroed after each GRU step to prevent the
+                GRU's learned biases from leaking non-zero values into
+                padding nodes, which would be amplified ~718k× through
+                self-loop scatter-add.
 
         Returns:
             ``(N, out_channels)`` updated node features.
@@ -303,5 +332,7 @@ class GatedGraphConv(keras.layers.Layer):
             m = ops.matmul(x, self.weight[i])          # (N, D)
             agg = _scatter_add(m[src], dst, num_nodes)  # (N, D)
             x = self.rnn(agg, x)                        # (N, D)
+            if real_mask is not None:
+                x = ops.where(real_mask, x, 0)
 
         return x

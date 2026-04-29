@@ -44,6 +44,7 @@ class ScaledDotProductAttention(nnx.Module):
         attn_mask: jax.Array | None = None,
     ) -> jax.Array:
         scores = jnp.matmul(Q, jnp.swapaxes(K, -1, -2)) / math.sqrt(self.d_k)
+        scores = scores - jnp.max(scores, axis=-1, keepdims=True)
         scores = jnp.exp(scores)
         if attn_mask is not None:
             scores = scores * jnp.expand_dims(attn_mask, axis=-2)
@@ -140,7 +141,8 @@ class AttentionPooling(nnx.Module):
     ) -> jax.Array:
         # x: (B, N, E)
         e = jnp.tanh(self.att_fc1(x))
-        alpha = jnp.exp(self.att_fc2(e))  # (B, N, 1)
+        raw = self.att_fc2(e)  # (B, N, 1)
+        alpha = jnp.exp(raw - jnp.max(raw, axis=1, keepdims=True))
         if attn_mask is not None:
             alpha = alpha * jnp.expand_dims(attn_mask, axis=2)
         alpha = alpha / (jnp.sum(alpha, axis=1, keepdims=True) + 1e-8)

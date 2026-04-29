@@ -262,8 +262,23 @@ class GLORY(BaseModel):
             self.local_news_encoder(flat, training=training), axis=0,
         )  # (N_total, D)
 
+        # Build padding mask for GNN.  The JAX collate pads to fixed
+        # tensor shapes for JIT; padded edges are self-loops on the last
+        # node.  Without masking inside the GNN, the GRU's learned biases
+        # produce non-zero padding-node states that get amplified ~718k×
+        # through self-loop scatter-add, causing NaN after a few epochs.
+        real_mask = None
+        if "num_real_nodes" in inputs:
+            node_idx = ops.arange(ops.shape(x_encoded)[0])
+            real_mask = ops.expand_dims(
+                node_idx < inputs["num_real_nodes"], axis=-1,
+            )  # (N_total, 1)
+            x_encoded = ops.where(real_mask, x_encoded, 0)
+
         # GNN over the full (batched) subgraph.
-        graph_emb = self.global_news_encoder(x_encoded, edge_index)  # (N_total, D)
+        graph_emb = self.global_news_encoder(
+            x_encoded, edge_index, real_mask=real_mask,
+        )  # (N_total, D)
 
         # Gather history embeddings from both views.
         valid_mask = ops.expand_dims(valid, axis=-1)  # (B, H, 1)
