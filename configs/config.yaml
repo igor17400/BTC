@@ -62,7 +62,7 @@ metrics:
 # Multi-seed evaluation (for paper-ready results with mean ± std)
 multi_seed:
   enabled: false
-  seeds: [42, 123, 456, 789, 1024]
+  seeds: [42, 123, 456]
 
 # Cache configuration
 cache:
