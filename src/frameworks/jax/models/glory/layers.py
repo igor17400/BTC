@@ -278,3 +278,121 @@ class GatedGraphConv(nnx.Module):
             x = self.rnn(agg, x)                   # (N, D)
 
         return x
+
+
+# ======================================================================
+# Entity encoders (for use_entity=True)
+# ======================================================================
+
+
+class EntityEncoder(nnx.Module):
+    """Local entity encoder: emb → dropout → MHA → LN → drop → pool → LN → Dense → LeakyReLU.
+
+    Matches the reference ``EntityEncoder`` — projects entity_dim to news_dim.
+    """
+
+    def __init__(
+        self,
+        entity_dim: int,
+        news_dim: int,
+        head_dim: int,
+        attention_hidden_dim: int,
+        dropout_rate: float,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        head_num = entity_dim // head_dim
+        self.dropout1 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
+        self.msa = MultiHeadAttention(
+            entity_dim, entity_dim, entity_dim,
+            head_num, head_dim, rngs=rngs,
+        )
+        self.layernorm1 = nnx.LayerNorm(entity_dim, rngs=rngs)
+        self.dropout2 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
+        self.attn_pool = AttentionPooling(
+            entity_dim, attention_hidden_dim, rngs=rngs,
+        )
+        self.layernorm2 = nnx.LayerNorm(entity_dim, rngs=rngs)
+        self.linear = nnx.Linear(entity_dim, news_dim, rngs=rngs)
+
+    def __call__(
+        self, entity_input: jax.Array, mask: jax.Array | None = None,
+        *, training: bool = False,
+    ) -> jax.Array:
+        """Encode entities.
+
+        Args:
+            entity_input: ``(B, N, E_ent, entity_dim)`` entity embeddings.
+            mask: optional ``(B*N, E_ent)`` mask.
+
+        Returns:
+            ``(B, N, news_dim)`` entity representations.
+        """
+        det = not training
+        B, N = entity_input.shape[:2]
+        num_ent = entity_input.shape[2]
+        x = entity_input.reshape(B * N, num_ent, -1)
+        x = self.dropout1(x, deterministic=det)
+        x = self.msa(x, x, x, mask)
+        x = self.layernorm1(x)
+        x = self.dropout2(x, deterministic=det)
+        x = self.attn_pool(x, mask)
+        x = self.layernorm2(x)
+        x = jax.nn.leaky_relu(self.linear(x), negative_slope=0.2)
+        return x.reshape(B, N, -1)
+
+
+class GlobalEntityEncoder(nnx.Module):
+    """Global entity encoder: emb → dropout → MHA → LN → drop → pool → LN.
+
+    Same as EntityEncoder but WITHOUT the final Dense + LeakyReLU.
+    Uses head_num/head_dim from config so output dim = head_num * head_dim = news_dim.
+    """
+
+    def __init__(
+        self,
+        entity_dim: int,
+        head_num: int,
+        head_dim: int,
+        attention_hidden_dim: int,
+        dropout_rate: float,
+        *,
+        rngs: nnx.Rngs,
+    ):
+        self.news_dim = head_num * head_dim
+        self.dropout1 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
+        self.msa = MultiHeadAttention(
+            entity_dim, entity_dim, entity_dim,
+            head_num, head_dim, rngs=rngs,
+        )
+        self.layernorm1 = nnx.LayerNorm(self.news_dim, rngs=rngs)
+        self.dropout2 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
+        self.attn_pool = AttentionPooling(
+            self.news_dim, attention_hidden_dim, rngs=rngs,
+        )
+        self.layernorm2 = nnx.LayerNorm(self.news_dim, rngs=rngs)
+
+    def __call__(
+        self, entity_input: jax.Array, mask: jax.Array | None = None,
+        *, training: bool = False,
+    ) -> jax.Array:
+        """Encode neighbor entities.
+
+        Args:
+            entity_input: ``(B, N, E_ent, entity_dim)`` entity embeddings.
+            mask: optional ``(B*N, E_ent)`` mask.
+
+        Returns:
+            ``(B, N, news_dim)`` entity representations.
+        """
+        det = not training
+        B, N = entity_input.shape[:2]
+        num_ent = entity_input.shape[2]
+        x = entity_input.reshape(B * N, num_ent, -1)
+        x = self.dropout1(x, deterministic=det)
+        x = self.msa(x, x, x, mask)
+        x = self.layernorm1(x)
+        x = self.dropout2(x, deterministic=det)
+        x = self.attn_pool(x, mask)
+        x = self.layernorm2(x)
+        return x.reshape(B, N, self.news_dim)

@@ -286,6 +286,76 @@ class JAXAdapter:
         out = graph_encoder(x, ei)
         return np.asarray(out)
 
+    def encode_glory_entity(
+        self,
+        entity_embedding: Any,
+        entity_encoder: Any,
+        entity_ids: Any,
+        batch_size: int = 0,
+    ) -> np.ndarray:
+        """Embed + encode entity IDs via the local entity encoder.
+
+        Args:
+            entity_embedding: nnx.Embed module.
+            entity_encoder: EntityEncoder module.
+            entity_ids: (N, E) int array of entity IDs.
+            batch_size: If > 0, process in batches (for pre-computation).
+
+        Returns:
+            (N, D) entity representations.
+        """
+        N = entity_ids.shape[0]
+        if batch_size > 0 and N > batch_size:
+            chunks = []
+            for start in range(0, N, batch_size):
+                end = min(start + batch_size, N)
+                ids = jnp.asarray(entity_ids[start:end], dtype=jnp.int32)
+                embedded = entity_embedding(ids)
+                out = entity_encoder(embedded[None], training=False).squeeze(axis=0)
+                chunks.append(np.asarray(out))
+            return np.concatenate(chunks, axis=0)
+        ids = jnp.asarray(entity_ids, dtype=jnp.int32)
+        embedded = entity_embedding(ids)
+        out = entity_encoder(embedded[None], training=False).squeeze(axis=0)
+        return np.asarray(out)
+
+    def encode_glory_global_entity(
+        self,
+        entity_embedding: Any,
+        global_entity_encoder: Any,
+        neighbor_ids: Any,
+        entity_mask: Any,
+        batch_size: int = 0,
+    ) -> np.ndarray:
+        """Embed + encode neighbor entity IDs via global entity encoder.
+
+        Args:
+            entity_embedding: nnx.Embed module.
+            global_entity_encoder: GlobalEntityEncoder module.
+            neighbor_ids: (N, E*EN) int array of neighbor entity IDs.
+            entity_mask: (N, E*EN) float mask.
+            batch_size: If > 0, process in batches (for pre-computation).
+
+        Returns:
+            (N, D) entity representations.
+        """
+        N = neighbor_ids.shape[0]
+        if batch_size > 0 and N > batch_size:
+            chunks = []
+            for start in range(0, N, batch_size):
+                end = min(start + batch_size, N)
+                ids = jnp.asarray(neighbor_ids[start:end], dtype=jnp.int32)
+                embedded = entity_embedding(ids)
+                mask = jnp.asarray(entity_mask[start:end], dtype=jnp.float32) if entity_mask is not None else None
+                out = global_entity_encoder(embedded[None], mask, training=False).squeeze(axis=0)
+                chunks.append(np.asarray(out))
+            return np.concatenate(chunks, axis=0)
+        ids = jnp.asarray(neighbor_ids, dtype=jnp.int32)
+        embedded = entity_embedding(ids)
+        mask = jnp.asarray(entity_mask, dtype=jnp.float32) if entity_mask is not None else None
+        out = global_entity_encoder(embedded[None], mask, training=False).squeeze(axis=0)
+        return np.asarray(out)
+
     def score_glory_impression(
         self,
         click_encoder: Any,
@@ -295,15 +365,30 @@ class JAXAdapter:
         clicked_title: Any,
         clicked_graph: Any,
         cand_local: Any,
+        clicked_entity_emb: Any = None,
+        cand_origin_emb: Any = None,
+        cand_neighbor_emb: Any = None,
     ) -> np.ndarray:
         """Fuse + score a single impression's candidates."""
         ct = jnp.asarray(clicked_title, dtype=jnp.float32)[None]   # (1, H, D)
         cg = jnp.asarray(clicked_graph, dtype=jnp.float32)[None]
         cl = jnp.asarray(cand_local, dtype=jnp.float32)[None]      # (1, C, D)
 
-        fused = click_encoder(ct, cg)                   # (1, H, D)
+        ce = None
+        if clicked_entity_emb is not None:
+            ce = jnp.asarray(clicked_entity_emb, dtype=jnp.float32)[None]
+
+        fused = click_encoder(ct, cg, ce)               # (1, H, D)
         user_emb = user_encoder(fused)                  # (1, D)
-        cand_final = candidate_encoder(cl)              # (1, C, D)
+
+        co = None
+        cn = None
+        if cand_origin_emb is not None:
+            co = jnp.asarray(cand_origin_emb, dtype=jnp.float32)[None]
+        if cand_neighbor_emb is not None:
+            cn = jnp.asarray(cand_neighbor_emb, dtype=jnp.float32)[None]
+
+        cand_final = candidate_encoder(cl, co, cn)      # (1, C, D)
         # Dot-product scoring
         scores = jnp.sum(cand_final * user_emb[:, None, :], axis=-1)  # (1, C)
         return np.asarray(scores.squeeze(axis=0))

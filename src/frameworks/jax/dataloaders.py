@@ -435,6 +435,16 @@ def _glory_collate_jax(
         "cand_tokens": np.stack(cand_tokens, axis=0).astype(np.int32),
         "num_real_nodes": np.array(N_real, dtype=np.int32),
     }
+
+    # Pass through entity data if present (use_entity=True).
+    if "candidate_entity" in samples[0]:
+        batched["candidate_entity"] = np.stack(
+            [s["candidate_entity"] for s in samples], axis=0,
+        ).astype(np.int32)
+        batched["entity_mask"] = np.stack(
+            [s["entity_mask"] for s in samples], axis=0,
+        ).astype(np.float32)
+
     labels_out = np.stack(labels, axis=0).astype(np.float32)
     return batched, labels_out
 

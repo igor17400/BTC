@@ -243,6 +243,8 @@ def run(cfg: DictConfig):
         )
     elif spec.model.name.lower() == "glory":
         from src.core.data.processing.models.glory import (
+            build_entity_graph,
+            build_entity_neighbor_dict,
             build_neighbor_dict,
             build_news_feature_matrix,
             build_news_graph,
@@ -253,6 +255,7 @@ def run(cfg: DictConfig):
             create_glory_train_dataloader,
         )
 
+        use_entity = spec.model.get("use_entity", False)
         g_cfg = GLORYConfig(
             title_size=spec.inputs.title.max_length,
             entity_size=spec.inputs.get("entity", {}).get("max_length", 5),
@@ -267,6 +270,9 @@ def run(cfg: DictConfig):
             k_hops=spec.model.architecture.graph_encoder.get("k_hops", 2),
             num_neighbors=spec.model.architecture.graph_encoder.get("num_neighbors", 8),
             dropout_rate=spec.model.dropout_rate,
+            use_entity=use_entity,
+            entity_emb_dim=spec.model.get("entity_emb_dim", 100),
+            entity_neighbors=spec.model.architecture.graph_encoder.get("entity_neighbors", 10),
         )
         news_features = build_news_feature_matrix(
             processed_news, g_cfg.title_size, g_cfg.entity_size,
@@ -285,8 +291,9 @@ def run(cfg: DictConfig):
         def _apply_remap(ids):
             if glory_id_remap is None:
                 return np.clip(ids, 0, num_news - 1)
+            safe_ids = np.clip(ids, 0, len(glory_id_remap) - 1)
             return np.where(
-                ids < len(glory_id_remap), glory_id_remap[ids], 0,
+                ids < len(glory_id_remap), glory_id_remap[safe_ids], 0,
             ).astype(np.int64)
 
         # Remap train behaviors in-place for graph builder + dataloader.
@@ -324,11 +331,34 @@ def run(cfg: DictConfig):
         glory_neighbors = build_neighbor_dict(
             glory_graph, directed=g_cfg.directed, cache_path=neighbor_path,
         )
+
+        # Entity graph + neighbors (optional).
+        entity_neighbor_dict = None
+        if use_entity:
+            entity_graph_path = (
+                graph_cache_dir / "glory_entity_graph.pkl"
+                if graph_cache_dir else None
+            )
+            entity_neighbor_path = (
+                graph_cache_dir / "glory_entity_neighbor_dict.pkl"
+                if graph_cache_dir else None
+            )
+            entity_graph = build_entity_graph(
+                glory_graph, news_features,
+                title_size=g_cfg.title_size,
+                entity_size=g_cfg.entity_size,
+                cache_path=entity_graph_path,
+            )
+            entity_neighbor_dict = build_entity_neighbor_dict(
+                entity_graph, cache_path=entity_neighbor_path,
+            )
+
         glory_cache = {
             "cfg": g_cfg,
             "news_features": news_features,
             "graph": glory_graph,
             "neighbors": glory_neighbors,
+            "entity_neighbor_dict": entity_neighbor_dict,
         }
 
         # Build train dataloader (reuses PyTorch's DataLoader for parallelism).
@@ -361,6 +391,10 @@ def run(cfg: DictConfig):
             his_size=g_cfg.max_history_length,
             k_hops=g_cfg.k_hops,
             num_neighbors=g_cfg.num_neighbors,
+            entity_neighbor_dict=entity_neighbor_dict,
+            entity_size=g_cfg.entity_size,
+            entity_neighbors=g_cfg.entity_neighbors,
+            title_size=g_cfg.title_size,
         )
     else:
         features, labels = _build_train_features(dataset_provider)
@@ -445,6 +479,14 @@ def run(cfg: DictConfig):
                 mode=mode,
                 batch_size=cfg.eval.batch_size,
                 id_remap=glory_id_remap,
+                use_entity=use_entity,
+                entity_encoder=getattr(model, "local_entity_encoder", None),
+                global_entity_encoder=getattr(model, "global_entity_encoder", None),
+                entity_embedding=getattr(model, "entity_embedding", None),
+                entity_neighbor_dict=glory_cache.get("entity_neighbor_dict"),
+                entity_size=g_cfg.entity_size,
+                entity_neighbors=g_cfg.entity_neighbors,
+                title_size=g_cfg.title_size,
             )
     else:
         evaluate = get_evaluator(spec)

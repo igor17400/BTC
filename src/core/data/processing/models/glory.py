@@ -288,6 +288,165 @@ def build_neighbor_dict(
 
 
 # ----------------------------------------------------------------------
+# Entity graph (for entity-aware GLORY)
+# ----------------------------------------------------------------------
+
+
+def build_entity_graph(
+    news_graph: dict,
+    news_features: np.ndarray,
+    title_size: int,
+    entity_size: int,
+    cache_path: Path | None = None,
+) -> dict:
+    """Build an entity-entity graph from the news graph.
+
+    For each edge (src_news, dst_news) in the news graph, creates edges
+    between all pairs of (src_entities, dst_entities) weighted by the
+    news edge weight.  Matches the reference ``prepare_entity_graph``.
+
+    Args:
+        news_graph: Output of :func:`build_news_graph`.
+        news_features: ``(num_news, feat_dim)`` from
+            :func:`build_news_feature_matrix`.
+        title_size: Number of title columns (entity columns start after).
+        entity_size: Number of entity columns per news.
+        cache_path: Optional cache path.
+
+    Returns:
+        Dict with ``edge_index`` ``(2, E)`` int64, ``edge_attr``
+        ``(E,)`` int64, ``num_nodes`` int.
+    """
+    if cache_path is not None and cache_path.exists():
+        logger.info(f"Loading cached GLORY entity graph from {cache_path}")
+        with open(cache_path, "rb") as f:
+            return pickle.load(f)
+
+    edge_index = news_graph["edge_index"]
+    edge_attr = news_graph["edge_attr"]
+
+    # Extract entity columns from news features.
+    entity_indices = news_features[:, title_size : title_size + entity_size]
+
+    edge_counter: Counter = Counter()
+    if edge_index.size > 0:
+        news_src = edge_index[0]
+        news_dst = edge_index[1]
+        weights = edge_attr.astype(np.int64)
+
+        for i in range(news_src.shape[0]):
+            src_ents = entity_indices[news_src[i]]
+            dst_ents = entity_indices[news_dst[i]]
+            src_ents = src_ents[src_ents > 0]
+            dst_ents = dst_ents[dst_ents > 0]
+            if src_ents.size == 0 or dst_ents.size == 0:
+                continue
+            w = int(weights[i])
+            for s in src_ents:
+                for d in dst_ents:
+                    edge_counter[(int(s), int(d))] += w
+
+    # Determine num_nodes from max entity index seen.
+    all_entity_ids = entity_indices[entity_indices > 0]
+    num_entity_nodes = int(all_entity_ids.max()) + 1 if all_entity_ids.size > 0 else 1
+
+    if not edge_counter:
+        ent_edge_index = np.zeros((2, 0), dtype=np.int64)
+        ent_edge_attr = np.zeros((0,), dtype=np.int64)
+    else:
+        edges = list(edge_counter.keys())
+        ent_edge_index = np.asarray(edges, dtype=np.int64).T
+        ent_edge_attr = np.asarray(
+            [edge_counter[e] for e in edges], dtype=np.int64,
+        )
+        # Make undirected (matching reference).
+        rev = ent_edge_index[[1, 0]]
+        ent_edge_index = np.concatenate([ent_edge_index, rev], axis=1)
+        ent_edge_attr = np.concatenate([ent_edge_attr, ent_edge_attr], axis=0)
+        # Deduplicate after symmetrization.
+        pairs = list(zip(ent_edge_index[0].tolist(), ent_edge_index[1].tolist()))
+        dedup: dict[tuple[int, int], int] = {}
+        for idx, p in enumerate(pairs):
+            dedup[p] = dedup.get(p, 0) + int(ent_edge_attr[idx])
+        edges_dedup = list(dedup.keys())
+        ent_edge_index = np.asarray(edges_dedup, dtype=np.int64).T
+        ent_edge_attr = np.asarray(
+            [dedup[e] for e in edges_dedup], dtype=np.int64,
+        )
+
+    graph = {
+        "edge_index": ent_edge_index,
+        "edge_attr": ent_edge_attr,
+        "num_nodes": num_entity_nodes,
+    }
+    logger.info(
+        f"Built GLORY entity graph: {num_entity_nodes} nodes, "
+        f"{ent_edge_index.shape[1]} edges"
+    )
+
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "wb") as f:
+            pickle.dump(graph, f)
+        logger.info(f"Cached GLORY entity graph to {cache_path}")
+
+    return graph
+
+
+def build_entity_neighbor_dict(
+    entity_graph: dict,
+    cache_path: Path | None = None,
+) -> dict[int, list[int]]:
+    """Build per-entity sorted neighbor list from the entity graph.
+
+    Same logic as :func:`build_neighbor_dict` but for the entity graph.
+    Neighbors are sorted by edge weight descending.
+
+    Args:
+        entity_graph: Output of :func:`build_entity_graph`.
+        cache_path: Optional cache path.
+
+    Returns:
+        ``{entity_id: [neighbor_ids]}`` dict.
+    """
+    if cache_path is not None and cache_path.exists():
+        logger.info(f"Loading cached GLORY entity neighbor dict from {cache_path}")
+        with open(cache_path, "rb") as f:
+            return pickle.load(f)
+
+    edge_index = np.asarray(entity_graph["edge_index"])
+    edge_attr = np.asarray(entity_graph["edge_attr"])
+    num_nodes = int(entity_graph["num_nodes"])
+
+    dst_to_src: dict[int, list[tuple[int, int]]] = defaultdict(list)
+    if edge_index.size > 0:
+        for i in range(edge_index.shape[1]):
+            src = int(edge_index[0, i])
+            dst = int(edge_index[1, i])
+            w = int(edge_attr[i])
+            dst_to_src[dst].append((src, w))
+
+    neighbor_dict: dict[int, list[int]] = {}
+    for node in range(num_nodes):
+        pairs = dst_to_src.get(node, [])
+        pairs.sort(key=lambda p: p[1], reverse=True)
+        neighbor_dict[node] = [p[0] for p in pairs]
+
+    logger.info(
+        f"Built GLORY entity neighbor dict: "
+        f"{sum(len(v) for v in neighbor_dict.values())} entries"
+    )
+
+    if cache_path is not None:
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(cache_path, "wb") as f:
+            pickle.dump(neighbor_dict, f)
+        logger.info(f"Cached GLORY entity neighbor dict to {cache_path}")
+
+    return neighbor_dict
+
+
+# ----------------------------------------------------------------------
 # Subgraph construction (used by the dataloader)
 # ----------------------------------------------------------------------
 

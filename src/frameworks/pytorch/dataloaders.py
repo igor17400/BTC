@@ -353,6 +353,10 @@ class GLORYTrainDataset(Dataset):
         his_size: int,
         k_hops: int,
         num_neighbors: int,
+        entity_neighbor_dict: dict[int, list[int]] | None = None,
+        entity_size: int = 5,
+        entity_neighbors: int = 10,
+        title_size: int = 30,
     ):
         from src.core.data.processing.models.glory import (  # noqa: F401 — lazy import
             build_csr_in_adjacency,
@@ -378,6 +382,12 @@ class GLORYTrainDataset(Dataset):
         # training bottleneck.
         self.num_nodes = int(news_features.shape[0])
         self._csr = build_csr_in_adjacency(self.edge_index, self.num_nodes)
+
+        # Entity neighbor data (optional, for use_entity=True).
+        self.entity_neighbor_dict = entity_neighbor_dict
+        self.entity_size = int(entity_size)
+        self.entity_neighbors = int(entity_neighbors)
+        self.title_size = int(title_size)
 
     def __len__(self) -> int:
         return self.hist_ids.shape[0]
@@ -410,13 +420,43 @@ class GLORYTrainDataset(Dataset):
         if n_valid > 0:
             padded_mapping[-n_valid:] = hist_mapping[-n_valid:]
 
-        return {
+        result = {
             "sub_x": sub_x,
             "sub_edge_index": sub_edges,
             "mapping_idx": padded_mapping,
             "cand_tokens": cand_features,
             "label": label,
         }
+
+        # Entity neighbor lookup (optional).
+        if self.entity_neighbor_dict is not None:
+            E = self.entity_size
+            EN = self.entity_neighbors
+            # Extract origin entity IDs from candidate features.
+            origin_entity = cand_features[
+                :, self.title_size : self.title_size + E
+            ]  # (C, E)
+            # Look up neighbors for each entity.
+            C = cand_features.shape[0]
+            neighbor_entity = np.zeros(
+                (C * E, EN), dtype=np.int64,
+            )  # (C*E, EN)
+            for cnt, eid in enumerate(origin_entity.flatten()):
+                if eid == 0:
+                    continue
+                nbrs = self.entity_neighbor_dict.get(int(eid), [])
+                valid_len = min(len(nbrs), EN)
+                if valid_len > 0:
+                    neighbor_entity[cnt, :valid_len] = nbrs[:valid_len]
+            neighbor_entity = neighbor_entity.reshape(C, E * EN)  # (C, E*EN)
+            entity_mask = (neighbor_entity > 0).astype(np.float32)
+            # Concat: [origin (C, E) | neighbors (C, E*EN)]
+            result["candidate_entity"] = np.concatenate(
+                [origin_entity, neighbor_entity], axis=-1,
+            ).astype(np.int64)
+            result["entity_mask"] = entity_mask
+
+        return result
 
 
 def glory_collate(

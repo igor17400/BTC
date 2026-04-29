@@ -51,6 +51,15 @@ def glory_evaluate(
     mode: str = "val",
     batch_size: int = 256,
     id_remap: np.ndarray | None = None,
+    # Entity support (optional).
+    use_entity: bool = False,
+    entity_encoder: Any | None = None,
+    global_entity_encoder: Any | None = None,
+    entity_embedding: Any | None = None,
+    entity_neighbor_dict: dict[int, list[int]] | None = None,
+    entity_size: int = 5,
+    entity_neighbors: int = 10,
+    title_size: int = 30,
 ) -> dict[str, float]:
     """Evaluate GLORY on the dev or test set.
 
@@ -73,6 +82,43 @@ def glory_evaluate(
         all_news_emb,
         graph["edge_index"],
     )  # (num_news, D)
+
+    # Step 2b: pre-encode entity embeddings for ALL news (optional).
+    all_local_entity_emb = None   # (num_news, D)
+    all_neighbor_entity_emb = None  # (num_news, D)
+    if use_entity and entity_embedding is not None and entity_encoder is not None:
+        logger.info("Pre-encoding entity embeddings for all news...")
+        E = entity_size
+        EN = entity_neighbors
+
+        # Local entity encoding: embed each news's entity IDs → encode.
+        all_entity_ids = news_features[
+            :, title_size : title_size + E,
+        ].astype(np.int32)  # (num_news, E)
+        all_local_entity_emb = adapter.encode_glory_entity(
+            entity_embedding, entity_encoder,
+            all_entity_ids, batch_size=batch_size,
+        )  # (num_news, D)
+
+        # Neighbor entity encoding: look up neighbors → embed → encode.
+        logger.info("Pre-encoding neighbor entity embeddings for all news...")
+        all_neighbor_ids = np.zeros((num_news, E * EN), dtype=np.int32)
+        if entity_neighbor_dict is not None:
+            for nid in range(num_news):
+                for e_idx in range(E):
+                    eid = int(all_entity_ids[nid, e_idx])
+                    if eid == 0:
+                        continue
+                    nbrs = entity_neighbor_dict.get(eid, [])
+                    vlen = min(len(nbrs), EN)
+                    if vlen > 0:
+                        offset = e_idx * EN
+                        all_neighbor_ids[nid, offset : offset + vlen] = nbrs[:vlen]
+        all_neighbor_mask = (all_neighbor_ids > 0).astype(np.float32)
+        all_neighbor_entity_emb = adapter.encode_glory_global_entity(
+            entity_embedding, global_entity_encoder,
+            all_neighbor_ids, all_neighbor_mask, batch_size=batch_size,
+        )  # (num_news, D)
 
     # Step 3: score each impression.
     behaviors = (
@@ -141,6 +187,15 @@ def glory_evaluate(
         clicked_graph = all_news_graph_emb[hist_valid]  # (H_valid, D)
         cand_local = all_news_emb[cand_ids]  # (C, D)
 
+        # Entity embeddings (optional) — gather from pre-computed caches.
+        clicked_entity_emb = None
+        cand_origin_emb = None
+        cand_neighbor_emb = None
+        if all_local_entity_emb is not None:
+            clicked_entity_emb = all_local_entity_emb[hist_valid]  # (H_valid, D)
+            cand_origin_emb = all_local_entity_emb[cand_ids]  # (C, D)
+            cand_neighbor_emb = all_neighbor_entity_emb[cand_ids]  # (C, D)
+
         scores = adapter.score_glory_impression(
             click_encoder,
             user_encoder,
@@ -149,6 +204,9 @@ def glory_evaluate(
             clicked_title,
             clicked_graph,
             cand_local,
+            clicked_entity_emb=clicked_entity_emb,
+            cand_origin_emb=cand_origin_emb,
+            cand_neighbor_emb=cand_neighbor_emb,
         )  # (C,)
         group_labels.append(labels)
         group_preds.append(scores)

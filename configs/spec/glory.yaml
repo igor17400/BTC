@@ -13,6 +13,7 @@ model:
       directed: true
       k_hops: 2
       num_neighbors: 8
+      entity_neighbors: 10
     click_predictor:
       type: dot_product
   embedding:
@@ -20,7 +21,8 @@ model:
     trainable: true
   dropout_rate: 0.2
   seed: 42
-  use_entity: false  # v1: entity path disabled
+  use_entity: true
+  entity_emb_dim: 100
 
 inputs:
   title: { max_length: 30 }
@@ -31,6 +33,7 @@ inputs:
   process_abstract: false
   process_category: true
   process_subcategory: true
+  process_entities: true
   process_user_id: false
 
 training:

@@ -24,6 +24,7 @@ dataset:
   process_abstract: ${spec.inputs.process_abstract}
   process_category: ${spec.inputs.process_category}
   process_subcategory: ${spec.inputs.process_subcategory}
+  process_entities: ${spec.inputs.process_entities}
   process_user_id: ${spec.inputs.process_user_id}
 
 train:
