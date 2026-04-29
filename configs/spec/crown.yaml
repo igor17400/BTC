@@ -59,7 +59,7 @@ training:
   # abstract=128 + graph=5 pushes past 40 GiB at bs=256; use accum for effective 256.
   batch_size: 128
   grad_accum_steps: 2
-  num_epochs: 5 # benchmark convention
+  num_epochs: 20
   gradient_clip_val: 4.0 # paper: gradient clipping at norm 4
   early_stopping:
     patience: 5 # paper Table 8: early stopping = 5
