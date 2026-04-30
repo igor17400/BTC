@@ -638,7 +638,7 @@ def run(cfg: DictConfig):
 
     # Save eval results.
     if test_metrics:
-        eval_path = output_run_dir / "eval_results.json"
+        eval_path = output_run_dir / "test_results.json"
         with open(eval_path, "w") as f:
             json.dump(
                 {k: float(v) if isinstance(v, (int, float)) else v for k, v in test_metrics.items()},
