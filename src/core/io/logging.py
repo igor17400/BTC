@@ -1,5 +1,6 @@
 import datetime
 import logging
+from pathlib import Path
 
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
@@ -51,7 +52,7 @@ def setup_logging(level: str = "INFO") -> None:
     logging.getLogger("keras").setLevel(logging.INFO)  # Show important Keras messages
 
 
-def setup_wandb_session(cfg: DictConfig) -> None:
+def setup_wandb_session(cfg: DictConfig, output_dir: Path | str | None = None) -> None:
     """Initialize Weights & Biases logging."""
     if cfg.logging.enable_wandb:
         run_name = (
@@ -71,6 +72,7 @@ def setup_wandb_session(cfg: DictConfig) -> None:
                 name=run_name,
                 group=group,
                 tags=tags,
+                dir=str(output_dir) if output_dir else None,
             )
             console.log(
                 f"Wandb initialized for project '{cfg.logging.project_name}', "

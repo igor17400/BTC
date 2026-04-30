@@ -63,7 +63,7 @@ training:
   gradient_clip_val: 4.0 # paper: gradient clipping at norm 4
   early_stopping:
     patience: 5 # paper Table 8: early stopping = 5
-    min_improvement: 0.001
+    min_improvement: 0.01
   negative_sampling:
     strategy: random
     candidates: 4 # paper: 4 negatives per positive

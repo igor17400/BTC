@@ -11,7 +11,7 @@ from omegaconf import DictConfig
 
 from src.core.io.logging import console, setup_wandb_session
 from src.core.io.progress import create_progress
-from src.core.io.saving import get_output_run_dir
+from src.core.io.saving import get_output_run_dir, save_run_summary_fn
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
 
@@ -216,7 +216,10 @@ def run(cfg: DictConfig):
     from src.frameworks.keras.training import training_loop
     from src.frameworks.keras.utils import LightweightNewsMetrics, create_news_metrics
 
-    setup_wandb_session(cfg)
+    # Create output directory early so wandb saves inside it.
+    output_run_dir = get_output_run_dir(cfg)
+    output_run_dir.mkdir(parents=True, exist_ok=True)
+    setup_wandb_session(cfg, output_dir=output_run_dir)
 
     # Dataset (same as JAX/PyTorch)
     dataset_provider = _hydra.utils.instantiate(cfg.dataset, mode="train")
@@ -491,9 +494,7 @@ def run(cfg: DictConfig):
         **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
     )
 
-    # Output directory
-    output_run_dir = get_output_run_dir(cfg)
-    output_run_dir.mkdir(parents=True, exist_ok=True)
+    # Output (dir already created above for wandb)
 
     # Evaluation function — DIGAT and GLORY use dedicated evaluators;
     # standard models go through the registry.

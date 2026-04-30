@@ -20,7 +20,7 @@ from src.core.io.logging import (
     setup_wandb_session,
 )
 from src.core.io.progress import create_progress
-from src.core.io.saving import get_output_run_dir
+from src.core.io.saving import get_output_run_dir, save_run_summary_fn
 from src.core.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
@@ -178,7 +178,11 @@ def run(cfg: DictConfig):
 
     start_time = time.time()
     console.log("[bold]Initializing PyTorch training...[/bold]")
-    setup_wandb_session(cfg)
+
+    # Create output directory early so wandb saves inside it.
+    output_run_dir = get_output_run_dir(cfg)
+    output_run_dir.mkdir(parents=True, exist_ok=True)
+    setup_wandb_session(cfg, output_dir=output_run_dir)
 
     # Seed everything for reproducibility
     random.seed(cfg.seed)
@@ -483,9 +487,7 @@ def run(cfg: DictConfig):
         **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
     )
 
-    # Output
-    output_run_dir = get_output_run_dir(cfg)
-    output_run_dir.mkdir(parents=True, exist_ok=True)
+    # Output (dir already created above for wandb)
 
     # Evaluation function (isomorphic with Keras/JAX)
     from src.frameworks.pytorch.evaluation import get_evaluator
@@ -585,6 +587,7 @@ def run(cfg: DictConfig):
         num_epochs=cfg.train.num_epochs,
         learning_rate=cfg.train.learning_rate,
         early_stopping_patience=cfg.train.early_stopping.patience,
+        early_stopping_min_improvement=cfg.train.early_stopping.get("min_improvement", 0.01),
         enable_wandb=cfg.logging.enable_wandb,
         save_dir=str(output_run_dir / "models"),
         gpu_ids=cfg.device.gpu_ids if hasattr(cfg.device, "gpu_ids") else None,
@@ -634,6 +637,15 @@ def run(cfg: DictConfig):
             log_test_results(test_metrics)
 
     log_training_complete(cfg.model_name, "pytorch", time.time() - start_time)
+
+    # Save run summary.
+    save_run_summary_fn(
+        summary_output_dir=output_run_dir,
+        hydra_cfg=cfg,
+        initial_metrics_dict={},
+        best_metrics_summary_dict=best_metrics,
+        test_metrics_dict=test_metrics,
+    )
 
     if wandb.run:
         wandb.finish()

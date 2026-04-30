@@ -15,10 +15,12 @@ import time
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import jax
 import jax.numpy as jnp
 import optax
 from flax import nnx
+from safetensors.numpy import save_file as save_safetensors
 from rich.console import Console
 
 import wandb
@@ -154,6 +156,7 @@ def training_loop(
     weight_decay: float = 0.0,
     gradient_clip_norm: float = 0.0,
     early_stopping_patience: int = 5,
+    early_stopping_min_improvement: float = 0.01,
     loss_fn=None,
     get_aux_loss=None,
     use_jit: bool = True,
@@ -219,7 +222,10 @@ def training_loop(
             logger.warning("JIT warmup skipped: %s", exc)
 
     # ---- Early stopping --------------------------------------------------
-    stopper = EarlyStopping(patience=early_stopping_patience)
+    stopper = EarlyStopping(
+        patience=early_stopping_patience,
+        min_improvement=early_stopping_min_improvement,
+    )
 
     # ---- WandB -----------------------------------------------------------
     wandb_run = wandb.run if enable_wandb else None
@@ -345,6 +351,23 @@ def training_loop(
             "Restored best model state from epoch %d",
             best_metrics.get("epoch_number", "?"),
         )
+        # Save best weights to disk in safetensors format (HF-compatible).
+        if save_dir:
+            ckpt_dir = Path(save_dir)
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            ckpt_path = ckpt_dir / "model.safetensors"
+
+            # Flatten the state dict to dot-separated keys and convert
+            # all arrays to numpy.  PRNGKey arrays are skipped (not
+            # model weights).
+            flat = {}
+            for key_path, leaf in jax.tree_util.tree_leaves_with_path(best_state):
+                name = ".".join(str(k) for k in key_path)
+                if hasattr(leaf, 'dtype') and jnp.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+                    continue  # skip RNG state
+                flat[name] = np.asarray(leaf)
+            save_safetensors(flat, str(ckpt_path))
+            logger.info("Saved best model weights to %s", ckpt_path)
 
     timing["total_training_time"] = time.time() - experiment_start
     best_metrics["timing"] = timing

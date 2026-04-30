@@ -58,6 +58,7 @@ def training_loop(
     learning_rate: float = 1e-4,
     weight_decay: float = 0.0,
     early_stopping_patience: int = 3,
+    early_stopping_min_improvement: float = 0.01,
     enable_wandb: bool = False,
     save_dir: str | Path | None = None,
     gpu_ids: list[int] | None = None,
@@ -208,7 +209,7 @@ def training_loop(
                 vals = [val_metrics[m] for m in main_metrics if m in val_metrics]
                 avg_metric = sum(vals) / len(vals) if vals else 0.0
 
-                if avg_metric > best_metrics["average_metric_value"]:
+                if avg_metric > best_metrics["average_metric_value"] + early_stopping_min_improvement:
                     is_best = True
                     best_metrics = {
                         "epoch_number": epoch,

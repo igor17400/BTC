@@ -47,6 +47,7 @@ class EvaluationCallback(keras.callbacks.Callback):
         self.best_epoch_metrics: dict[str, Any] = {
             "average_metric_value": -float("inf"),
         }
+        self.min_improvement = cfg.train.early_stopping.get("min_improvement", 0.01)
         self.wait = 0
         self.epoch_start_time: float = 0.0
 
@@ -71,7 +72,7 @@ class EvaluationCallback(keras.callbacks.Callback):
             vals = [float(val_metrics[m]) for m in main if m in val_metrics]
             avg = sum(vals) / len(vals) if vals else 0.0
 
-            if avg > self.best_epoch_metrics["average_metric_value"]:
+            if avg > self.best_epoch_metrics["average_metric_value"] + self.min_improvement:
                 is_best = True
                 self.wait = 0
                 self.best_epoch_metrics = {

@@ -10,10 +10,14 @@ the logic should be adapted to work with them.
 import random
 import time
 
+import jax
+import jax.numpy as jnp
+from safetensors.numpy import load_file
+
 import hydra
 import numpy as np
 from flax import nnx
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 
 import wandb
 from src.core.data.processing.models.digat import (
@@ -29,7 +33,7 @@ from src.core.io.logging import (
     setup_wandb_session,
 )
 from src.core.io.progress import create_progress
-from src.core.io.saving import get_output_run_dir
+from src.core.io.saving import get_output_run_dir, save_run_summary_fn
 from src.core.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.configs import DIGATConfig
@@ -167,7 +171,11 @@ def run(cfg: DictConfig):
 
     start_time = time.time()
     console.log("[bold]Initializing JAX/Flax NNX training...[/bold]")
-    setup_wandb_session(cfg)
+
+    # Create output directory early so wandb saves inside it.
+    output_run_dir = get_output_run_dir(cfg)
+    output_run_dir.mkdir(parents=True, exist_ok=True)
+    setup_wandb_session(cfg, output_dir=output_run_dir)
 
     # Seed everything for reproducibility
     random.seed(cfg.seed)
@@ -186,6 +194,11 @@ def run(cfg: DictConfig):
         console.log(f"Auto-detected num_users: {processed_news['num_users']}")
     model = build_model_from_spec(spec, "jax", processed_news, **extra_kwargs)
     console.log(f"Model {spec.model.name} instantiated for JAX.")
+
+    # Load pre-trained weights if provided (eval-only mode).
+    _weights_path = cfg.get("_weights_path", None) or cfg.get("weights", None)
+    if _weights_path:
+        _load_safetensors(model, str(_weights_path))
 
     # Train features: DIGAT assembles its own tensors via SAG preprocessing;
     # every other model follows the standard pipeline.
@@ -424,10 +437,6 @@ def run(cfg: DictConfig):
         **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
     )
 
-    # Output
-    output_run_dir = get_output_run_dir(cfg)
-    output_run_dir.mkdir(parents=True, exist_ok=True)
-
     # Evaluation function (called at end of each epoch). DIGAT uses a
     # dedicated evaluator because its dual graph interaction requires
     # co-computing news and user contexts per impression; standard
@@ -539,6 +548,7 @@ def run(cfg: DictConfig):
         learning_rate=cfg.train.learning_rate,
         gradient_clip_norm=cfg.train.get("gradient_clip_val", 0.0),
         early_stopping_patience=cfg.train.early_stopping.patience,
+        early_stopping_min_improvement=cfg.train.early_stopping.get("min_improvement", 0.01),
         loss_fn=loss_fn,
         get_aux_loss=aux_loss_fn,
         use_jit=_use_jit,
@@ -581,7 +591,53 @@ def run(cfg: DictConfig):
 
     log_training_complete(cfg.model_name, "jax", time.time() - start_time)
 
+    # Save run summary (config, best metrics, test metrics).
+    save_run_summary_fn(
+        summary_output_dir=output_run_dir,
+        hydra_cfg=cfg,
+        initial_metrics_dict={},
+        best_metrics_summary_dict=best_metrics,
+        test_metrics_dict=test_metrics,
+    )
+
     if wandb.run:
         wandb.finish()
 
     return test_metrics or best_metrics
+
+
+def _load_safetensors(model, weights_path: str):
+    """Load safetensors weights into a JAX/Flax NNX model."""
+
+    weights = load_file(weights_path)
+    state = nnx.state(model)
+    new_leaves = []
+    restored = 0
+    for path, leaf in jax.tree_util.tree_leaves_with_path(state):
+        name = ".".join(str(k) for k in path)
+        if name in weights:
+            new_leaves.append(jnp.asarray(weights[name]))
+            restored += 1
+        else:
+            new_leaves.append(leaf)
+    new_state = jax.tree_util.tree_unflatten(
+        jax.tree_util.tree_structure(state), new_leaves,
+    )
+    nnx.update(model, new_state)
+    console.log(f"Loaded {restored}/{len(weights)} weights from {weights_path}")
+
+
+def evaluate(cfg: DictConfig, *, weights_path: str, mode: str = "test") -> dict:
+    """Load weights and run evaluation without training.
+
+    Reuses ``run()`` for setup, skips training, loads weights, runs eval.
+    """
+
+    cfg_copy = OmegaConf.to_container(cfg, resolve=True)
+    cfg_copy["train"]["num_epochs"] = 0
+    cfg_copy["eval"]["run_test_after_training"] = True
+    cfg_copy["eval"]["fast_evaluation"] = False
+    cfg_copy["_weights_path"] = weights_path
+    cfg_copy["_eval_mode"] = mode
+
+    return run(OmegaConf.create(cfg_copy))

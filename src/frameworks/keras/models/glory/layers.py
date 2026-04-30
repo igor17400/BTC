@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 import keras
 from keras import layers, ops
 
@@ -284,7 +285,6 @@ class GatedGraphConv(keras.layers.Layer):
         # PyTorch's per-slice xavier_uniform_ and the JAX port.
         # Use keras.ops.convert_to_numpy to handle both JAX and torch backends
         # (torch initializers may return CUDA tensors that raw np.array rejects).
-        import numpy as _np
         initializer = keras.initializers.GlorotUniform()
         slices = [
             keras.ops.convert_to_numpy(
@@ -292,7 +292,7 @@ class GatedGraphConv(keras.layers.Layer):
             )
             for _ in range(self.num_layers)
         ]
-        stacked = _np.stack(slices, axis=0)
+        stacked = np.stack(slices, axis=0)
         self.weight = self.add_weight(
             name="weight",
             shape=(self.num_layers, self.out_channels, self.out_channels),
