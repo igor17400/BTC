@@ -112,6 +112,7 @@ def _generate_model_card(
     summary: dict,
     weight_files: list[Path],
     seed: str | None = None,
+    run_path: Path | None = None,
 ) -> str:
     """Generate a Hugging Face model card (README.md)."""
     # Extract metrics
@@ -338,7 +339,7 @@ def upload(
 
         # Generate model card.
         card = _generate_model_card(
-            model_name, framework, dataset, summary, weight_files, seed,
+            model_name, framework, dataset, summary, weight_files, seed, run_path,
         )
         (tmp_path / "README.md").write_text(card)
 
