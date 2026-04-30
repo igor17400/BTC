@@ -45,9 +45,19 @@ def _run_multi_seed(cfg: DictConfig) -> None:
     for i, seed in enumerate(seeds):
         console.rule(f"Seed {seed} ({i + 1}/{len(seeds)})")
 
-        # Override the seed for this run
+        # Override the seed and output dir for this run.
+        # Hydra's runtime.output_dir is frozen at startup (seed 42),
+        # so we build a per-seed output path explicitly.
         cfg_copy = OmegaConf.to_container(cfg, resolve=True)
         cfg_copy["seed"] = seed
+        cfg_copy["_output_run_dir"] = str(
+            Path(cfg_copy["output_base_dir"])
+            / "train"
+            / cfg_copy.get("dataset", {}).get("name", "unknown")
+            / model_name
+            / framework
+            / f"seed_{seed}"
+        )
         cfg_run = OmegaConf.create(cfg_copy)
 
         metrics = _run_single(cfg_run)
@@ -79,31 +89,6 @@ def _run_multi_seed(cfg: DictConfig) -> None:
     console.rule("[bold]Mean ± Std")
     for metric, value in summary.items():
         console.print(f"  {metric}: {value}")
-
-    # Save results
-    output_dir = Path(cfg.output_base_dir) / cfg.name / framework / "multi_seed"
-    output_dir.mkdir(parents=True, exist_ok=True)
-
-    results_path = output_dir / "multi_seed_results.csv"
-    results_df.to_csv(results_path, index=False)
-
-    summary_df = pd.DataFrame(
-        [
-            {
-                "metric": col,
-                "mean": results_df[col].mean(),
-                "std": results_df[col].std(),
-            }
-            for col in metric_cols
-            if pd.api.types.is_numeric_dtype(results_df[col])
-        ]
-    )
-    summary_path = output_dir / "multi_seed_summary.csv"
-    summary_df.to_csv(summary_path, index=False)
-
-    console.print()
-    console.print(f"[dim]Per-seed results saved to: {results_path}[/dim]")
-    console.print(f"[dim]Summary saved to: {summary_path}[/dim]")
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")

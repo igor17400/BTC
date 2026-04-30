@@ -2,7 +2,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-import datetime
 import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -14,19 +13,25 @@ console = Console()
 def get_output_run_dir(cfg):
     """
     Returns the output directory for the current run.
-    Uses Hydra's working directory when available, otherwise builds from config.
+    Checks for an explicit ``_output_run_dir`` override first (used by
+    multi-seed training), then falls back to Hydra's working directory.
     """
-    try:
-        output_run_dir = Path(
-            hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
-        )
-    except ValueError:
-        # Running outside @hydra.main (e.g., smoke tests with hydra.compose)
-
-        base = getattr(cfg, "output_base_dir", "outputs")
-        name = getattr(cfg, "name", "run")
-        timestamp = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
-        output_run_dir = Path(base) / name / timestamp
+    override = cfg.get("_output_run_dir", None) if hasattr(cfg, "get") else None
+    if override:
+        output_run_dir = Path(override)
+    else:
+        try:
+            output_run_dir = Path(
+                hydra.core.hydra_config.HydraConfig.get().runtime.output_dir
+            )
+        except ValueError:
+            # Running outside @hydra.main (e.g., smoke tests with hydra.compose)
+            base = getattr(cfg, "output_base_dir", "outputs")
+            dataset_name = cfg.get("dataset", {}).get("name", "unknown") if hasattr(cfg, "get") else "unknown"
+            model_name = getattr(cfg, "model_name", "run")
+            framework = getattr(cfg, "framework", "unknown")
+            seed = getattr(cfg, "seed", 0)
+            output_run_dir = Path(base) / "train" / dataset_name / model_name / framework / f"seed_{seed}"
 
     output_run_dir.mkdir(parents=True, exist_ok=True)
     return output_run_dir

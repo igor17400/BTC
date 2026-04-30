@@ -1,23 +1,31 @@
 #!/usr/bin/env python3
 """Upload NewsReX model weights to Hugging Face Hub.
 
+One repo per model+framework, seeds as subfolders, best seed at the root:
+
+    newsrex/NRMS-JAX-MIND-small/
+    ├── model.safetensors          ← best seed (default download)
+    ├── test_results.json
+    ├── README.md
+    ├── seed_42/model.safetensors
+    ├── seed_123/model.safetensors
+    └── seed_456/model.safetensors
+
 Usage:
-    # Upload a specific run:
+    # Upload all seeds at once (auto-detects best seed for root):
     uv run python scripts/upload_to_hf.py \
-        --run-path outputs/mind_nrms/jax/2026-04-10-07-26-23 \
-        --repo-id igor17400/NewsReX-NRMS-MIND-small \
-        --model-name NRMS
+        --run-dir outputs/train/MIND-small/NRMS/jax \
+        --org newsrex
 
-    # Upload with auto-detected model name:
+    # Upload a single seed:
     uv run python scripts/upload_to_hf.py \
-        --run-path outputs/mind_nrms/jax/2026-04-10-07-26-23 \
-        --repo-id igor17400/NewsReX-NRMS-MIND-small
+        --run-path outputs/train/MIND-small/NRMS/jax/seed_42 \
+        --org newsrex
 
-    # Dry run (show what would be uploaded):
+    # Dry run:
     uv run python scripts/upload_to_hf.py \
-        --run-path outputs/mind_nrms/jax/2026-04-10-07-26-23 \
-        --repo-id igor17400/NewsReX-NRMS-MIND-small \
-        --dry-run
+        --run-dir outputs/train/MIND-small/NRMS/jax \
+        --org newsrex --dry-run
 """
 
 from __future__ import annotations
@@ -30,7 +38,7 @@ from pathlib import Path
 
 
 def _detect_model_name(run_path: Path) -> str:
-    """Detect model name from the run path (e.g. mind_nrms -> NRMS)."""
+    """Detect model name from the run path."""
     for parent in [run_path] + list(run_path.parents):
         name = parent.name
         for model in ["nrms", "naml", "lstur", "pprec", "crown", "digat", "glory"]:
@@ -62,16 +70,16 @@ def _detect_seed(run_path: Path) -> str | None:
     for parent in [run_path] + list(run_path.parents):
         if parent.name.startswith("seed_"):
             return parent.name.replace("seed_", "")
-    # Fallback: check the Hydra config if available.
-    for name in ["config.yaml"]:
-        cfg_path = run_path / ".hydra" / name
-        if cfg_path.exists():
-            import yaml
-            with open(cfg_path) as f:
-                cfg = yaml.safe_load(f)
-            if cfg and "seed" in cfg:
-                return str(cfg["seed"])
     return None
+
+
+def _load_test_results(run_path: Path) -> dict:
+    """Load test results if available."""
+    p = run_path / "test_results.json"
+    if p.exists():
+        with open(p) as f:
+            return json.load(f)
+    return {}
 
 
 def _load_summary(run_path: Path) -> dict:
@@ -96,122 +104,125 @@ def _find_weights(run_path: Path) -> list[Path]:
     return sorted(files)
 
 
-def _find_config(run_path: Path) -> Path | None:
-    """Find model config file."""
-    for name in ["model_config.yaml", "config.yaml"]:
-        p = run_path / "models" / name
-        if p.exists():
-            return p
-    return None
+def _format_size(weight_files: list[Path]) -> str:
+    """Format total weight file size."""
+    total = sum(f.stat().st_size for f in weight_files)
+    if total > 1e9:
+        return f"{total / 1e9:.1f} GB"
+    return f"{total / 1e6:.1f} MB"
 
 
-def _generate_model_card(
+def _find_best_seed(seed_dirs: list[Path]) -> Path:
+    """Find the seed with the best test AUC."""
+    best_auc = -1.0
+    best_dir = seed_dirs[0]
+    for sd in seed_dirs:
+        results = _load_test_results(sd)
+        auc = results.get("auc", -1.0)
+        if auc > best_auc:
+            best_auc = auc
+            best_dir = sd
+    return best_dir
+
+
+def _generate_readme(
+    repo_id: str,
     model_name: str,
     framework: str,
     dataset: str,
-    summary: dict,
-    weight_files: list[Path],
-    seed: str | None = None,
+    seed_results: list[dict],
+    best_seed: str,
     run_path: Path | None = None,
 ) -> str:
-    """Generate a Hugging Face model card (README.md)."""
-    # Extract metrics
-    best_val = summary.get("best_validation_summary", {})
-    test_metrics = summary.get("final_test_metrics", {})
-    config = summary.get("configuration", {})
-    train_cfg = config.get("train", {})
-
+    """Generate the repo README.md with results across all seeds."""
     card = f"""---
 library_name: newsrex
 tags:
 - news-recommendation
 - {model_name.lower()}
+- {framework}
 - mind
 datasets:
 - mind
 license: apache-2.0
 ---
 
-# NewsReX {model_name} — {dataset}
+# NewsReX {model_name} — {framework.upper()} — {dataset}
 
 {model_name} news recommendation model trained on {dataset} using the
-[NewsReX](https://github.com/igor17400/NewsReX) framework.
+[NewsReX](https://github.com/igor17400/NewsReX) framework ({framework.upper()}).
 
-## Model Details
+## Test Results
 
-| Property | Value |
-|----------|-------|
-| Architecture | {model_name} |
-| Framework | {framework} |
-| Dataset | {dataset} |
-| Seed | {seed or 'N/A'} |
-| Parameters | {_format_size(weight_files)} |
+| Seed | AUC | MRR | NDCG@5 | NDCG@10 |
+|------|-----|-----|--------|---------|
 """
+    for sr in seed_results:
+        marker = " *" if sr["seed"] == best_seed else ""
+        card += f"| {sr['seed']}{marker} | {sr.get('auc', 0):.4f} | {sr.get('mrr', 0):.4f} | {sr.get('ndcg@5', 0):.4f} | {sr.get('ndcg@10', 0):.4f} |\n"
 
-    # Include full spec from Hydra config if available.
-    hydra_cfg_path = run_path / ".hydra" / "config.yaml"
-    if hydra_cfg_path.exists():
-        import yaml
-        with open(hydra_cfg_path) as f:
-            hydra_cfg = yaml.safe_load(f)
-        spec = hydra_cfg.get("spec", {})
-        if spec:
-            spec_yaml = yaml.dump(spec, default_flow_style=False, sort_keys=False)
-            card += f"""
+    # Compute mean ± std
+    if len(seed_results) > 1:
+        import numpy as np
+        metrics = ["auc", "mrr", "ndcg@5", "ndcg@10"]
+        means = {m: np.mean([sr[m] for sr in seed_results if m in sr]) for m in metrics}
+        stds = {m: np.std([sr[m] for sr in seed_results if m in sr]) for m in metrics}
+        card += f"| **mean ± std** | **{means['auc']:.4f}±{stds['auc']:.4f}** | **{means['mrr']:.4f}±{stds['mrr']:.4f}** | **{means['ndcg@5']:.4f}±{stds['ndcg@5']:.4f}** | **{means['ndcg@10']:.4f}±{stds['ndcg@10']:.4f}** |\n"
+
+    card += f"\n\\* Best seed (weights at repo root)\n"
+
+    # Include spec from Hydra config if available.
+    if run_path:
+        hydra_cfg_path = run_path / ".hydra" / "config.yaml"
+        if hydra_cfg_path.exists():
+            import yaml
+            with open(hydra_cfg_path) as f:
+                hydra_cfg = yaml.safe_load(f)
+            spec = hydra_cfg.get("spec", {})
+            if spec:
+                spec_yaml = yaml.dump(spec, default_flow_style=False, sort_keys=False)
+                card += f"""
 ## Experiment Configuration
 
 ```yaml
 {spec_yaml}```
 """
 
-    if best_val:
-        card += f"""
-## Validation Results (Best Epoch {int(best_val.get('epoch_number', 0))})
-
-| Metric | Value |
-|--------|-------|
-| AUC | {best_val.get('val_auc', 'N/A'):.4f} |
-| MRR | {best_val.get('val_mrr', 'N/A'):.4f} |
-| NDCG@5 | {best_val.get('val_ndcg@5', 'N/A'):.4f} |
-| NDCG@10 | {best_val.get('val_ndcg@10', 'N/A'):.4f} |
-"""
-
-    if test_metrics:
-        card += f"""
-## Test Results
-
-| Metric | Value |
-|--------|-------|
-| AUC | {test_metrics.get('auc', 'N/A'):.4f} |
-| MRR | {test_metrics.get('mrr', 'N/A'):.4f} |
-| NDCG@5 | {test_metrics.get('ndcg@5', 'N/A'):.4f} |
-| NDCG@10 | {test_metrics.get('ndcg@10', 'N/A'):.4f} |
-"""
-
-    repo_name = f"newsrex/{model_name}-{framework.upper()}-{dataset.replace(' ', '-')}"
-    if seed:
-        repo_name += f"-seed{seed}"
-
     card += f"""
+## Repository Structure
+
+```
+{repo_id}/
+├── model.safetensors          ← best seed ({best_seed})
+├── test_results.json
+├── training_run_summary.json
+"""
+    for sr in seed_results:
+        card += f"├── seed_{sr['seed']}/model.safetensors\n"
+
+    card += f"""└── README.md
+```
+
 ## Usage
 
-### Run evaluation on MIND test set
-
 ```bash
-# Clone NewsReX and install dependencies
 git clone https://github.com/igor17400/NewsReX.git
 cd NewsReX && uv sync
 
-# Run evaluation with HuggingFace weights
+# Run evaluation with best seed weights
 uv run python src/eval.py \\
     experiment=mind/{model_name.lower()} \\
     framework={framework} \\
-    weights=hf://{repo_name}/model.safetensors
+    weights=hf://{repo_id}/model.safetensors
+
+# Run evaluation with a specific seed
+uv run python src/eval.py \\
+    experiment=mind/{model_name.lower()} \\
+    framework={framework} \\
+    weights=hf://{repo_id}/seed_42/model.safetensors
 ```
 
 ## Citation
-
-If you use this model, please cite NewsReX:
 
 ```bibtex
 @misc{{newsrex2026,
@@ -228,92 +239,112 @@ If you use this model, please cite NewsReX:
     return card
 
 
-def _format_size(weight_files: list[Path]) -> str:
-    """Format total weight file size."""
-    total = sum(f.stat().st_size for f in weight_files)
-    if total > 1e9:
-        return f"{total / 1e9:.1f} GB"
-    return f"{total / 1e6:.1f} MB"
-
-
 def upload(
-    run_path: Path,
-    repo_id: str,
-    model_name: str | None = None,
+    run_dir: Path | None = None,
+    run_path: Path | None = None,
+    org: str = "newsrex",
     private: bool = False,
     dry_run: bool = False,
 ):
-    """Upload a trained model to Hugging Face Hub."""
+    """Upload trained model(s) to Hugging Face Hub.
+
+    Either ``run_dir`` (directory containing seed_* folders) or
+    ``run_path`` (single seed directory) must be provided.
+    """
     from huggingface_hub import HfApi, create_repo
 
-    run_path = Path(run_path).resolve()
-    if not run_path.exists():
-        raise FileNotFoundError(f"Run path not found: {run_path}")
+    # Collect seed directories.
+    if run_dir:
+        run_dir = Path(run_dir).resolve()
+        seed_dirs = sorted(run_dir.glob("seed_*"))
+        if not seed_dirs:
+            raise FileNotFoundError(f"No seed_* directories found in {run_dir}")
+    elif run_path:
+        run_path = Path(run_path).resolve()
+        seed_dirs = [run_path]
+    else:
+        raise ValueError("Provide either --run-dir or --run-path")
 
-    # Auto-detect metadata.
-    if model_name is None:
-        model_name = _detect_model_name(run_path)
-    framework = _detect_framework(run_path)
-    dataset = _detect_dataset(run_path)
-    seed = _detect_seed(run_path)
+    # Auto-detect metadata from the first seed dir.
+    ref_dir = seed_dirs[0]
+    model_name = _detect_model_name(ref_dir)
+    framework = _detect_framework(ref_dir)
+    dataset = _detect_dataset(ref_dir)
+    repo_id = f"{org}/{model_name}-{framework.upper()}-{dataset.replace(' ', '-')}"
 
-    # Find files to upload.
-    weight_files = _find_weights(run_path)
-    if not weight_files:
-        raise FileNotFoundError(f"No weight files found in {run_path}/models/")
+    # Collect results per seed.
+    seed_results = []
+    for sd in seed_dirs:
+        seed = _detect_seed(sd)
+        weights = _find_weights(sd)
+        if not weights:
+            print(f"Warning: no weights in {sd}, skipping")
+            continue
+        results = _load_test_results(sd)
+        results["seed"] = seed
+        results["_dir"] = sd
+        results["_weights"] = weights
+        seed_results.append(results)
 
-    config_file = _find_config(run_path)
-    summary = _load_summary(run_path)
+    if not seed_results:
+        raise FileNotFoundError("No seeds with weights found")
 
-    print(f"Model: {model_name}")
+    # Find best seed.
+    best_idx = max(range(len(seed_results)), key=lambda i: seed_results[i].get("auc", -1))
+    best_seed = seed_results[best_idx]["seed"]
+    best_dir = seed_results[best_idx]["_dir"]
+
+    print(f"Model:     {model_name}")
     print(f"Framework: {framework}")
-    print(f"Dataset: {dataset}")
-    print(f"Seed: {seed}")
-    print(f"Repo: {repo_id}")
-    print(f"Weight files: {[f.name for f in weight_files]}")
-    if config_file:
-        print(f"Config: {config_file.name}")
-    if summary:
-        test = summary.get("final_test_metrics", {})
-        if test:
-            print(f"Test AUC: {test.get('auc', 'N/A')}")
+    print(f"Dataset:   {dataset}")
+    print(f"Repo:      {repo_id}")
+    print(f"Seeds:     {[sr['seed'] for sr in seed_results]}")
+    print(f"Best seed: {best_seed} (AUC={seed_results[best_idx].get('auc', 'N/A'):.4f})")
 
     if dry_run:
-        print("\n[DRY RUN] Would upload the above files. Exiting.")
+        print("\n[DRY RUN] Would upload the above. Exiting.")
         return
 
-    # Create a temporary upload directory with organized contents.
+    # Build upload directory.
     with tempfile.TemporaryDirectory() as tmp:
         tmp_path = Path(tmp)
 
-        # Copy weight files.
-        for wf in weight_files:
+        # Copy best seed weights to root.
+        for wf in seed_results[best_idx]["_weights"]:
             shutil.copy2(wf, tmp_path / wf.name)
 
-        # Copy config.
-        if config_file:
-            shutil.copy2(config_file, tmp_path / config_file.name)
-
-        # Copy training summary.
-        for name in ["training_run_summary.json", "run_summary.json"]:
-            src = run_path / name
+        # Copy best seed summary + test results to root.
+        for name in ["training_run_summary.json", "test_results.json"]:
+            src = best_dir / name
             if src.exists():
                 shutil.copy2(src, tmp_path / name)
 
-        # Generate model card.
-        card = _generate_model_card(
-            model_name, framework, dataset, summary, weight_files, seed, run_path,
+        # Copy each seed into its subfolder.
+        for sr in seed_results:
+            seed_subdir = tmp_path / f"seed_{sr['seed']}"
+            seed_subdir.mkdir()
+            for wf in sr["_weights"]:
+                shutil.copy2(wf, seed_subdir / wf.name)
+            for name in ["training_run_summary.json", "test_results.json"]:
+                src = sr["_dir"] / name
+                if src.exists():
+                    shutil.copy2(src, seed_subdir / name)
+
+        # Generate README.
+        readme = _generate_readme(
+            repo_id, model_name, framework, dataset,
+            [{k: v for k, v in sr.items() if not k.startswith("_")} for sr in seed_results],
+            best_seed, best_dir,
         )
-        (tmp_path / "README.md").write_text(card)
+        (tmp_path / "README.md").write_text(readme)
 
         # Create repo and upload.
         api = HfApi()
         create_repo(repo_id, repo_type="model", private=private, exist_ok=True)
-        seed_str = f", seed={seed}" if seed else ""
         api.upload_folder(
             folder_path=str(tmp_path),
             repo_id=repo_id,
-            commit_message=f"Upload {model_name} ({framework}{seed_str}) trained on {dataset}",
+            commit_message=f"Upload {model_name} ({framework}) trained on {dataset} — {len(seed_results)} seeds",
         )
 
     print(f"\nUploaded to: https://huggingface.co/{repo_id}")
@@ -323,17 +354,18 @@ def main():
     parser = argparse.ArgumentParser(
         description="Upload NewsReX model weights to Hugging Face Hub",
     )
-    parser.add_argument(
-        "--run-path", type=str, required=True,
-        help="Path to the training run directory (e.g. outputs/mind_nrms/jax/2026-...)",
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument(
+        "--run-dir", type=str,
+        help="Directory containing seed_* folders (uploads all seeds)",
+    )
+    group.add_argument(
+        "--run-path", type=str,
+        help="Single seed run directory",
     )
     parser.add_argument(
-        "--repo-id", type=str, required=True,
-        help="Hugging Face repo ID (e.g. igor17400/NewsReX-NRMS)",
-    )
-    parser.add_argument(
-        "--model-name", type=str, default=None,
-        help="Model name (auto-detected from path if not provided)",
+        "--org", type=str, default="newsrex",
+        help="HuggingFace org (default: newsrex)",
     )
     parser.add_argument(
         "--private", action="store_true",
@@ -346,9 +378,9 @@ def main():
     args = parser.parse_args()
 
     upload(
+        run_dir=args.run_dir,
         run_path=args.run_path,
-        repo_id=args.repo_id,
-        model_name=args.model_name,
+        org=args.org,
         private=args.private,
         dry_run=args.dry_run,
     )
