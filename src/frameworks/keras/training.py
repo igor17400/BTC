@@ -64,7 +64,7 @@ class EvaluationCallback(keras.callbacks.Callback):
 
         if self.cfg.eval.fast_evaluation:
             eval_start = time.time()
-            val_metrics = self.eval_fn(self.model, mode="val")
+            val_metrics = self.eval_fn(self.model, mode="val", epoch=epoch)
             val_time = time.time() - eval_start
 
             # Best tracking

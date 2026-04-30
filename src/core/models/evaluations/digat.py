@@ -46,6 +46,7 @@ def digat_evaluate(
     batch_size: int = 64,
     id_remap: np.ndarray | None = None,
     save_predictions_path: str | None = None,
+    epoch: int | None = None,
 ) -> dict[str, float]:
     """Evaluate DIGAT on the dev or test set.
 
@@ -228,6 +229,6 @@ def digat_evaluate(
         predictions = {}
         for i, (labels, preds) in enumerate(zip(group_labels, group_preds)):
             predictions[str(i)] = (labels.tolist(), preds.tolist())
-        save_predictions_to_file_fn(predictions, save_predictions_path, mode=mode)
+        save_predictions_to_file_fn(predictions, save_predictions_path, epoch, mode=mode)
 
     return metrics

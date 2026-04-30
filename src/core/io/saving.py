@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import datetime
 import hydra
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
@@ -21,7 +22,6 @@ def get_output_run_dir(cfg):
         )
     except ValueError:
         # Running outside @hydra.main (e.g., smoke tests with hydra.compose)
-        import datetime
 
         base = getattr(cfg, "output_base_dir", "outputs")
         name = getattr(cfg, "name", "run")
@@ -39,6 +39,7 @@ def save_predictions_to_file_fn(
     mode: str = "val",
 ) -> None:
     console = Console()
+    output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     filename = f"{mode}_predictions"
     if epoch_idx is not None:

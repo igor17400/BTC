@@ -492,7 +492,7 @@ def run(cfg: DictConfig):
     if spec.model.name.lower() == "digat":
         _adapter = KerasAdapter()
 
-        def eval_fn(model, mode="val"):
+        def eval_fn(model, mode="val", epoch=None):
             result = digat_evaluate(
                 news_encoder=model.news_encoder,
                 graph_encoder=model.graph_encoder,
@@ -508,6 +508,7 @@ def run(cfg: DictConfig):
                 batch_size=cfg.eval.batch_size,
                 id_remap=id_remap,
                 save_predictions_path=str(output_run_dir / "predictions"),
+                epoch=epoch,
             )
             # Free eval memory so training can resume without fragmentation.
             if keras.backend.backend() == "torch":
@@ -516,7 +517,7 @@ def run(cfg: DictConfig):
     elif spec.model.name.lower() == "glory":
         _adapter = KerasAdapter()
 
-        def eval_fn(model, mode="val"):
+        def eval_fn(model, mode="val", epoch=None):
             result = glory_evaluate(
                 news_encoder=model.local_news_encoder,
                 graph_encoder=model.global_news_encoder,
@@ -536,6 +537,7 @@ def run(cfg: DictConfig):
                 batch_size=cfg.eval.batch_size,
                 id_remap=glory_id_remap,
                 save_predictions_path=str(output_run_dir / "predictions"),
+                epoch=epoch,
             )
             if keras.backend.backend() == "torch":
                 torch.cuda.empty_cache()
@@ -543,7 +545,7 @@ def run(cfg: DictConfig):
     else:
         evaluate = get_evaluator(spec)
 
-        def eval_fn(model, mode="val"):
+        def eval_fn(model, mode="val", epoch=None):
             news_dl, user_dl, imp_iter = _build_eval_dataloaders(
                 dataset_provider, cfg, mode=mode
             )
@@ -563,6 +565,8 @@ def run(cfg: DictConfig):
                     progress=progress,
                     int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
                     save_predictions_path=str(output_run_dir / "predictions"),
+                    epoch=epoch,
+                    mode=mode,
                 )
 
     # Test function

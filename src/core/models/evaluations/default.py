@@ -30,7 +30,7 @@ def fast_evaluate(
     int_to_news_id_map: dict[int, str] | None = None,
     save_predictions_path: str | None = None,
     epoch: int | None = None,
-    mode: str = "validate",
+    mode: str = "val",
 ) -> dict[str, float]:
     """Framework-agnostic fast evaluation pipeline.
 

@@ -62,6 +62,7 @@ def glory_evaluate(
     entity_neighbors: int = 10,
     title_size: int = 30,
     save_predictions_path: str | None = None,
+    epoch: int | None = None,
 ) -> dict[str, float]:
     """Evaluate GLORY on the dev or test set.
 
@@ -230,6 +231,6 @@ def glory_evaluate(
         predictions = {}
         for i, (labels, preds) in enumerate(zip(group_labels, group_preds)):
             predictions[str(i)] = (labels.tolist(), preds.tolist())
-        save_predictions_to_file_fn(predictions, save_predictions_path, mode=mode)
+        save_predictions_to_file_fn(predictions, save_predictions_path, epoch, mode=mode)
 
     return metrics

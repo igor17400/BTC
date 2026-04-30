@@ -444,7 +444,7 @@ def run(cfg: DictConfig):
 
         _adapter = JAXAdapter()
 
-        def eval_fn(model, mode="val", **kwargs):
+        def eval_fn(model, mode="val", epoch=None, **kwargs):
             return digat_evaluate(
                 news_encoder=model.news_encoder,
                 graph_encoder=model.graph_encoder,
@@ -460,12 +460,13 @@ def run(cfg: DictConfig):
                 batch_size=cfg.eval.batch_size,
                 id_remap=id_remap,
                 save_predictions_path=str(output_run_dir / "predictions"),
+                epoch=epoch,
             )
     elif spec.model.name.lower() == "glory":
 
         _adapter = JAXAdapter()
 
-        def eval_fn(model, mode="val", **kwargs):
+        def eval_fn(model, mode="val", epoch=None, **kwargs):
             return glory_evaluate(
                 news_encoder=model.local_news_encoder,
                 graph_encoder=model.global_news_encoder,
@@ -493,11 +494,12 @@ def run(cfg: DictConfig):
                 entity_neighbors=g_cfg.entity_neighbors,
                 title_size=g_cfg.title_size,
                 save_predictions_path=str(output_run_dir / "predictions"),
+                epoch=epoch,
             )
     else:
         evaluate = get_evaluator(spec)
 
-        def eval_fn(model, mode="val", **kwargs):
+        def eval_fn(model, mode="val", epoch=None, **kwargs):
             news_dl, user_dl, imp_iter = _build_eval_dataloaders(
                 dataset_provider, cfg, mode=mode
             )
@@ -517,6 +519,8 @@ def run(cfg: DictConfig):
                     progress=progress,
                     int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
                     save_predictions_path=str(output_run_dir / "predictions"),
+                    epoch=epoch,
+                    mode=mode,
                 )
 
     # Loss function from config

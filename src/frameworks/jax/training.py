@@ -293,7 +293,7 @@ def training_loop(
 
             if eval_fn is not None:
                 eval_start = time.time()
-                val_metrics = eval_fn(model, **(eval_kwargs or {}))
+                val_metrics = eval_fn(model, epoch=epoch, **(eval_kwargs or {}))
                 eval_time = time.time() - eval_start
                 timing["epoch_validation_times"].append(eval_time)
 

@@ -500,7 +500,7 @@ def run(cfg: DictConfig):
 
         _adapter = PyTorchAdapter()
 
-        def eval_fn(model, mode="val"):
+        def eval_fn(model, mode="val", epoch=None):
             return digat_evaluate(
                 news_encoder=model.news_encoder,
                 graph_encoder=model.graph_encoder,
@@ -516,12 +516,13 @@ def run(cfg: DictConfig):
                 batch_size=cfg.eval.batch_size,
                 id_remap=id_remap,
                 save_predictions_path=str(output_run_dir / "predictions"),
+                epoch=epoch,
             )
     elif spec.model.name.lower() == "glory":
 
         _adapter = PyTorchAdapter()
 
-        def eval_fn(model, mode="val"):
+        def eval_fn(model, mode="val", epoch=None):
             return glory_evaluate(
                 news_encoder=model.local_news_encoder,
                 graph_encoder=model.global_news_encoder,
@@ -541,10 +542,11 @@ def run(cfg: DictConfig):
                 batch_size=cfg.eval.batch_size,
                 id_remap=glory_id_remap,
                 save_predictions_path=str(output_run_dir / "predictions"),
+                epoch=epoch,
             )
     else:
 
-        def eval_fn(model, mode="val"):
+        def eval_fn(model, mode="val", epoch=None):
             provider = _build_eval_dataloaders(dataset_provider, cfg, mode=mode)
             behaviors_data = (
                 dataset_provider.val_behaviors_data
@@ -562,6 +564,7 @@ def run(cfg: DictConfig):
                     progress=progress,
                     int_to_news_id_map=int_to_news_id_map,
                     mode=mode,
+                    epoch=epoch,
                     save_predictions_path=str(output_run_dir / "predictions"),
                 )
 

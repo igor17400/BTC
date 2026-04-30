@@ -19,6 +19,7 @@ from typing import Any
 import numpy as np
 
 from src.core.io.progress import ProgressManager
+from src.core.io.saving import save_predictions_to_file_fn
 
 from .utils import compute_metrics, precompute_news_vectors, precompute_user_vectors
 
@@ -40,7 +41,7 @@ def pprec_fast_evaluate(
     int_to_news_id_map: dict[int, str] | None = None,
     save_predictions_path: str | None = None,
     epoch: int | None = None,
-    mode: str = "validate",
+    mode: str = "val",
 ) -> dict[str, float]:
     """PP-Rec evaluation with full popularity-aware scoring.
 
@@ -177,6 +178,13 @@ def pprec_fast_evaluate(
         group_labels, group_preds, metrics_calculator, progress
     )
     final_metrics["num_impressions"] = len(group_labels)
+
+    if save_predictions_path:
+        predictions = {}
+        for i, (labels, preds) in enumerate(zip(group_labels, group_preds)):
+            predictions[str(i)] = (labels.tolist(), preds.tolist())
+        save_predictions_to_file_fn(predictions, save_predictions_path, epoch, mode=mode)
+
     return final_metrics
 
 
