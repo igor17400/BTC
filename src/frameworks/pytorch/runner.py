@@ -4,6 +4,7 @@ Provides ``run(cfg)`` as the single entry point for PyTorch training,
 keeping train.py as a thin dispatcher.
 """
 
+import json
 import random
 import time
 
@@ -13,6 +14,14 @@ import torch
 from omegaconf import DictConfig
 
 import wandb
+from src.core.data.processing.models.digat import build_digat_train_features, build_id_remap
+from src.core.data.processing.models.glory import (
+    build_neighbor_dict,
+    build_news_feature_matrix,
+    build_news_graph,
+)
+from src.core.data.processing.models.sag import construct_sag
+from src.core.data.processing.text.news import read_all_news
 from src.core.io.logging import (
     console,
     log_test_results,
@@ -23,7 +32,22 @@ from src.core.io.progress import create_progress
 from src.core.io.saving import get_output_run_dir, save_run_summary_fn
 from src.core.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
+from src.core.models.configs import DIGATConfig, GLORYConfig
+from src.core.models.evaluations.digat import digat_evaluate
+from src.core.models.evaluations.glory import glory_evaluate
 from src.core.models.spec import build_model_from_spec
+from src.frameworks.pytorch.dataloaders import (
+    GLORYTrainDataset,
+    ImpressionIterator,
+    NewsBatchDataloader,
+    UserHistoryBatchDataloader,
+    create_glory_train_dataloader,
+    create_train_dataloader,
+    glory_collate,
+)
+from src.frameworks.pytorch.evaluation import get_evaluator
+from src.frameworks.pytorch.models.adapter import PyTorchAdapter
+from src.frameworks.pytorch.training import training_loop
 
 
 def _build_train_features(dataset_provider) -> tuple:
@@ -91,12 +115,6 @@ def _build_train_features(dataset_provider) -> tuple:
 
 def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
     """Build a dict of PyTorch-native eval dataloaders."""
-    from src.frameworks.pytorch.dataloaders import (
-        ImpressionIterator,
-        NewsBatchDataloader,
-        UserHistoryBatchDataloader,
-    )
-
     pn = dataset_provider.processed_news
     data = (
         dataset_provider.val_behaviors_data
@@ -173,9 +191,6 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
 
 def run(cfg: DictConfig):
     """Run training with PyTorch framework."""
-    from src.frameworks.pytorch.dataloaders import create_train_dataloader
-    from src.frameworks.pytorch.training import training_loop
-
     start_time = time.time()
     console.log("[bold]Initializing PyTorch training...[/bold]")
 
@@ -208,18 +223,6 @@ def run(cfg: DictConfig):
     # Train dataloader
     glory_cache: dict | None = None
     if spec.model.name.lower() == "glory":
-        from src.core.data.processing.models.digat import build_id_remap
-        from src.core.data.processing.models.glory import (
-            build_neighbor_dict,
-            build_news_feature_matrix,
-            build_news_graph,
-        )
-        from src.core.models.configs import GLORYConfig
-        from src.frameworks.pytorch.dataloaders import (
-            GLORYTrainDataset,
-            create_glory_train_dataloader,
-        )
-
         g_cfg = GLORYConfig(
             title_size=spec.inputs.title.max_length,
             entity_size=spec.inputs.get("entity", {}).get("max_length", 5),
@@ -414,8 +417,6 @@ def run(cfg: DictConfig):
         # GLORY's dataloader is fully assembled; skip the generic path below.
         features, labels = None, None  # unused
     elif spec.model.name.lower() == "digat":
-        from src.core.data.processing.models.digat import build_digat_train_features
-        from src.core.models.configs import DIGATConfig
 
         sag_config = spec.model.architecture.graph_encoder
         digat_cfg = DIGATConfig(
@@ -426,9 +427,6 @@ def run(cfg: DictConfig):
             max_impressions_length=spec.inputs.impressions.max_length,
         )
         if hasattr(dataset_provider, "dataset_path"):
-            from src.core.data.processing.models.sag import construct_sag
-            from src.core.data.processing.text.news import read_all_news
-
             all_news_df = read_all_news(dataset_provider.dataset_path)
             id_map = dataset_provider.news_str_id_to_int_idx
             cache_dir = dataset_provider.dataset_path / "processed"
@@ -450,7 +448,6 @@ def run(cfg: DictConfig):
         num_categories = int(processed_news.get("num_categories", 18)) + 1
 
         # Build behaviors→SAG ID remap (the two pipelines use different int mappings)
-        from src.core.data.processing.models.digat import build_id_remap
 
         remap_path = (
             dataset_provider.dataset_path / "processed" / "behaviors_to_sag_remap.npy"
@@ -490,7 +487,6 @@ def run(cfg: DictConfig):
     # Output (dir already created above for wandb)
 
     # Evaluation function (isomorphic with Keras/JAX)
-    from src.frameworks.pytorch.evaluation import get_evaluator
 
     evaluate = get_evaluator(spec)
 
@@ -501,8 +497,6 @@ def run(cfg: DictConfig):
     )
 
     if spec.model.name.lower() == "digat":
-        from src.core.models.evaluations.digat import digat_evaluate
-        from src.frameworks.pytorch.models.adapter import PyTorchAdapter
 
         _adapter = PyTorchAdapter()
 
@@ -521,10 +515,9 @@ def run(cfg: DictConfig):
                 mode=mode,
                 batch_size=cfg.eval.batch_size,
                 id_remap=id_remap,
+                save_predictions_path=str(output_run_dir / "predictions"),
             )
     elif spec.model.name.lower() == "glory":
-        from src.core.models.evaluations.glory import glory_evaluate
-        from src.frameworks.pytorch.models.adapter import PyTorchAdapter
 
         _adapter = PyTorchAdapter()
 
@@ -547,6 +540,7 @@ def run(cfg: DictConfig):
                 mode=mode,
                 batch_size=cfg.eval.batch_size,
                 id_remap=glory_id_remap,
+                save_predictions_path=str(output_run_dir / "predictions"),
             )
     else:
 
@@ -568,6 +562,7 @@ def run(cfg: DictConfig):
                     progress=progress,
                     int_to_news_id_map=int_to_news_id_map,
                     mode=mode,
+                    save_predictions_path=str(output_run_dir / "predictions"),
                 )
 
     # Loss function from config
@@ -637,6 +632,16 @@ def run(cfg: DictConfig):
             log_test_results(test_metrics)
 
     log_training_complete(cfg.model_name, "pytorch", time.time() - start_time)
+
+    # Save eval results.
+    if test_metrics:
+        eval_path = output_run_dir / "eval_results.json"
+        with open(eval_path, "w") as f:
+            json.dump(
+                {k: float(v) if isinstance(v, (int, float)) else v for k, v in test_metrics.items()},
+                f, indent=2,
+            )
+        console.log(f"Saved eval results to {eval_path}")
 
     # Save run summary.
     save_run_summary_fn(

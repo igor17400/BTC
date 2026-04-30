@@ -195,55 +195,18 @@ license: apache-2.0
     card += f"""
 ## Usage
 
-### 1. Download weights
-
-```python
-from huggingface_hub import hf_hub_download
-
-weights_path = hf_hub_download(
-    repo_id="{repo_name}",
-    filename="model.safetensors",
-)
-```
-
-### 2. Run evaluation on MIND test set
+### Run evaluation on MIND test set
 
 ```bash
 # Clone NewsReX and install dependencies
 git clone https://github.com/igor17400/NewsReX.git
 cd NewsReX && uv sync
 
-# Run evaluation with downloaded weights
-uv run python src/train.py \\
+# Run evaluation with HuggingFace weights
+uv run python src/eval.py \\
     experiment=mind/{model_name.lower()} \\
     framework={framework} \\
-    train.num_epochs=0 \\
-    weights=${{weights_path}}
-```
-
-### 3. Load weights in Python
-
-```python
-import jax
-import jax.numpy as jnp
-from flax import nnx
-from safetensors.numpy import load_file
-
-from src.core.models.spec import build_model_from_spec
-
-# Build model from spec
-model = build_model_from_spec(spec, "{framework}", processed_news)
-
-# Load weights
-weights = load_file(weights_path)
-state = nnx.state(model)
-new_leaves = []
-for path, leaf in jax.tree_util.tree_leaves_with_path(state):
-    name = ".".join(str(k) for k in path)
-    new_leaves.append(jnp.asarray(weights[name]) if name in weights else leaf)
-nnx.update(model, jax.tree_util.tree_unflatten(
-    jax.tree_util.tree_structure(state), new_leaves,
-))
+    weights=hf://{repo_name}/model.safetensors
 ```
 
 ## Citation

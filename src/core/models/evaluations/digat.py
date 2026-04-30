@@ -24,6 +24,7 @@ import numpy as np
 
 from src.core.data.processing.models.digat import build_user_graphs
 from src.core.io.progress import create_progress
+from src.core.io.saving import save_predictions_to_file_fn
 from src.core.models.evaluations.utils import compute_metrics
 
 logger = logging.getLogger(__name__)
@@ -44,6 +45,7 @@ def digat_evaluate(
     mode: str = "val",
     batch_size: int = 64,
     id_remap: np.ndarray | None = None,
+    save_predictions_path: str | None = None,
 ) -> dict[str, float]:
     """Evaluate DIGAT on the dev or test set.
 
@@ -221,4 +223,11 @@ def digat_evaluate(
             group_labels, group_preds, metrics_calculator, progress
         )
     metrics["num_impressions"] = len(group_labels)
+
+    if save_predictions_path:
+        predictions = {}
+        for i, (labels, preds) in enumerate(zip(group_labels, group_preds)):
+            predictions[str(i)] = (labels.tolist(), preds.tolist())
+        save_predictions_to_file_fn(predictions, save_predictions_path, mode=mode)
+
     return metrics

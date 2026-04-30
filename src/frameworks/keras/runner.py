@@ -4,24 +4,57 @@ Provides ``run(cfg)`` as the single entry point for Keras training.
 Same pattern as JAX/PyTorch: dataset → model → build dataloaders → train.
 """
 
+import json
 import os
 
+import hydra
+import keras
 import numpy as np
 from omegaconf import DictConfig
 
+try:
+    import torch
+    from torch.utils.data import DataLoader
+except ImportError:
+    torch = None
+    DataLoader = None
+
+from src.core.data.processing.models.digat import build_digat_train_features, build_id_remap
+from src.core.data.processing.models.glory import (
+    build_neighbor_dict,
+    build_news_feature_matrix,
+    build_news_graph,
+)
+from src.core.data.processing.models.sag import construct_sag
+from src.core.data.processing.text.news import read_all_news
 from src.core.io.logging import console, setup_wandb_session
 from src.core.io.progress import create_progress
 from src.core.io.saving import get_output_run_dir, save_run_summary_fn
+from src.core.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
+from src.core.models.configs import DIGATConfig, GLORYConfig
+from src.core.models.evaluations.digat import digat_evaluate
+from src.core.models.evaluations.glory import glory_evaluate
 from src.core.models.spec import build_model_from_spec
+from src.frameworks.jax.dataloaders import _glory_collate_jax
+from src.frameworks.keras.dataloaders import (
+    ImpressionIterator,
+    NewsBatchDataloader,
+    UserHistoryBatchDataloader,
+    create_train_dataloader,
+)
+from src.frameworks.keras.device import setup_device
+from src.frameworks.keras.evaluation import get_evaluator
+from src.frameworks.keras.models.adapter import KerasAdapter
+from src.frameworks.keras.training import training_loop
+from src.frameworks.keras.utils import LightweightNewsMetrics, create_news_metrics
+from src.frameworks.pytorch.dataloaders import GLORYTrainDataset, glory_collate
 
 SUPPORTED_BACKENDS = ("jax", "torch")
 
 
 def _build_train_features(dataset_provider) -> tuple:
     """Extract raw numpy features and labels from the dataset provider."""
-    import keras
-
     data = dataset_provider.train_behaviors_data
     features = {}
 
@@ -109,7 +142,6 @@ def _setup(cfg: DictConfig):
             f"Cannot switch Keras backend from '{current}' to '{backend}' in the same process."
         )
     os.environ["KERAS_BACKEND"] = backend
-    import keras
 
     console.log(f"Keras backend: {keras.backend.backend()}")
 
@@ -128,8 +160,6 @@ def _setup(cfg: DictConfig):
     keras.utils.set_random_seed(cfg.seed)
 
     # Device
-    from src.frameworks.keras.device import setup_device
-
     setup_device(
         gpu_ids=cfg.device.gpu_ids if hasattr(cfg.device, "gpu_ids") else [],
         memory_limit=cfg.device.memory_limit
@@ -143,12 +173,6 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
 
     Isomorphic with ``_build_eval_dataloaders`` in PyTorch and JAX runners.
     """
-    from src.frameworks.keras.dataloaders import (
-        ImpressionIterator,
-        NewsBatchDataloader,
-        UserHistoryBatchDataloader,
-    )
-
     pn = dataset_provider.processed_news
     data = (
         dataset_provider.val_behaviors_data
@@ -207,22 +231,13 @@ def run(cfg: DictConfig):
     """Run training with Keras framework."""
     _setup(cfg)
 
-    import hydra as _hydra
-    import keras
-
-    from src.core.losses import get_loss
-    from src.frameworks.keras.dataloaders import create_train_dataloader
-    from src.frameworks.keras.evaluation import get_evaluator
-    from src.frameworks.keras.training import training_loop
-    from src.frameworks.keras.utils import LightweightNewsMetrics, create_news_metrics
-
     # Create output directory early so wandb saves inside it.
     output_run_dir = get_output_run_dir(cfg)
     output_run_dir.mkdir(parents=True, exist_ok=True)
     setup_wandb_session(cfg, output_dir=output_run_dir)
 
     # Dataset (same as JAX/PyTorch)
-    dataset_provider = _hydra.utils.instantiate(cfg.dataset, mode="train")
+    dataset_provider = hydra.utils.instantiate(cfg.dataset, mode="train")
     processed_news = dataset_provider.processed_news
 
     # Model from spec (same as JAX/PyTorch)
@@ -269,14 +284,6 @@ def run(cfg: DictConfig):
     glory_remap_path = None
 
     if spec.model.name.lower() == "digat":
-        from src.core.data.processing.models.digat import (
-            build_digat_train_features,
-            build_id_remap,
-        )
-        from src.core.data.processing.models.sag import construct_sag
-        from src.core.data.processing.text.news import read_all_news
-        from src.core.models.configs import DIGATConfig
-
         sag_config = spec.model.architecture.graph_encoder
         digat_cfg = DIGATConfig(
             sag_hops=sag_config.get("sag_hops", 2),
@@ -321,18 +328,6 @@ def run(cfg: DictConfig):
             id_remap=id_remap,
         )
     elif spec.model.name.lower() == "glory":
-        from src.core.data.processing.models.digat import build_id_remap
-        from src.core.data.processing.models.glory import (
-            build_neighbor_dict,
-            build_news_feature_matrix,
-            build_news_graph,
-        )
-        from src.core.models.configs import GLORYConfig
-        from src.frameworks.pytorch.dataloaders import (
-            GLORYTrainDataset,
-            glory_collate,
-        )
-
         g_cfg = GLORYConfig(
             title_size=spec.inputs.title.max_length,
             entity_size=spec.inputs.get("entity", {}).get("max_length", 5),
@@ -448,12 +443,9 @@ def run(cfg: DictConfig):
     # Build train dataloader — GLORY uses PyTorch DataLoader with custom
     # collate; DIGAT and standard models use the Keras Sequence.
     if spec.model.name.lower() == "glory":
-        import keras
         if keras.backend.backend() == "jax":
             # JAX backend: Keras Sequence with padded collate.
             # Can't use PyTorch DataLoader — it calls .cpu() on outputs.
-            from src.frameworks.jax.dataloaders import _glory_collate_jax
-
             class _GLORYKerasSequence(keras.utils.Sequence):
                 def __init__(self, ds, bs, collate):
                     self._ds, self._bs, self._collate = ds, bs, collate
@@ -472,7 +464,6 @@ def run(cfg: DictConfig):
                 glory_train_ds, cfg.train.batch_size, _glory_collate_jax,
             )
         else:
-            from torch.utils.data import DataLoader
             train_dataloader = DataLoader(
                 glory_train_ds,
                 batch_size=cfg.train.batch_size,
@@ -499,9 +490,6 @@ def run(cfg: DictConfig):
     # Evaluation function — DIGAT and GLORY use dedicated evaluators;
     # standard models go through the registry.
     if spec.model.name.lower() == "digat":
-        from src.core.models.evaluations.digat import digat_evaluate
-        from src.frameworks.keras.models.adapter import KerasAdapter
-
         _adapter = KerasAdapter()
 
         def eval_fn(model, mode="val"):
@@ -519,16 +507,13 @@ def run(cfg: DictConfig):
                 mode=mode,
                 batch_size=cfg.eval.batch_size,
                 id_remap=id_remap,
+                save_predictions_path=str(output_run_dir / "predictions"),
             )
             # Free eval memory so training can resume without fragmentation.
-            import keras
             if keras.backend.backend() == "torch":
-                import torch; torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
             return result
     elif spec.model.name.lower() == "glory":
-        from src.core.models.evaluations.glory import glory_evaluate
-        from src.frameworks.keras.models.adapter import KerasAdapter
-
         _adapter = KerasAdapter()
 
         def eval_fn(model, mode="val"):
@@ -550,10 +535,10 @@ def run(cfg: DictConfig):
                 mode=mode,
                 batch_size=cfg.eval.batch_size,
                 id_remap=glory_id_remap,
+                save_predictions_path=str(output_run_dir / "predictions"),
             )
-            import keras
             if keras.backend.backend() == "torch":
-                import torch; torch.cuda.empty_cache()
+                torch.cuda.empty_cache()
             return result
     else:
         evaluate = get_evaluator(spec)
@@ -577,6 +562,7 @@ def run(cfg: DictConfig):
                     metrics_calculator=metrics_engine,
                     progress=progress,
                     int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
+                    save_predictions_path=str(output_run_dir / "predictions"),
                 )
 
     # Test function
@@ -594,12 +580,9 @@ def run(cfg: DictConfig):
         # Rebuild ID remap now that test data is loaded.
         nonlocal id_remap, glory_id_remap
         if spec.model.name.lower() == "digat":
-            from src.core.data.processing.models.digat import (
-                build_id_remap as _build_remap,
-            )
             if remap_path is not None and remap_path.exists():
                 remap_path.unlink()
-            id_remap = _build_remap(dataset_provider, processed_news, remap_path)
+            id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
 
         if spec.model.name.lower() == "glory":
             if glory_remap_path is not None and glory_remap_path.exists():
@@ -625,5 +608,15 @@ def run(cfg: DictConfig):
             progress=progress,
             output_directory=output_run_dir,
         )
+
+    # Save eval results.
+    if test_metrics:
+        eval_path = output_run_dir / "eval_results.json"
+        with open(eval_path, "w") as f:
+            json.dump(
+                {k: float(v) if isinstance(v, (int, float)) else v for k, v in test_metrics.items()},
+                f, indent=2,
+            )
+        console.log(f"Saved eval results to {eval_path}")
 
     return test_metrics or best_epoch_metrics or {}

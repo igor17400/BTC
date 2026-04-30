@@ -7,11 +7,13 @@ Some models require some especial logic, for instance DIGAT. Thus,
 the logic should be adapted to work with them.
 """
 
+import json
 import random
 import time
 
 import jax
 import jax.numpy as jnp
+from huggingface_hub import hf_hub_download
 from safetensors.numpy import load_file
 
 import hydra
@@ -35,12 +37,29 @@ from src.core.io.logging import (
 from src.core.io.progress import create_progress
 from src.core.io.saving import get_output_run_dir, save_run_summary_fn
 from src.core.losses import get_loss
+from src.core.data.processing.models.glory import (
+    build_entity_graph,
+    build_entity_neighbor_dict,
+    build_neighbor_dict,
+    build_news_feature_matrix,
+    build_news_graph,
+)
 from src.core.metrics.functions import NewsRecommenderMetrics
-from src.core.models.configs import DIGATConfig
+from src.core.models.configs import DIGATConfig, GLORYConfig
+from src.core.models.evaluations.digat import digat_evaluate
+from src.core.models.evaluations.glory import glory_evaluate
 from src.core.models.spec import build_model_from_spec
-from src.frameworks.jax.dataloaders import create_train_dataloader
+from src.frameworks.jax.dataloaders import (
+    ImpressionIterator,
+    NewsBatchDataloader,
+    UserHistoryBatchDataloader,
+    create_glory_jax_dataloader,
+    create_train_dataloader,
+)
 from src.frameworks.jax.evaluation import get_evaluator
+from src.frameworks.jax.models.adapter import JAXAdapter
 from src.frameworks.jax.training import training_loop
+from src.frameworks.pytorch.dataloaders import GLORYTrainDataset
 
 
 def _build_train_features(dataset_provider) -> tuple:
@@ -107,12 +126,6 @@ def _build_train_features(dataset_provider) -> tuple:
 
 def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
     """Build JAX-native dataloaders for evaluation."""
-    from src.frameworks.jax.dataloaders import (
-        ImpressionIterator,
-        NewsBatchDataloader,
-        UserHistoryBatchDataloader,
-    )
-
     pn = dataset_provider.processed_news
     data = (
         dataset_provider.val_behaviors_data
@@ -255,19 +268,6 @@ def run(cfg: DictConfig):
             id_remap=id_remap,
         )
     elif spec.model.name.lower() == "glory":
-        from src.core.data.processing.models.glory import (
-            build_entity_graph,
-            build_entity_neighbor_dict,
-            build_neighbor_dict,
-            build_news_feature_matrix,
-            build_news_graph,
-        )
-        from src.core.models.configs import GLORYConfig
-        from src.frameworks.pytorch.dataloaders import (
-            GLORYTrainDataset,
-            create_glory_train_dataloader,
-        )
-
         use_entity = spec.model.get("use_entity", False)
         g_cfg = GLORYConfig(
             title_size=spec.inputs.title.max_length,
@@ -415,7 +415,6 @@ def run(cfg: DictConfig):
     # Build train dataloader — GLORY uses its own DataLoader; others use
     # the standard numpy-backed iterator.
     if spec.model.name.lower() == "glory":
-        from src.frameworks.jax.dataloaders import create_glory_jax_dataloader
 
         train_dataloader = create_glory_jax_dataloader(
             dataset=glory_train_ds,
@@ -442,8 +441,6 @@ def run(cfg: DictConfig):
     # co-computing news and user contexts per impression; standard
     # models go through the registry.
     if spec.model.name.lower() == "digat":
-        from src.core.models.evaluations.digat import digat_evaluate
-        from src.frameworks.jax.models.adapter import JAXAdapter
 
         _adapter = JAXAdapter()
 
@@ -462,10 +459,9 @@ def run(cfg: DictConfig):
                 mode=mode,
                 batch_size=cfg.eval.batch_size,
                 id_remap=id_remap,
+                save_predictions_path=str(output_run_dir / "predictions"),
             )
     elif spec.model.name.lower() == "glory":
-        from src.core.models.evaluations.glory import glory_evaluate
-        from src.frameworks.jax.models.adapter import JAXAdapter
 
         _adapter = JAXAdapter()
 
@@ -496,6 +492,7 @@ def run(cfg: DictConfig):
                 entity_size=g_cfg.entity_size,
                 entity_neighbors=g_cfg.entity_neighbors,
                 title_size=g_cfg.title_size,
+                save_predictions_path=str(output_run_dir / "predictions"),
             )
     else:
         evaluate = get_evaluator(spec)
@@ -519,6 +516,7 @@ def run(cfg: DictConfig):
                     metrics_calculator=metrics_engine,
                     progress=progress,
                     int_to_news_id_map=dataset_provider.get_int_to_news_id_map(),
+                    save_predictions_path=str(output_run_dir / "predictions"),
                 )
 
     # Loss function from config
@@ -567,13 +565,9 @@ def run(cfg: DictConfig):
 
         # Rebuild ID remap now that test data is loaded.
         if spec.model.name.lower() == "digat":
-            from src.core.data.processing.models.digat import (
-                build_id_remap as _build_remap,
-            )
-
             if remap_path is not None and remap_path.exists():
                 remap_path.unlink()
-            id_remap = _build_remap(dataset_provider, processed_news, remap_path)
+            id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
 
         if spec.model.name.lower() == "glory":
             if glory_remap_path is not None and glory_remap_path.exists():
@@ -591,14 +585,25 @@ def run(cfg: DictConfig):
 
     log_training_complete(cfg.model_name, "jax", time.time() - start_time)
 
-    # Save run summary (config, best metrics, test metrics).
-    save_run_summary_fn(
-        summary_output_dir=output_run_dir,
-        hydra_cfg=cfg,
-        initial_metrics_dict={},
-        best_metrics_summary_dict=best_metrics,
-        test_metrics_dict=test_metrics,
-    )
+    # Save eval results (always — both train and eval-only modes).
+    if test_metrics:
+        eval_path = output_run_dir / "eval_results.json"
+        with open(eval_path, "w") as f:
+            json.dump(
+                {k: float(v) if isinstance(v, (int, float)) else v for k, v in test_metrics.items()},
+                f, indent=2,
+            )
+        console.log(f"Saved eval results to {eval_path}")
+
+    # Save run summary (training mode only).
+    if not cfg.get("_eval_only", False):
+        save_run_summary_fn(
+            summary_output_dir=output_run_dir,
+            hydra_cfg=cfg,
+            initial_metrics_dict={},
+            best_metrics_summary_dict=best_metrics,
+            test_metrics_dict=test_metrics,
+        )
 
     if wandb.run:
         wandb.finish()
@@ -607,7 +612,17 @@ def run(cfg: DictConfig):
 
 
 def _load_safetensors(model, weights_path: str):
-    """Load safetensors weights into a JAX/Flax NNX model."""
+    """Load safetensors weights into a JAX/Flax NNX model.
+
+    Supports local paths and HuggingFace Hub paths (hf://org/repo/file).
+    """
+    if weights_path.startswith("hf://"):
+        # Parse hf://org/repo/filename
+        parts = weights_path[5:].split("/", 2)
+        repo_id = f"{parts[0]}/{parts[1]}"
+        filename = parts[2] if len(parts) > 2 else "model.safetensors"
+        weights_path = hf_hub_download(repo_id=repo_id, filename=filename)
+        console.log(f"Downloaded weights from HuggingFace Hub: {repo_id}/{filename}")
 
     weights = load_file(weights_path)
     state = nnx.state(model)
