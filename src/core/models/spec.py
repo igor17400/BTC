@@ -277,6 +277,7 @@ _MODEL_CLASS_PATHS = {
         "digat": "src.frameworks.keras.models.digat.DIGAT",
         "pprec": "src.frameworks.keras.models.pprec.PPRec",
         "glory": "src.frameworks.keras.models.glory.GLORY",
+        "miner": "src.frameworks.keras.models.miner.MINER",
     },
     "pytorch": {
         "nrms": "src.frameworks.pytorch.models.nrms.NRMS",
@@ -286,6 +287,7 @@ _MODEL_CLASS_PATHS = {
         "digat": "src.frameworks.pytorch.models.digat.DIGAT",
         "glory": "src.frameworks.pytorch.models.glory.GLORY",
         "pprec": "src.frameworks.pytorch.models.pprec.PPRec",
+        "miner": "src.frameworks.pytorch.models.miner.MINER",
     },
     "jax": {
         "nrms": "src.frameworks.jax.models.nrms.NRMS",

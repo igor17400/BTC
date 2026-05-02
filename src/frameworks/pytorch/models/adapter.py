@@ -72,6 +72,23 @@ class PyTorchAdapter:
                 vec = encoder(features, training=False)
         return vec.detach().cpu().numpy()
 
+    def encode_user_interests(
+        self, user_encoder: Any, features: Any
+    ) -> np.ndarray:
+        """Run the MINER user encoder to get K interest vectors.
+
+        Returns:
+            ``(B, K, E)`` numpy array of interest vectors.
+        """
+        user_encoder.eval()
+        device = next(user_encoder.parameters()).device
+        if isinstance(features, np.ndarray):
+            features = torch.as_tensor(features)
+        features = features.to(device)
+        with torch.no_grad():
+            vecs = user_encoder.encode_interests(features, training=False)
+        return vecs.detach().cpu().numpy()
+
     def run_activity_gater(self, gater: Any, user_vecs: Any) -> np.ndarray:
         """Run the ActivityGater on a batch of user vectors."""
         gater.eval()

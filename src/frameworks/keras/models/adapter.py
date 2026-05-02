@@ -59,6 +59,18 @@ class KerasAdapter:
             vec = encoder(features, training=False)
         return ops.convert_to_numpy(vec)
 
+    def encode_user_interests(
+        self, user_encoder: Any, features: Any
+    ) -> np.ndarray:
+        """Run the MINER user encoder to get K interest vectors.
+
+        Returns:
+            ``(B, K, E)`` numpy array of interest vectors.
+        """
+        return ops.convert_to_numpy(
+            user_encoder.encode_interests(features, training=False)
+        )
+
     def run_activity_gater(self, gater: Any, user_vecs: Any) -> np.ndarray:
         """Run the ActivityGater on a batch of user vectors."""
         return ops.convert_to_numpy(gater(user_vecs, training=False))
