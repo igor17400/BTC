@@ -63,6 +63,7 @@ def training_loop(
     save_dir: str | Path | None = None,
     gpu_ids: list[int] | None = None,
     loss_fn: nn.Module | None = None,
+    get_aux_loss=None,
 ) -> dict[str, Any]:
     """Run a full training loop.
 
@@ -82,6 +83,8 @@ def training_loop(
         save_dir: Directory for saving model checkpoints.
         gpu_ids: GPU IDs to use.
         loss_fn: Loss function (defaults to CategoricalCrossEntropyLoss).
+        get_aux_loss: Optional callable ``(model) -> scalar`` auxiliary loss
+            (e.g. CROWN category prediction, MINER disagreement).
 
     Returns:
         Dictionary with ``best_epoch_metrics`` and timing information.
@@ -158,9 +161,8 @@ def training_loop(
                 with autocast_ctx:
                     predictions = model(batch_features, training=True)
                     loss = loss_fn(predictions, batch_labels)
-                    # Auxiliary loss (e.g. CROWN category prediction)
-                    if hasattr(model, "get_auxiliary_loss"):
-                        loss = loss + model.get_auxiliary_loss()
+                    if get_aux_loss is not None:
+                        loss = loss + get_aux_loss(model)
 
                 display_loss = loss.detach()
                 if grad_accum_steps > 1:

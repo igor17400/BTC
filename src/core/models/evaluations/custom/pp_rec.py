@@ -21,7 +21,7 @@ import numpy as np
 from src.core.io.progress import ProgressManager
 from src.core.io.saving import save_predictions_to_file_fn
 
-from .utils import compute_metrics, precompute_news_vectors, precompute_user_vectors
+from ..utils import compute_metrics, precompute_news_vectors, precompute_user_vectors
 
 # ---------------------------------------------------------------------------
 # PP-Rec evaluation

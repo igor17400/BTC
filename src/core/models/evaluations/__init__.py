@@ -1,18 +1,16 @@
 """Model evaluation pipelines.
 
 - :mod:`.default` — shared fast evaluation (dot-product scoring).
-- :mod:`.pp_rec` — PP-Rec evaluation with full popularity-aware scoring.
-- :mod:`.digat` — DIGAT evaluation with dual graph interaction scoring.
 - :mod:`.utils` — shared precomputation and metric helpers.
+- :mod:`.custom` — model-specific evaluators (DIGAT, GLORY, MINER, PP-Rec).
 
 Use :func:`get_evaluator` to resolve a registry-based evaluator by name.
 The spec YAML declares which evaluator a model uses via
 ``evaluation.evaluator`` (defaults to ``"default"``).
 
-Note: DIGAT uses :func:`.digat.digat_evaluate` directly rather than the
-registry, because its calling convention differs (it takes raw
-``news_encoder``, ``graph_encoder``, and dataset-level arguments instead
-of dataloaders).
+Note: DIGAT and GLORY use their evaluators directly rather than the
+registry, because their calling conventions differ (they take raw
+encoder modules and dataset-level arguments instead of dataloaders).
 """
 
 from __future__ import annotations
@@ -21,9 +19,13 @@ from collections.abc import Callable
 from functools import partial
 from typing import TYPE_CHECKING
 
+from .custom import (
+    digat_evaluate,
+    glory_evaluate,
+    miner_fast_evaluate,
+    pprec_fast_evaluate,
+)
 from .default import fast_evaluate
-from .digat import digat_evaluate
-from .pp_rec import pprec_fast_evaluate
 
 if TYPE_CHECKING:
     from src.core.models.adapter import FrameworkAdapter
@@ -31,6 +33,7 @@ if TYPE_CHECKING:
 EVALUATOR_REGISTRY: dict[str, Callable] = {
     "default": fast_evaluate,
     "pp_rec": pprec_fast_evaluate,
+    "miner": miner_fast_evaluate,
 }
 
 
@@ -39,7 +42,7 @@ def get_evaluator(evaluator_name: str, adapter: FrameworkAdapter) -> Callable:
 
     Args:
         evaluator_name: Key in :data:`EVALUATOR_REGISTRY` (e.g. ``"default"``,
-            ``"pp_rec"``).
+            ``"pp_rec"``, ``"miner"``).
         adapter: Framework adapter to pre-bind.
 
     Returns:
@@ -59,5 +62,7 @@ __all__ = [
     "digat_evaluate",
     "fast_evaluate",
     "get_evaluator",
+    "glory_evaluate",
+    "miner_fast_evaluate",
     "pprec_fast_evaluate",
 ]

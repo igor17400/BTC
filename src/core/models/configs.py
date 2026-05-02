@@ -279,3 +279,37 @@ class PPRecConfig:
     max_entities: int = 5
 
     process_user_id: bool = False
+
+
+@dataclass
+class MINERConfig:
+    """Configuration for MINER (ACL Findings 2022).
+
+    Multi-Interest Matching Network for News Recommendation.
+    Defaults match the paper's reported hyperparameters.
+    """
+
+    # Word embeddings
+    embedding_size: int = 300
+    dropout_rate: float = 0.2
+    seed: int = 42
+
+    # News encoder (multi-head self-attention)
+    num_heads: int = 20
+    head_dim: int = 15
+    attention_hidden_dim: int = 200
+
+    # Poly attention (multi-interest)
+    num_interest_vectors: int = 32  # K in the paper
+    context_code_dim: int = 200
+
+    # Disagreement regularization
+    disagreement_beta: float = 0.0  # 0.8 in paper (with BERT)
+
+    # Input constraints
+    max_title_length: int = 32
+    max_history_length: int = 50
+    max_impressions_length: int = 5
+
+    # Training
+    process_user_id: bool = False

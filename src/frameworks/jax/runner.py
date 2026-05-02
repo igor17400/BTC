@@ -22,12 +22,6 @@ from flax import nnx
 from omegaconf import DictConfig, OmegaConf
 
 import wandb
-from src.core.data.processing.models.digat import (
-    build_digat_train_features,
-    build_id_remap,
-)
-from src.core.data.processing.models.sag import construct_sag
-from src.core.data.processing.text.news import read_all_news
 from src.core.io.logging import (
     console,
     log_test_results,
@@ -37,18 +31,9 @@ from src.core.io.logging import (
 from src.core.io.progress import create_progress
 from src.core.io.saving import get_output_run_dir, save_run_summary_fn
 from src.core.losses import get_loss
-from src.core.data.processing.models.glory import (
-    build_entity_graph,
-    build_entity_neighbor_dict,
-    build_neighbor_dict,
-    build_news_feature_matrix,
-    build_news_graph,
-)
 from src.core.metrics.functions import NewsRecommenderMetrics
-from src.core.models.configs import DIGATConfig, GLORYConfig
-from src.core.models.evaluations.digat import digat_evaluate
-from src.core.models.evaluations.glory import glory_evaluate
 from src.core.models.spec import build_model_from_spec
+from src.core.setup import setup_model
 from src.frameworks.jax.dataloaders import (
     ImpressionIterator,
     NewsBatchDataloader,
@@ -59,7 +44,6 @@ from src.frameworks.jax.dataloaders import (
 from src.frameworks.jax.evaluation import get_evaluator
 from src.frameworks.jax.models.adapter import JAXAdapter
 from src.frameworks.jax.training import training_loop
-from src.frameworks.pytorch.dataloaders import GLORYTrainDataset
 
 
 def _build_train_features(dataset_provider) -> tuple:
@@ -213,290 +197,46 @@ def run(cfg: DictConfig):
     if _weights_path:
         _load_safetensors(model, str(_weights_path))
 
-    # Train features: DIGAT assembles its own tensors via SAG preprocessing;
-    # every other model follows the standard pipeline.
-    sag_data = None
-    id_remap = None
-    remap_path = None
-    if spec.model.name.lower() == "digat":
-        sag_config = spec.model.architecture.graph_encoder
-        digat_cfg = DIGATConfig(
-            sag_hops=sag_config.get("sag_hops", 2),
-            sag_neighbors=sag_config.get("sag_neighbors", 5),
-            max_title_length=spec.inputs.title.max_length,
-            max_history_length=spec.inputs.history.max_length,
-            max_impressions_length=spec.inputs.impressions.max_length,
-        )
-        if hasattr(dataset_provider, "dataset_path"):
-            all_news_df = read_all_news(dataset_provider.dataset_path)
-            id_map = dataset_provider.news_str_id_to_int_idx
-            cache_dir = dataset_provider.dataset_path / "processed"
-            sag_data = construct_sag(
-                all_news_df,
-                id_map,
-                sag_hops=digat_cfg.sag_hops,
-                sag_neighbors=digat_cfg.sag_neighbors,
-                cache_dir=cache_dir,
+    # Model-specific setup (DIGAT, GLORY) or standard pipeline
+    model_setup = setup_model(spec, dataset_provider, processed_news)
+
+    if model_setup is not None:
+        features = model_setup.features
+        labels = model_setup.labels
+
+        # Build dataloader — GLORY uses its own DataLoader
+        if model_setup.train_dataset is not None:
+            train_dataloader = create_glory_jax_dataloader(
+                dataset=model_setup.train_dataset,
+                batch_size=cfg.train.batch_size,
+                shuffle=True,
+                num_workers=0,
             )
         else:
-            num_news = processed_news["tokens"].shape[0]
-            G = digat_cfg.news_graph_size
-            sag_data = {
-                "news_node_ID": np.zeros((num_news, G), dtype=np.int32),
-                "news_graph": np.eye(G, dtype=np.bool_)[None].repeat(num_news, axis=0),
-                "news_graph_mask": np.ones((num_news, G), dtype=np.bool_),
-            }
-        num_categories = int(processed_news.get("num_categories", 18)) + 1
-
-        # Build behaviors→SAG ID remap (the two pipelines use different int mappings)
-        remap_path = (
-            dataset_provider.dataset_path / "processed" / "behaviors_to_sag_remap.npy"
-            if hasattr(dataset_provider, "dataset_path")
-            else None
-        )
-        id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
-
-        features, labels = build_digat_train_features(
-            dataset_provider.train_behaviors_data,
-            processed_news,
-            sag_data,
-            max_history=digat_cfg.max_history_length,
-            max_impressions=digat_cfg.max_impressions_length,
-            num_categories=num_categories,
-            news_graph_size=digat_cfg.news_graph_size,
-            max_title_length=digat_cfg.max_title_length,
-            id_remap=id_remap,
-        )
-    elif spec.model.name.lower() == "glory":
-        use_entity = spec.model.get("use_entity", False)
-        g_cfg = GLORYConfig(
-            title_size=spec.inputs.title.max_length,
-            entity_size=spec.inputs.get("entity", {}).get("max_length", 5),
-            max_history_length=spec.inputs.history.max_length,
-            max_impressions_length=spec.inputs.impressions.max_length,
-            head_num=spec.model.architecture.news_encoder.head_num,
-            head_dim=spec.model.architecture.news_encoder.head_dim,
-            attention_hidden_dim=spec.model.architecture.news_encoder.attention_hidden_dim,
-            gnn_num_layers=spec.model.architecture.graph_encoder.gnn_num_layers,
-            use_graph_type=spec.model.architecture.graph_encoder.get("use_graph_type", 0),
-            directed=spec.model.architecture.graph_encoder.get("directed", True),
-            k_hops=spec.model.architecture.graph_encoder.get("k_hops", 2),
-            num_neighbors=spec.model.architecture.graph_encoder.get("num_neighbors", 8),
-            dropout_rate=spec.model.dropout_rate,
-            use_entity=use_entity,
-            entity_emb_dim=spec.model.get("entity_emb_dim", 100),
-            entity_neighbors=spec.model.architecture.graph_encoder.get("entity_neighbors", 10),
-        )
-        news_features = build_news_feature_matrix(
-            processed_news, g_cfg.title_size, g_cfg.entity_size,
-        )
-        num_news = news_features.shape[0]
-
-        glory_remap_path = (
-            dataset_provider.dataset_path / "processed" / "glory_id_remap.npy"
-            if hasattr(dataset_provider, "dataset_path")
-            else None
-        )
-        glory_id_remap = build_id_remap(
-            dataset_provider, processed_news, glory_remap_path,
-        )
-
-        def _apply_remap(ids):
-            if glory_id_remap is None:
-                return np.clip(ids, 0, num_news - 1)
-            safe_ids = np.clip(ids, 0, len(glory_id_remap) - 1)
-            return np.where(
-                ids < len(glory_id_remap), glory_id_remap[safe_ids], 0,
-            ).astype(np.int64)
-
-        # Remap train behaviors in-place for graph builder + dataloader.
-        tb = dict(dataset_provider.train_behaviors_data)
-        if "histories_news_ids" in tb:
-            tb["histories_news_ids"] = _apply_remap(
-                np.asarray(tb["histories_news_ids"]).astype(np.int64)
-            )
-        if "candidate_news_ids" in tb:
-            raw = tb["candidate_news_ids"]
-            raw_arr = np.asarray(raw)
-            if raw_arr.dtype.kind not in ("U", "S"):
-                tb["candidate_news_ids"] = _apply_remap(raw_arr.astype(np.int64))
-        dataset_provider.train_behaviors_data = tb
-
-        graph_cache_dir = (
-            dataset_provider.dataset_path / "processed"
-            if hasattr(dataset_provider, "dataset_path")
-            else None
-        )
-        graph_path = (
-            graph_cache_dir / f"glory_news_graph_type{g_cfg.use_graph_type}.pkl"
-            if graph_cache_dir else None
-        )
-        neighbor_path = (
-            graph_cache_dir / f"glory_neighbor_dict_type{g_cfg.use_graph_type}_dir{int(g_cfg.directed)}.pkl"
-            if graph_cache_dir else None
-        )
-        glory_graph = build_news_graph(
-            dataset_provider.train_behaviors_data,
-            num_news=num_news,
-            use_graph_type=g_cfg.use_graph_type,
-            cache_path=graph_path,
-        )
-        glory_neighbors = build_neighbor_dict(
-            glory_graph, directed=g_cfg.directed, cache_path=neighbor_path,
-        )
-
-        # Entity graph + neighbors (optional).
-        entity_neighbor_dict = None
-        if use_entity:
-            entity_graph_path = (
-                graph_cache_dir / "glory_entity_graph.pkl"
-                if graph_cache_dir else None
-            )
-            entity_neighbor_path = (
-                graph_cache_dir / "glory_entity_neighbor_dict.pkl"
-                if graph_cache_dir else None
-            )
-            entity_graph = build_entity_graph(
-                glory_graph, news_features,
-                title_size=g_cfg.title_size,
-                entity_size=g_cfg.entity_size,
-                cache_path=entity_graph_path,
-            )
-            entity_neighbor_dict = build_entity_neighbor_dict(
-                entity_graph, cache_path=entity_neighbor_path,
+            train_dataloader = create_train_dataloader(
+                features=features, labels=labels,
+                batch_size=cfg.train.batch_size, shuffle=True, seed=cfg.seed,
             )
 
-        glory_cache = {
-            "cfg": g_cfg,
-            "news_features": news_features,
-            "graph": glory_graph,
-            "neighbors": glory_neighbors,
-            "entity_neighbor_dict": entity_neighbor_dict,
-        }
-
-        # Build train dataloader (reuses PyTorch's DataLoader for parallelism).
-        n_samples = len(tb["labels"])
-        if "histories_news_ids" in tb:
-            hist_ids = np.asarray(tb["histories_news_ids"]).astype(np.int64)
-        else:
-            hist_ids = np.zeros((n_samples, g_cfg.max_history_length), dtype=np.int64)
-
-        raw_cand = tb["candidate_news_ids"]
-        raw_cand_arr = np.asarray(raw_cand)
-        if raw_cand_arr.dtype.kind in ("U", "S", "O"):
-            str_to_int = getattr(dataset_provider, "news_str_id_to_int_idx", None)
-            if str_to_int is not None:
-                vfunc = np.vectorize(lambda x: str_to_int.get(str(x), 0))
-                cand_ids = vfunc(raw_cand_arr).astype(np.int64)
-            else:
-                cand_ids = np.zeros(raw_cand_arr.shape, dtype=np.int64)
-        else:
-            cand_ids = raw_cand_arr.astype(np.int64)
-
-        glory_train_ds = GLORYTrainDataset(
-            hist_ids=hist_ids,
-            cand_ids=cand_ids,
-            news_features=news_features,
-            graph_edge_index=glory_graph["edge_index"],
-            graph_edge_attr=glory_graph["edge_attr"],
-            neighbor_dict=glory_neighbors,
-            labels=np.asarray(tb["labels"]),
-            his_size=g_cfg.max_history_length,
-            k_hops=g_cfg.k_hops,
-            num_neighbors=g_cfg.num_neighbors,
-            entity_neighbor_dict=entity_neighbor_dict,
-            entity_size=g_cfg.entity_size,
-            entity_neighbors=g_cfg.entity_neighbors,
-            title_size=g_cfg.title_size,
+        # Build eval_fn from setup hook
+        metrics_engine = NewsRecommenderMetrics(
+            **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
+        )
+        _adapter = JAXAdapter()
+        eval_fn = model_setup.make_eval_fn(
+            model, _adapter, metrics_engine, dataset_provider,
+            processed_news, cfg.eval.batch_size, output_run_dir,
         )
     else:
+        # Standard pipeline (NRMS, NAML, LSTUR, MINER, PP-REC, CROWN)
         features, labels = _build_train_features(dataset_provider)
-
-    # Build train dataloader — GLORY uses its own DataLoader; others use
-    # the standard numpy-backed iterator.
-    if spec.model.name.lower() == "glory":
-
-        train_dataloader = create_glory_jax_dataloader(
-            dataset=glory_train_ds,
-            batch_size=cfg.train.batch_size,
-            shuffle=True,
-            num_workers=0,
-        )
-    else:
         train_dataloader = create_train_dataloader(
-            features=features,
-            labels=labels,
-            batch_size=cfg.train.batch_size,
-            shuffle=True,
-            seed=cfg.seed,
+            features=features, labels=labels,
+            batch_size=cfg.train.batch_size, shuffle=True, seed=cfg.seed,
         )
-
-    # Metrics
-    metrics_engine = NewsRecommenderMetrics(
-        **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
-    )
-
-    # Evaluation function (called at end of each epoch). DIGAT uses a
-    # dedicated evaluator because its dual graph interaction requires
-    # co-computing news and user contexts per impression; standard
-    # models go through the registry.
-    if spec.model.name.lower() == "digat":
-
-        _adapter = JAXAdapter()
-
-        def eval_fn(model, mode="val", epoch=None, **kwargs):
-            return digat_evaluate(
-                news_encoder=model.news_encoder,
-                graph_encoder=model.graph_encoder,
-                dataset_provider=dataset_provider,
-                processed_news=processed_news,
-                sag_data=sag_data,
-                adapter=_adapter,
-                metrics_calculator=metrics_engine,
-                D=model.D,
-                num_categories=model.num_categories,
-                max_history=model.max_history,
-                mode=mode,
-                batch_size=cfg.eval.batch_size,
-                id_remap=id_remap,
-                save_predictions_path=str(output_run_dir / "predictions"),
-                epoch=epoch,
-            )
-    elif spec.model.name.lower() == "glory":
-
-        _adapter = JAXAdapter()
-
-        def eval_fn(model, mode="val", epoch=None, **kwargs):
-            return glory_evaluate(
-                news_encoder=model.local_news_encoder,
-                graph_encoder=model.global_news_encoder,
-                click_encoder=model.click_encoder,
-                user_encoder=model.user_encoder,
-                candidate_encoder=model.candidate_encoder,
-                click_predictor=None,
-                dataset_provider=dataset_provider,
-                processed_news=processed_news,
-                news_features=glory_cache["news_features"],
-                graph=glory_cache["graph"],
-                neighbor_dict=glory_cache["neighbors"],
-                adapter=_adapter,
-                metrics_calculator=metrics_engine,
-                his_size=glory_cache["cfg"].max_history_length,
-                mode=mode,
-                batch_size=cfg.eval.batch_size,
-                id_remap=glory_id_remap,
-                use_entity=use_entity,
-                entity_encoder=getattr(model, "local_entity_encoder", None),
-                global_entity_encoder=getattr(model, "global_entity_encoder", None),
-                entity_embedding=getattr(model, "entity_embedding", None),
-                entity_neighbor_dict=glory_cache.get("entity_neighbor_dict"),
-                entity_size=g_cfg.entity_size,
-                entity_neighbors=g_cfg.entity_neighbors,
-                title_size=g_cfg.title_size,
-                save_predictions_path=str(output_run_dir / "predictions"),
-                epoch=epoch,
-            )
-    else:
+        metrics_engine = NewsRecommenderMetrics(
+            **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
+        )
         evaluate = get_evaluator(spec)
 
         def eval_fn(model, mode="val", epoch=None, **kwargs):
@@ -523,7 +263,7 @@ def run(cfg: DictConfig):
                     mode=mode,
                 )
 
-    # Loss function from config
+    # Loss function
     loss_fn = get_loss(
         loss_name=spec.training.loss.name,
         framework="jax",
@@ -531,16 +271,11 @@ def run(cfg: DictConfig):
         label_smoothing=spec.training.loss.get("label_smoothing", 0.0),
     )
 
-    # Auxiliary loss (e.g. CROWN category prediction)
-    aux_loss_fn = None
-    if hasattr(model, "get_auxiliary_loss"):
-
-        def aux_loss_fn(m):
-            return m.get_auxiliary_loss()
-
-    # GLORY subgraphs are padded to fixed sizes in the JAX collate,
-    # so JIT works for all models.
-    _use_jit = True
+    get_aux_loss = (
+        (lambda m: m.get_auxiliary_loss())
+        if hasattr(model, "get_auxiliary_loss")
+        else None
+    )
 
     # Train
     best_metrics = training_loop(
@@ -552,8 +287,8 @@ def run(cfg: DictConfig):
         early_stopping_patience=cfg.train.early_stopping.patience,
         early_stopping_min_improvement=cfg.train.early_stopping.get("min_improvement", 0.01),
         loss_fn=loss_fn,
-        get_aux_loss=aux_loss_fn,
-        use_jit=_use_jit,
+        get_aux_loss=get_aux_loss,
+        use_jit=True,
         eval_fn=eval_fn if cfg.eval.fast_evaluation else None,
         enable_wandb=cfg.logging.enable_wandb,
         save_dir=str(output_run_dir / "models"),
@@ -563,26 +298,12 @@ def run(cfg: DictConfig):
     test_metrics = None
     if cfg.eval.run_test_after_training:
         console.log("[bold]Running test evaluation...[/bold]")
-        # Load test data (not loaded during mode="train" init)
         if not dataset_provider.test_behaviors_data:
             dataset_provider._load_data("test")
 
-        # Rebuild ID remap now that test data is loaded.
-        if spec.model.name.lower() == "digat":
-            if remap_path is not None and remap_path.exists():
-                remap_path.unlink()
-            id_remap = build_id_remap(dataset_provider, processed_news, remap_path)
-
-        if spec.model.name.lower() == "glory":
-            if glory_remap_path is not None and glory_remap_path.exists():
-                glory_remap_path.unlink()
-            # Hide remapped train data to avoid ID namespace collisions.
-            _saved_train = dataset_provider.train_behaviors_data
-            dataset_provider.train_behaviors_data = {}
-            glory_id_remap = build_id_remap(
-                dataset_provider, processed_news, glory_remap_path,
-            )
-            dataset_provider.train_behaviors_data = _saved_train
+        # Rebuild ID remap for models that need it (DIGAT, GLORY)
+        if model_setup is not None and model_setup.rebuild_test_remap is not None:
+            model_setup.rebuild_test_remap(dataset_provider, processed_news)
 
         test_metrics = eval_fn(model, mode="test")
         log_test_results(test_metrics)

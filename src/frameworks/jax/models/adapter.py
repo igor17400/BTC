@@ -147,6 +147,26 @@ class JAXAdapter:
         return np.asarray(pop_scores)
 
     # ------------------------------------------------------------------
+    # MINER-specific methods
+    # ------------------------------------------------------------------
+
+    def encode_user_interests(
+        self, user_encoder: Any, features: Any
+    ) -> np.ndarray:
+        """Run the MINER user encoder to get K interest vectors.
+
+        Args:
+            user_encoder: MINER UserEncoder with ``encode_interests`` method.
+            features: ``(B, H, T)`` history token ids.
+
+        Returns:
+            ``(B, K, E)`` numpy array of interest vectors.
+        """
+        if not isinstance(features, jnp.ndarray):
+            features = jnp.asarray(features)
+        return np.asarray(user_encoder.encode_interests(features, training=False))
+
+    # ------------------------------------------------------------------
     # DIGAT-specific methods
     # ------------------------------------------------------------------
 

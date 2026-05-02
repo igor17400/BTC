@@ -9,7 +9,7 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from .configs import CROWNConfig, LSTURConfig, NAMLConfig, NRMSConfig, PPRecConfig
+from .configs import CROWNConfig, LSTURConfig, MINERConfig, NAMLConfig, NRMSConfig, PPRecConfig
 
 # ---------------------------------------------------------------------------
 # Spec → Config translation functions
@@ -211,6 +211,28 @@ def spec_to_glory_config(spec: DictConfig) -> "GLORYConfig":
     )
 
 
+def spec_to_miner_config(spec: DictConfig) -> MINERConfig:
+    """Convert a parsed MINER spec into MINERConfig."""
+    arch = spec.model.architecture
+    ne = arch.news_encoder
+    ue = arch.user_encoder
+    return MINERConfig(
+        embedding_size=spec.model.embedding.size,
+        dropout_rate=spec.model.dropout_rate,
+        seed=spec.model.seed,
+        num_heads=ne.num_heads,
+        head_dim=ne.head_dim,
+        attention_hidden_dim=ne.attention_hidden_dim,
+        num_interest_vectors=ue.get("num_interest_vectors", 32),
+        context_code_dim=ue.get("context_code_dim", 200),
+        disagreement_beta=spec.training.get("disagreement_beta", 0.8),
+        max_title_length=spec.inputs.title.max_length,
+        max_history_length=spec.inputs.history.max_length,
+        max_impressions_length=spec.inputs.impressions.max_length,
+        process_user_id=spec.inputs.get("process_user_id", False),
+    )
+
+
 _SPEC_CONVERTERS = {
     "nrms": spec_to_nrms_config,
     "naml": spec_to_naml_config,
@@ -219,6 +241,7 @@ _SPEC_CONVERTERS = {
     "digat": spec_to_digat_config,
     "glory": spec_to_glory_config,
     "pprec": spec_to_pprec_config,
+    "miner": spec_to_miner_config,
 }
 
 
@@ -272,6 +295,7 @@ _MODEL_CLASS_PATHS = {
         "pprec": "src.frameworks.jax.models.pprec.PPRec",
         "digat": "src.frameworks.jax.models.digat.DIGAT",
         "glory": "src.frameworks.jax.models.glory.GLORY",
+        "miner": "src.frameworks.jax.models.miner.MINER",
     },
 }
 

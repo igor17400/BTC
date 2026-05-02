@@ -1,0 +1,56 @@
+model:
+  name: miner
+  architecture:
+    news_encoder:
+      type: multi_head_self_attention
+      num_heads: 20
+      head_dim: 15
+      attention_hidden_dim: 200
+    user_encoder:
+      type: poly_attention
+      num_interest_vectors: 32  # K in the paper (best from ablation)
+      context_code_dim: 200
+    click_predictor:
+      type: miner_weighted  # target-aware aggregation
+  embedding:
+    size: 300
+    trainable: true
+  dropout_rate: 0.2
+  seed: 42
+
+inputs:
+  title: { max_length: 32 }
+  history: { max_length: 50 }
+  impressions: { max_length: 5 }
+  process_title: true
+  process_abstract: false
+  process_category: false
+  process_subcategory: false
+  process_user_id: false
+
+training:
+  loss:
+    name: categorical_crossentropy
+    from_logits: true
+    reduction: sum_over_batch_size
+    label_smoothing: 0.0
+  optimizer: adam
+  learning_rate: 0.0001
+  batch_size: 256
+  num_epochs: 20
+  gradient_clip_val: 1.0
+  grad_accum_steps: 1
+  early_stopping:
+    patience: 5
+    min_improvement: 0.01
+  negative_sampling:
+    strategy: random
+    candidates: 4
+  # Disagreement regularization weight (Eq. 7: L = L_NCE + beta * L_D)
+  disagreement_beta: 0.0  # 0.8 in paper (with BERT); hurts with GloVe on MIND-small
+
+evaluation:
+  mode: fast
+  evaluator: miner
+  metrics: [auc, mrr, ndcg@5, ndcg@10]
+  batch_size: 256
