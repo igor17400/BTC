@@ -237,6 +237,11 @@ def process_behaviors(
     labels: list[list] = []
     impression_ids: list[int] = []
     user_ids: list[str] = []
+    # Per-row impression timestamps (kept only when popularity features are
+    # available, so downstream model-specific preprocessors that need the
+    # actual time of each impression — e.g. TCCM's per-token CTR lookup —
+    # can stay aligned with the filtered/expanded train rows).
+    impression_times: list = []
 
     total_original_rows = len(behaviors_df)
     total_positives = 0
@@ -417,6 +422,8 @@ def process_behaviors(
                     labels.append(label_group)
                     impression_ids.append(row["impression_id"])
                     user_ids.append(user_id)
+                    if has_time_ctr and impression_time is not None:
+                        impression_times.append(impression_time)
             else:
                 cand_nid_group, label_group = cand_nid_group_list, label_group_list
 
@@ -460,6 +467,8 @@ def process_behaviors(
                 labels.append(label_group)
                 impression_ids.append(row["impression_id"])
                 user_ids.append(user_id)
+                if has_time_ctr and impression_time is not None:
+                    impression_times.append(impression_time)
 
             progress.advance(task)
 
@@ -517,6 +526,10 @@ def process_behaviors(
                     result["candidate_news_recency"] = np.array(
                         candidate_news_recency, dtype=np.int32
                     )
+            if impression_times:
+                result["impression_times"] = np.array(
+                    impression_times, dtype="datetime64[ns]"
+                )
         else:
             result = {
                 "histories_news_ids": histories_news_ids,
@@ -541,6 +554,8 @@ def process_behaviors(
                 result["candidate_news_ctr"] = candidate_news_ctr
                 if candidate_news_recency:
                     result["candidate_news_recency"] = candidate_news_recency
+            if impression_times:
+                result["impression_times"] = impression_times
 
         total_processed_rows = len(histories_news_ids)
         expansion_factor = (

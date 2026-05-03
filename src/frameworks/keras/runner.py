@@ -317,6 +317,7 @@ def run(cfg: DictConfig):
         _raw_eval_fn = model_setup.make_eval_fn(
             model, _adapter, metrics_engine, dataset_provider,
             processed_news, cfg.eval.batch_size, output_run_dir,
+            build_eval_dataloaders=_build_eval_dataloaders,
         )
 
         # Wrap to free eval memory on torch backend

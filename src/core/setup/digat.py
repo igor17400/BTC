@@ -86,7 +86,7 @@ def setup_digat(spec, dataset_provider, processed_news) -> ModelSetupResult:
     }
 
     def make_eval_fn(model, adapter, metrics_engine, dataset_provider,
-                     processed_news, eval_batch_size, output_run_dir):
+                     processed_news, eval_batch_size, output_run_dir, **_):
         def eval_fn(model, mode="val", epoch=None, **kwargs):
             return digat_evaluate(
                 news_encoder=model.news_encoder,

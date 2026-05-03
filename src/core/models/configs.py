@@ -223,6 +223,77 @@ class DIGATConfig:
 
 
 @dataclass
+class TCCMConfig:
+    """Configuration class for TCCM model parameters.
+
+    TCCM: Time and Content-Aware Causal Model for Unbiased News
+    Recommendation (CIKM 2023). Reuses PP-Rec's news/user encoders for
+    the user-content matching score and replaces the popularity branch
+    with a content-aware popularity encoder driven by per-token (word /
+    entity) CTR buckets and a reciprocal-power time module.
+    """
+
+    # ---- News / user encoders (shared with PP-Rec ``co1`` recipe) ----
+    embedding_size: int = 300
+    news_dim: int = 400
+    entity_embedding_dim: int = 100
+    category_embedding_dim: int = 200
+
+    # MHSA on title words / entities.
+    num_heads: int = 20
+    head_dim: int = 20
+    # Bidirectional MHCA between title words and entities. We reuse
+    # PP-Rec's ``co1`` cross-attention layout (5 heads × 40 dim = 200
+    # output, then Concat + Dense fusion) — the paper text says the same
+    # 20×20 split as the self-attention, but the Add-residual variant in
+    # an earlier port consistently underperformed PP-Rec ``co1`` on
+    # MIND-small val/test. Sticking with the empirically-better fusion.
+    co_num_heads: int = 5
+    co_head_dim: int = 40
+    attention_hidden_dim: int = 200
+
+    # ---- Popularity user-modelling (history popularity embedding) ----
+    popularity_embedding_bins: int = 200
+    popularity_embedding_dim: int = 400
+
+    # ---- TCCM popularity encoder (per-token bucketed CTR) ----
+    pop_token_embedding_bins: int = 200
+    pop_token_embedding_dim: int = 200
+    pop_num_heads: int = 1
+    pop_head_dim: int = 400
+    pop_content_dims: tuple[int, int, int] = (256, 256, 128)
+
+    # ---- Time / timeliness module ----
+    timeliness_embedding_bins: int = 505
+    timeliness_embedding_dim: int = 100
+    pop_recency_dims: tuple[int, int] = (64, 64)
+    timeliness_lambda: float = 2.0
+
+    # ---- Activity gater ----
+    activity_gate_dims: tuple[int, int] = (128, 64)
+
+    # ---- Causal intervention ----
+    use_causal_intervention: bool = False
+    intervention_value: float = 0.5
+
+    # ---- Feature flags ----
+    use_entity: bool = True
+    use_activity_gate: bool = True
+
+    # ---- Training ----
+    dropout_rate: float = 0.2
+    seed: int = 42
+
+    # ---- Input constraints ----
+    max_title_length: int = 30
+    max_history_length: int = 50
+    max_impressions_length: int = 5
+    max_entities: int = 5
+
+    process_user_id: bool = False
+
+
+@dataclass
 class PPRecConfig:
     """Configuration class for PP-Rec model parameters.
 

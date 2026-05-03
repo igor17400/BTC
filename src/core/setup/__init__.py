@@ -18,6 +18,7 @@ Usage in runners::
 
 from .digat import setup_digat
 from .glory import setup_glory
+from .tccm import setup_tccm
 from .types import ModelSetupResult
 
 
@@ -31,6 +32,8 @@ def setup_model(spec, dataset_provider, processed_news) -> ModelSetupResult | No
         return setup_digat(spec, dataset_provider, processed_news)
     elif name == "glory":
         return setup_glory(spec, dataset_provider, processed_news)
+    elif name == "tccm":
+        return setup_tccm(spec, dataset_provider, processed_news)
     return None
 
 

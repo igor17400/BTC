@@ -90,6 +90,35 @@ class KerasAdapter:
         )
 
     # ------------------------------------------------------------------
+    # TCCM-specific methods
+    # ------------------------------------------------------------------
+
+    def run_tccm_popularity_encoder(
+        self,
+        encoder: Any,
+        bucket_input: np.ndarray,
+        time_input: np.ndarray,
+        title_len: int,
+    ) -> np.ndarray:
+        """Run the TCCM popularity encoder on a candidate batch.
+
+        Args:
+            encoder: The :class:`TCCMPopularityEncoder` instance.
+            bucket_input: ``(C, T+E)`` int32 — per-token CTR bucket indices.
+            time_input: ``(C,)`` int32 — clamped age in hours since publish.
+            title_len: Number of title-token positions ``T``.
+
+        Returns:
+            ``(C,)`` numpy array of popularity scores.
+        """
+        import keras
+        b = keras.ops.convert_to_tensor(bucket_input, dtype="int32")
+        t = keras.ops.convert_to_tensor(time_input, dtype="int32")
+        with _no_grad_context():
+            scores = encoder(b, t, title_len=title_len, training=False)
+        return ops.convert_to_numpy(scores)
+
+    # ------------------------------------------------------------------
     # DIGAT-specific methods
     # ------------------------------------------------------------------
 
@@ -231,8 +260,17 @@ class KerasAdapter:
         clicked_title: Any,
         clicked_graph: Any,
         cand_local: Any,
+        clicked_entity_emb: Any = None,
+        cand_origin_emb: Any = None,
+        cand_neighbor_emb: Any = None,
     ) -> np.ndarray:
-        """Fuse + score a single impression's candidates."""
+        """Fuse + score a single impression's candidates.
+
+        The entity-emb kwargs are accepted for API parity with the JAX
+        adapter but currently ignored — the Keras GLORY encoders don't
+        yet implement the entity branch. Eval falls back to title+graph
+        fusion.
+        """
         import keras
         ct = keras.ops.expand_dims(
             keras.ops.convert_to_tensor(clicked_title, dtype="float32"), axis=0,

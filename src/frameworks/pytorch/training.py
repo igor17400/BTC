@@ -15,6 +15,7 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+from safetensors.torch import save_file as save_safetensors
 from torch.utils.data import DataLoader
 
 import wandb
@@ -41,6 +42,28 @@ def _move_batch_to_device(
 
 def _build_progress():
     return create_progress(columns="training", expand=True)
+
+
+class EarlyStopping:
+    """Mirrors the JAX ``EarlyStopping`` (see ``jax/training.py``).
+
+    Decoupled from best-checkpoint tracking: ``step`` returns ``True`` once
+    ``patience`` consecutive epochs fail to beat ``best + min_improvement``.
+    """
+
+    def __init__(self, patience: int = 5, min_improvement: float = 0.01):
+        self.patience = patience
+        self.min_improvement = min_improvement
+        self.best_metric: float = -float("inf")
+        self.wait: int = 0
+
+    def step(self, metric: float) -> bool:
+        if metric > self.best_metric + self.min_improvement:
+            self.best_metric = metric
+            self.wait = 0
+            return False
+        self.wait += 1
+        return self.wait >= self.patience
 
 
 # ------------------------------------------------------------------
@@ -109,6 +132,10 @@ def training_loop(
 
     # ---- Tracking ----
     best_metrics: dict[str, Any] = {"average_metric_value": -float("inf")}
+    stopper = EarlyStopping(
+        patience=early_stopping_patience,
+        min_improvement=early_stopping_min_improvement,
+    )
     timing: dict[str, Any] = {
         "epoch_training_times": [],
         "epoch_validation_times": [],
@@ -211,7 +238,7 @@ def training_loop(
                 vals = [val_metrics[m] for m in main_metrics if m in val_metrics]
                 avg_metric = sum(vals) / len(vals) if vals else 0.0
 
-                if avg_metric > best_metrics["average_metric_value"] + early_stopping_min_improvement:
+                if avg_metric > best_metrics["average_metric_value"]:
                     is_best = True
                     best_metrics = {
                         "epoch_number": epoch,
@@ -221,9 +248,17 @@ def training_loop(
                     }
 
                     if save_dir:
-                        ckpt_path = Path(save_dir) / "best_model.pt"
+                        # Save as safetensors (HF-canonical, framework-
+                        # agnostic, safe). Matches the JAX runner's
+                        # ``model.safetensors`` filename so HF upload
+                        # picks both up uniformly.
+                        ckpt_path = Path(save_dir) / "model.safetensors"
                         ckpt_path.parent.mkdir(parents=True, exist_ok=True)
-                        torch.save(model.state_dict(), ckpt_path)
+                        flat = {
+                            k: v.detach().cpu().contiguous()
+                            for k, v in model.state_dict().items()
+                        }
+                        save_safetensors(flat, str(ckpt_path))
 
             # Log epoch (shared format)
             log_epoch_end(
@@ -236,12 +271,11 @@ def training_loop(
                 is_best=is_best,
             )
 
-            # Early stopping
-            if val_metrics is not None:
-                wait = epoch - best_metrics.get("epoch_number", epoch)
-                if wait >= early_stopping_patience:
-                    log_early_stopping(epoch, early_stopping_patience)
-                    break
+            # Early stopping — independent of best-checkpoint update,
+            # uses ``min_improvement`` to gate "real progress" (matches JAX).
+            if val_metrics is not None and stopper.step(avg_metric):
+                log_early_stopping(epoch, early_stopping_patience)
+                break
 
             # WandB
             if wandb_run is not None:

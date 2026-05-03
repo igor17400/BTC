@@ -9,7 +9,7 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from .configs import CROWNConfig, LSTURConfig, MINERConfig, NAMLConfig, NRMSConfig, PPRecConfig
+from .configs import CROWNConfig, LSTURConfig, MINERConfig, NAMLConfig, NRMSConfig, PPRecConfig, TCCMConfig
 
 # ---------------------------------------------------------------------------
 # Spec → Config translation functions
@@ -211,6 +211,48 @@ def spec_to_glory_config(spec: DictConfig) -> "GLORYConfig":
     )
 
 
+def spec_to_tccm_config(spec: DictConfig) -> TCCMConfig:
+    """Convert a parsed TCCM spec into TCCMConfig."""
+    arch = spec.model.architecture
+    ne = arch.news_encoder
+    pop = arch.popularity_encoder
+    time_module = arch.time_module
+    return TCCMConfig(
+        embedding_size=spec.model.embedding.size,
+        news_dim=ne.get("news_dim", 400),
+        entity_embedding_dim=ne.get("entity_embedding_dim", 100),
+        category_embedding_dim=ne.get("category_embedding_dim", 200),
+        num_heads=ne.num_heads,
+        head_dim=ne.head_dim,
+        co_num_heads=ne.get("co_num_heads", 5),
+        co_head_dim=ne.get("co_head_dim", 40),
+        attention_hidden_dim=ne.attention_hidden_dim,
+        popularity_embedding_bins=arch.get("popularity_embedding_bins", 200),
+        popularity_embedding_dim=arch.get("popularity_embedding_dim", 400),
+        pop_token_embedding_bins=pop.get("token_embedding_bins", 200),
+        pop_token_embedding_dim=pop.get("token_embedding_dim", 200),
+        pop_num_heads=pop.get("num_heads", 1),
+        pop_head_dim=pop.get("head_dim", 400),
+        pop_content_dims=tuple(pop.get("content_dims", (256, 256, 128))),
+        timeliness_embedding_bins=time_module.get("embedding_bins", 505),
+        timeliness_embedding_dim=time_module.get("embedding_dim", 100),
+        pop_recency_dims=tuple(time_module.get("dense_dims", (64, 64))),
+        timeliness_lambda=time_module.get("lambda_exp", 2.0),
+        activity_gate_dims=tuple(arch.get("activity_gate_dims", (128, 64))),
+        use_causal_intervention=arch.get("use_causal_intervention", False),
+        intervention_value=arch.get("intervention_value", 0.5),
+        use_entity=arch.get("use_entity", True),
+        use_activity_gate=arch.get("use_activity_gate", True),
+        dropout_rate=spec.model.dropout_rate,
+        seed=spec.model.seed,
+        max_title_length=spec.inputs.title.max_length,
+        max_history_length=spec.inputs.history.max_length,
+        max_impressions_length=spec.inputs.impressions.max_length,
+        max_entities=spec.inputs.get("max_entities", 5),
+        process_user_id=spec.inputs.get("process_user_id", False),
+    )
+
+
 def spec_to_miner_config(spec: DictConfig) -> MINERConfig:
     """Convert a parsed MINER spec into MINERConfig."""
     arch = spec.model.architecture
@@ -242,6 +284,7 @@ _SPEC_CONVERTERS = {
     "glory": spec_to_glory_config,
     "pprec": spec_to_pprec_config,
     "miner": spec_to_miner_config,
+    "tccm": spec_to_tccm_config,
 }
 
 
@@ -278,6 +321,7 @@ _MODEL_CLASS_PATHS = {
         "pprec": "src.frameworks.keras.models.pprec.PPRec",
         "glory": "src.frameworks.keras.models.glory.GLORY",
         "miner": "src.frameworks.keras.models.miner.MINER",
+        "tccm": "src.frameworks.keras.models.tccm.TCCM",
     },
     "pytorch": {
         "nrms": "src.frameworks.pytorch.models.nrms.NRMS",
@@ -288,6 +332,7 @@ _MODEL_CLASS_PATHS = {
         "glory": "src.frameworks.pytorch.models.glory.GLORY",
         "pprec": "src.frameworks.pytorch.models.pprec.PPRec",
         "miner": "src.frameworks.pytorch.models.miner.MINER",
+        "tccm": "src.frameworks.pytorch.models.tccm.TCCM",
     },
     "jax": {
         "nrms": "src.frameworks.jax.models.nrms.NRMS",

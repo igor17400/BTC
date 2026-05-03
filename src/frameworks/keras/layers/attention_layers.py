@@ -1,4 +1,5 @@
 import keras
+import numpy as np
 from keras import layers, ops
 
 # ---------------------------------------------------------------------------
@@ -28,23 +29,36 @@ class GlorotUniformMHA(keras.initializers.Initializer):
 
     def __call__(self, shape, dtype=None):
         if len(shape) == 3:
-            # Q/K/V kernel: (input_dim, num_heads, head_dim) — first dim is large
-            # Output kernel: (num_heads, head_dim, output_dim) — last dim is large
-            first = int(shape[0])
-            mid_last = int(shape[1]) * int(shape[2])
-            if first >= mid_last:
+            # Distinguish Q/K/V (input_dim, num_heads, head_dim) from output
+            # projection (num_heads, head_dim, output_dim) by comparing the
+            # last and first dims:
+            #   * Q/K/V: head_dim (last) ≤ input_dim (first), so shape[2] ≤ shape[0].
+            #   * Output proj: output_dim (last) > num_heads (first) when output
+            #     is larger than the head count — typical case.
+            # This works for the unusual ``Self_Attention(400, 1)`` shapes
+            # ((200, 400, 1) / (400, 1, 400)) where the previous "first ≥
+            # mid_last" heuristic mis-classified Q/K/V as output projection
+            # and gave near-zero init (limit ≈ 0.009).
+            first, second, last = int(shape[0]), int(shape[1]), int(shape[2])
+            if last <= first:
                 # Q/K/V style: fan_in = input_dim, fan_out = num_heads * head_dim
-                fan_in, fan_out = first, mid_last
+                fan_in, fan_out = first, second * last
             else:
                 # Output proj style: fan_in = num_heads * head_dim, fan_out = output_dim
-                fan_in, fan_out = int(shape[0]) * int(shape[1]), int(shape[2])
+                fan_in, fan_out = first * second, last
         elif len(shape) == 2:
             fan_in, fan_out = int(shape[0]), int(shape[1])
         else:
             fan_in = int(shape[0])
             fan_out = int(shape[-1])
         limit = float((6.0 / (fan_in + fan_out)) ** 0.5)
-        return keras.random.uniform(shape, minval=-limit, maxval=limit, dtype=dtype)
+        # Use numpy random (always eager) so this initializer is safe
+        # under JAX tracing — ``keras.random.uniform`` requires a
+        # ``SeedGenerator`` and would error inside a traced function.
+        sampled = np.random.uniform(low=-limit, high=limit, size=shape).astype(
+            np.float32 if dtype is None else str(dtype)
+        )
+        return ops.convert_to_tensor(sampled)
 
     def get_config(self):
         return {}

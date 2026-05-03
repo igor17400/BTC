@@ -23,8 +23,13 @@ class ModelSetupResult:
             change automatically.
         make_eval_fn: Factory that creates an eval_fn closure.
             Signature: ``(model, adapter, metrics_engine, dataset_provider,
-            processed_news, eval_batch_size, output_run_dir) -> eval_fn``
-            where eval_fn: ``(model, mode="val", epoch=None) -> metrics_dict``.
+            processed_news, eval_batch_size, output_run_dir,
+            build_eval_dataloaders=None) -> eval_fn`` where
+            eval_fn: ``(model, mode="val", epoch=None) -> metrics_dict``.
+            ``build_eval_dataloaders`` is the framework-native eval-data
+            builder (returns dict or 3-tuple of dataloaders) provided by
+            the runner; hooks that don't need it (DIGAT, GLORY) ignore
+            it via ``**_`` in their signature.
         rebuild_test_remap: Called before test evaluation to rebuild
             ID remaps now that test data is loaded. Mutates
             ``eval_context`` in place. Signature:

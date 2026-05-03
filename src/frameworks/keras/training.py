@@ -27,6 +27,28 @@ from src.core.metrics.functions import NewsRecommenderMetrics
 # =============================================================================
 
 
+class EarlyStopping:
+    """Mirrors the JAX/PyTorch ``EarlyStopping``.
+
+    Decoupled from best-checkpoint tracking: ``step`` returns ``True`` once
+    ``patience`` consecutive epochs fail to beat ``best + min_improvement``.
+    """
+
+    def __init__(self, patience: int = 5, min_improvement: float = 0.01):
+        self.patience = patience
+        self.min_improvement = min_improvement
+        self.best_metric: float = -float("inf")
+        self.wait: int = 0
+
+    def step(self, metric: float) -> bool:
+        if metric > self.best_metric + self.min_improvement:
+            self.best_metric = metric
+            self.wait = 0
+            return False
+        self.wait += 1
+        return self.wait >= self.patience
+
+
 class EvaluationCallback(keras.callbacks.Callback):
     """Run fast evaluation at the end of each epoch, track best model."""
 
@@ -47,8 +69,10 @@ class EvaluationCallback(keras.callbacks.Callback):
         self.best_epoch_metrics: dict[str, Any] = {
             "average_metric_value": -float("inf"),
         }
-        self.min_improvement = cfg.train.early_stopping.get("min_improvement", 0.01)
-        self.wait = 0
+        self.stopper = EarlyStopping(
+            patience=cfg.train.early_stopping.patience,
+            min_improvement=cfg.train.early_stopping.get("min_improvement", 0.01),
+        )
         self.epoch_start_time: float = 0.0
 
     def on_epoch_begin(self, epoch, logs=None):
@@ -61,20 +85,20 @@ class EvaluationCallback(keras.callbacks.Callback):
         val_metrics = None
         val_time = None
         is_best = False
+        avg = 0.0
 
         if self.cfg.eval.fast_evaluation:
             eval_start = time.time()
             val_metrics = self.eval_fn(self.model, mode="val", epoch=epoch)
             val_time = time.time() - eval_start
 
-            # Best tracking
+            # Best tracking — simple max, no threshold (matches JAX).
             main = ["auc", "mrr", "ndcg@5", "ndcg@10"]
             vals = [float(val_metrics[m]) for m in main if m in val_metrics]
             avg = sum(vals) / len(vals) if vals else 0.0
 
-            if avg > self.best_epoch_metrics["average_metric_value"] + self.min_improvement:
+            if avg > self.best_epoch_metrics["average_metric_value"]:
                 is_best = True
-                self.wait = 0
                 self.best_epoch_metrics = {
                     "epoch_number": epoch + 1,
                     "average_metric_value": avg,
@@ -82,8 +106,6 @@ class EvaluationCallback(keras.callbacks.Callback):
                 }
                 self.model.save_weights(str(self.best_model_path))
                 save_model_config(self.cfg, self.best_model_path)
-            else:
-                self.wait += 1
 
             if wandb.run and self.wandb_history is not None:
                 payload = {f"val/{k}": v for k, v in val_metrics.items()}
@@ -100,8 +122,9 @@ class EvaluationCallback(keras.callbacks.Callback):
             is_best=is_best,
         )
 
-        if self.wait >= self.cfg.train.early_stopping.patience:
-            log_early_stopping(epoch + 1, self.cfg.train.early_stopping.patience)
+        # Independent early-stop check, gated by min_improvement (matches JAX).
+        if val_metrics is not None and self.stopper.step(avg):
+            log_early_stopping(epoch + 1, self.stopper.patience)
             self.model.stop_training = True
 
 

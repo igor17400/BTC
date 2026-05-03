@@ -238,6 +238,7 @@ def run(cfg: DictConfig):
         eval_fn = model_setup.make_eval_fn(
             model, _adapter, metrics_engine, dataset_provider,
             processed_news, cfg.eval.batch_size, output_run_dir,
+            build_eval_dataloaders=_build_eval_dataloaders,
         )
     else:
         # Standard pipeline (NRMS, NAML, LSTUR, MINER, PP-REC, CROWN)
@@ -319,10 +320,11 @@ def run(cfg: DictConfig):
     # Test evaluation
     test_metrics = None
     if cfg.eval.run_test_after_training:
-        # Load best checkpoint if available
-        ckpt_path = output_run_dir / "models" / "best_model.pt"
+        # Load best checkpoint (safetensors — HF canonical, matches JAX).
+        ckpt_path = output_run_dir / "models" / "model.safetensors"
         if ckpt_path.exists():
-            model.load_state_dict(torch.load(ckpt_path, weights_only=True))
+            from safetensors.torch import load_file as load_safetensors
+            model.load_state_dict(load_safetensors(str(ckpt_path)))
 
         # Load test data (not loaded during mode="train" init)
         if not dataset_provider.test_behaviors_data:

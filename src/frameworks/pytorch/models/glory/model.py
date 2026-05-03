@@ -33,7 +33,9 @@ from ..base import BaseModel
 from .layers import (
     AttentionPooling,
     DotProduct,
+    EntityEncoder,
     GatedGraphConv,
+    GlobalEntityEncoder,
     MultiHeadAttention,
 )
 
@@ -114,7 +116,11 @@ class GLORYNewsEncoder(nn.Module):
 
 
 class GLORYClickEncoder(nn.Module):
-    """Fuse per-clickfed-news (title_emb, graph_emb) via attention pooling."""
+    """Fuse per-clicked-news views via attention pooling.
+
+    Stacks 2 views (title, graph) or 3 views (title, graph, entity)
+    depending on whether ``entity_emb`` is provided.
+    """
 
     def __init__(self, config: GLORYConfig):
         super().__init__()
@@ -125,14 +131,19 @@ class GLORYClickEncoder(nn.Module):
         self,
         title_emb: torch.Tensor,  # (B, N, D)
         graph_emb: torch.Tensor,  # (B, N, D)
+        entity_emb: torch.Tensor | None = None,  # (B, N, D)
     ) -> torch.Tensor:
         B, N = title_emb.shape[:2]
-
-        stacked = torch.stack([title_emb, graph_emb], dim=-2)  # (B, N, 2, D)
-        stacked = stacked.view(B * N, 2, self.news_dim)
-
+        if entity_emb is not None:
+            stacked = torch.stack(
+                [title_emb, graph_emb, entity_emb], dim=-2,
+            )  # (B, N, 3, D)
+            num_views = 3
+        else:
+            stacked = torch.stack([title_emb, graph_emb], dim=-2)  # (B, N, 2, D)
+            num_views = 2
+        stacked = stacked.view(B * N, num_views, self.news_dim)
         fused = self.attn_pool(stacked)  # (B*N, D)
-
         return fused.view(B, N, self.news_dim)
 
 
@@ -161,15 +172,40 @@ class GLORYUserEncoder(nn.Module):
 
 
 class GLORYCandidateEncoder(nn.Module):
-    """Candidate encoder — Linear + LeakyReLU (no entity path in v1)."""
+    """Candidate encoder.
+
+    Without entities: Linear + LeakyReLU on title embeddings.
+    With entities: stack ``[title, origin_entity, neighbor_entity]`` →
+    AttentionPooling → Linear + LeakyReLU.
+    """
 
     def __init__(self, config: GLORYConfig):
         super().__init__()
         self.news_dim = config.head_num * config.head_dim
+        self.use_entity = config.use_entity
+        if self.use_entity:
+            self.attn_pool = AttentionPooling(self.news_dim, config.attention_hidden_dim)
         self.linear = nn.Linear(self.news_dim, self.news_dim)
         self.act = nn.LeakyReLU(0.2)
 
-    def forward(self, cand_emb: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self,
+        cand_emb: torch.Tensor,
+        origin_entity_emb: torch.Tensor | None = None,
+        neighbor_entity_emb: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        if (
+            self.use_entity
+            and origin_entity_emb is not None
+            and neighbor_entity_emb is not None
+        ):
+            B, C = cand_emb.shape[:2]
+            stacked = torch.stack(
+                [cand_emb, origin_entity_emb, neighbor_entity_emb], dim=-2,
+            )  # (B, C, 3, D)
+            stacked = stacked.view(B * C, 3, self.news_dim)
+            pooled = self.attn_pool(stacked)  # (B*C, D)
+            cand_emb = pooled.view(B, C, self.news_dim)
         return self.act(self.linear(cand_emb))
 
 
@@ -192,9 +228,12 @@ class GLORY(BaseModel):
             config = GLORYConfig(**kwargs)
         self.config = config
         self.process_user_id = config.process_user_id
+        self.use_entity = config.use_entity
 
         self.news_dim = config.head_num * config.head_dim
         self.his_size = config.max_history_length
+        self.title_size = config.title_size
+        self.entity_size = config.entity_size
 
         vocab_size = int(processed_news["vocab_size"])
         embeddings_matrix = np.asarray(processed_news["embeddings"])
@@ -216,6 +255,39 @@ class GLORY(BaseModel):
         self.user_encoder = GLORYUserEncoder(config)
         self.candidate_encoder = GLORYCandidateEncoder(config)
         self.click_predictor = DotProduct()
+
+        # Entity path (optional).
+        if self.use_entity:
+            entity_emb = processed_news.get("entity_embeddings")
+            if entity_emb is not None:
+                entity_emb = np.asarray(entity_emb, dtype=np.float32)
+                entity_vocab = entity_emb.shape[0]
+                self.entity_emb_dim = entity_emb.shape[1]
+            else:
+                entity_vocab = 1
+                self.entity_emb_dim = config.entity_emb_dim
+                entity_emb = np.zeros(
+                    (entity_vocab, self.entity_emb_dim), dtype=np.float32,
+                )
+            self.entity_embedding = nn.Embedding(entity_vocab, self.entity_emb_dim)
+            self.entity_embedding.weight = nn.Parameter(
+                torch.tensor(entity_emb, dtype=torch.float32)
+            )
+
+            self.local_entity_encoder = EntityEncoder(
+                entity_dim=self.entity_emb_dim,
+                news_dim=self.news_dim,
+                head_dim=config.head_dim,
+                attention_hidden_dim=config.attention_hidden_dim,
+                dropout_rate=config.dropout_rate,
+            )
+            self.global_entity_encoder = GlobalEntityEncoder(
+                entity_dim=self.entity_emb_dim,
+                head_num=config.head_num,
+                head_dim=config.head_dim,
+                attention_hidden_dim=config.attention_hidden_dim,
+                dropout_rate=config.dropout_rate,
+            )
 
         # news_encoder / user_encoder names satisfy the BaseModel contract
         # used by the shared evaluator for standard models.  GLORY's eval
@@ -262,20 +334,65 @@ class GLORY(BaseModel):
         graph_emb = self.global_news_encoder(x_encoded, edge_index)  # (N_total, D)
 
         # Gather history embeddings from both views.
-        clicked_title = x_encoded[mapping].masked_fill(
-            ~valid.unsqueeze(-1), 0
-        )  # (B, H, D)
-        clicked_graph = graph_emb[mapping].masked_fill(
-            ~valid.unsqueeze(-1), 0
-        )  # (B, H, D)
+        valid_mask = valid.unsqueeze(-1)  # (B, H, 1)
+        clicked_title = x_encoded[mapping].masked_fill(~valid_mask, 0)  # (B, H, D)
+        clicked_graph = graph_emb[mapping].masked_fill(~valid_mask, 0)  # (B, H, D)
+
+        # Clicked entity encoding (optional).
+        clicked_entity_emb: torch.Tensor | None = None
+        if self.use_entity:
+            # Extract entity IDs for clicked news from subgraph features.
+            clicked_entity_ids = subgraph_x[
+                mapping, self.title_size : self.title_size + self.entity_size,
+            ].long()  # (B, H, entity_size)
+            clicked_entity_ids = clicked_entity_ids.masked_fill(~valid_mask, 0)
+            entity_embedded = self.entity_embedding(clicked_entity_ids)  # (B, H, E, dim)
+            clicked_entity_emb = self.local_entity_encoder(
+                entity_embedded,
+            )  # (B, H, D)
 
         # Fuse → pool into user vector.
-        fused = self.click_encoder(clicked_title, clicked_graph)  # (B, H, D)
+        fused = self.click_encoder(
+            clicked_title, clicked_graph, clicked_entity_emb,
+        )  # (B, H, D)
         user_emb = self.user_encoder(fused, valid.float())  # (B, D)
 
         # Candidates: encode locally then project.
         cand_local = self.local_news_encoder(cand_tokens)  # (B, C, D)
-        cand_final = self.candidate_encoder(cand_local)  # (B, C, D)
+
+        # Candidate entity encoding (optional).
+        cand_origin_emb: torch.Tensor | None = None
+        cand_neighbor_emb: torch.Tensor | None = None
+        if self.use_entity and "candidate_entity" in inputs:
+            cand_entity = inputs["candidate_entity"].long()
+            entity_mask = inputs.get("entity_mask")
+
+            E = self.entity_size
+            origin_ids = cand_entity[..., :E]  # (B, C, E)
+            neighbor_ids = cand_entity[..., E:]  # (B, C, E*neighbors)
+
+            origin_embedded = self.entity_embedding(origin_ids)  # (B, C, E, dim)
+            cand_origin_emb = self.local_entity_encoder(
+                origin_embedded,
+            )  # (B, C, D)
+
+            B, C = neighbor_ids.shape[:2]
+            n_neighbors = neighbor_ids.shape[-1]
+            neighbor_embedded = self.entity_embedding(
+                neighbor_ids,
+            )  # (B, C, E*neighbors, dim)
+
+            ent_mask = None
+            if entity_mask is not None:
+                ent_mask = entity_mask.float().reshape(B * C, n_neighbors)
+
+            cand_neighbor_emb = self.global_entity_encoder(
+                neighbor_embedded, ent_mask,
+            )  # (B, C, D)
+
+        cand_final = self.candidate_encoder(
+            cand_local, cand_origin_emb, cand_neighbor_emb,
+        )  # (B, C, D)
 
         # Dot-product scoring.
         return self.click_predictor(cand_final, user_emb)  # (B, C)

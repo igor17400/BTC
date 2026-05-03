@@ -125,6 +125,36 @@ class PyTorchAdapter:
             )
 
     # ------------------------------------------------------------------
+    # TCCM-specific methods
+    # ------------------------------------------------------------------
+
+    def run_tccm_popularity_encoder(
+        self,
+        encoder: Any,
+        bucket_input: Any,
+        time_input: Any,
+        title_len: int,
+    ) -> np.ndarray:
+        """Run the TCCM popularity encoder on a candidate batch.
+
+        Args:
+            encoder: :class:`TCCMPopularityEncoder` instance.
+            bucket_input: ``(C, T+E)`` int — per-token CTR bucket indices.
+            time_input: ``(C,)`` int — clamped age in hours since publish.
+            title_len: Number of title-token positions ``T``.
+
+        Returns:
+            ``(C,)`` numpy array of popularity scores.
+        """
+        encoder.eval()
+        device = next(encoder.parameters()).device
+        b = torch.as_tensor(bucket_input, dtype=torch.long).to(device)
+        t = torch.as_tensor(time_input, dtype=torch.long).to(device)
+        with torch.no_grad():
+            scores = encoder(b, t, title_len=title_len)
+        return scores.detach().cpu().numpy()
+
+    # ------------------------------------------------------------------
     # DIGAT-specific methods
     # ------------------------------------------------------------------
 
@@ -198,6 +228,96 @@ class PyTorchAdapter:
             out = graph_encoder(x, ei)
         return out.detach().cpu().numpy()
 
+    def encode_glory_entity(
+        self,
+        entity_embedding: Any,
+        entity_encoder: Any,
+        entity_ids: Any,
+        batch_size: int = 0,
+    ) -> np.ndarray:
+        """Embed + encode entity IDs via the local entity encoder.
+
+        Args:
+            entity_embedding: ``nn.Embedding`` module.
+            entity_encoder: :class:`EntityEncoder` module.
+            entity_ids: ``(N, E)`` int array of entity IDs.
+            batch_size: If > 0, process in chunks (for pre-computation).
+
+        Returns:
+            ``(N, D)`` entity representations.
+        """
+        entity_embedding.eval()
+        entity_encoder.eval()
+        device = next(entity_encoder.parameters()).device
+        N = entity_ids.shape[0]
+
+        def _encode(ids_np: np.ndarray) -> np.ndarray:
+            ids = torch.as_tensor(ids_np, dtype=torch.long).to(device)
+            with torch.no_grad():
+                embedded = entity_embedding(ids)        # (n, E, dim)
+                # add a leading batch axis (treated as B=1, N=n)
+                out = entity_encoder(embedded.unsqueeze(0)).squeeze(0)  # (n, D)
+            return out.cpu().numpy()
+
+        if batch_size > 0 and N > batch_size:
+            chunks: list[np.ndarray] = []
+            for start in range(0, N, batch_size):
+                end = min(start + batch_size, N)
+                chunks.append(_encode(np.asarray(entity_ids[start:end])))
+            return np.concatenate(chunks, axis=0)
+        return _encode(np.asarray(entity_ids))
+
+    def encode_glory_global_entity(
+        self,
+        entity_embedding: Any,
+        global_entity_encoder: Any,
+        neighbor_ids: Any,
+        entity_mask: Any,
+        batch_size: int = 0,
+    ) -> np.ndarray:
+        """Embed + encode neighbor entity IDs via the global entity encoder.
+
+        Args:
+            entity_embedding: ``nn.Embedding`` module.
+            global_entity_encoder: :class:`GlobalEntityEncoder` module.
+            neighbor_ids: ``(N, E*EN)`` int array of neighbor entity IDs.
+            entity_mask: ``(N, E*EN)`` float mask (or ``None``).
+            batch_size: If > 0, process in chunks (for pre-computation).
+
+        Returns:
+            ``(N, D)`` entity representations.
+        """
+        entity_embedding.eval()
+        global_entity_encoder.eval()
+        device = next(global_entity_encoder.parameters()).device
+        N = neighbor_ids.shape[0]
+
+        def _encode(ids_np: np.ndarray, mask_np: np.ndarray | None) -> np.ndarray:
+            ids = torch.as_tensor(ids_np, dtype=torch.long).to(device)
+            mask = (
+                torch.as_tensor(mask_np, dtype=torch.float32).to(device)
+                if mask_np is not None
+                else None
+            )
+            with torch.no_grad():
+                embedded = entity_embedding(ids)  # (n, E*EN, dim)
+                out = global_entity_encoder(embedded.unsqueeze(0), mask).squeeze(0)
+            return out.cpu().numpy()
+
+        if batch_size > 0 and N > batch_size:
+            chunks: list[np.ndarray] = []
+            for start in range(0, N, batch_size):
+                end = min(start + batch_size, N)
+                m = (
+                    np.asarray(entity_mask[start:end])
+                    if entity_mask is not None
+                    else None
+                )
+                chunks.append(_encode(np.asarray(neighbor_ids[start:end]), m))
+            return np.concatenate(chunks, axis=0)
+        m = np.asarray(entity_mask) if entity_mask is not None else None
+        return _encode(np.asarray(neighbor_ids), m)
+
     def score_glory_impression(
         self,
         click_encoder: Any,
@@ -207,6 +327,9 @@ class PyTorchAdapter:
         clicked_title: Any,
         clicked_graph: Any,
         cand_local: Any,
+        clicked_entity_emb: Any = None,
+        cand_origin_emb: Any = None,
+        cand_neighbor_emb: Any = None,
     ) -> Any:
         """Fuse + score a single impression's candidates."""
         click_encoder.eval()
@@ -218,10 +341,27 @@ class PyTorchAdapter:
         ct = torch.as_tensor(clicked_title, dtype=torch.float32).to(device).unsqueeze(0)   # (1, H, D)
         cg = torch.as_tensor(clicked_graph, dtype=torch.float32).to(device).unsqueeze(0)
         cl = torch.as_tensor(cand_local, dtype=torch.float32).to(device).unsqueeze(0)      # (1, C, D)
+
+        ce = None
+        if clicked_entity_emb is not None:
+            ce = torch.as_tensor(
+                clicked_entity_emb, dtype=torch.float32,
+            ).to(device).unsqueeze(0)
+        co = None
+        cn = None
+        if cand_origin_emb is not None:
+            co = torch.as_tensor(
+                cand_origin_emb, dtype=torch.float32,
+            ).to(device).unsqueeze(0)
+        if cand_neighbor_emb is not None:
+            cn = torch.as_tensor(
+                cand_neighbor_emb, dtype=torch.float32,
+            ).to(device).unsqueeze(0)
+
         with torch.no_grad():
-            fused = click_encoder(ct, cg)                   # (1, H, D)
+            fused = click_encoder(ct, cg, ce)               # (1, H, D)
             user_emb = user_encoder(fused)                  # (1, D)
-            cand_final = candidate_encoder(cl)              # (1, C, D)
+            cand_final = candidate_encoder(cl, co, cn)      # (1, C, D)
             scores = click_predictor(cand_final, user_emb)  # (1, C)
         return scores.squeeze(0).detach().cpu().numpy()
 
