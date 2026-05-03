@@ -250,11 +250,22 @@ class GLORY(BaseModel):
         )
 
         self.local_news_encoder = GLORYNewsEncoder(config, self.word_embedding)
-        self.global_news_encoder = GatedGraphConv(
-            self.news_dim,
-            num_layers=config.gnn_num_layers,
-            aggr="add",
-        )
+        # ``use_torchgeo=True`` swaps in PyG's CUDA-optimized GatedGraphConv
+        # (matches the reference GLORY repo). Default keeps the
+        # framework-agnostic pure-PyTorch implementation.
+        if getattr(config, "use_torchgeo", False):
+            from torch_geometric.nn import GatedGraphConv as _PyGGatedGraphConv
+            self.global_news_encoder = _PyGGatedGraphConv(
+                out_channels=self.news_dim,
+                num_layers=config.gnn_num_layers,
+                aggr="add",
+            )
+        else:
+            self.global_news_encoder = GatedGraphConv(
+                self.news_dim,
+                num_layers=config.gnn_num_layers,
+                aggr="add",
+            )
         self.click_encoder = GLORYClickEncoder(config)
         self.user_encoder = GLORYUserEncoder(config)
         self.candidate_encoder = GLORYCandidateEncoder(config)

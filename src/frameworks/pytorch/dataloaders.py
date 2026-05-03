@@ -498,6 +498,17 @@ def glory_collate(
         "mapping_idx": torch.from_numpy(np.stack(mappings, axis=0)).long(),
         "cand_tokens": torch.from_numpy(np.stack(cand_tokens, axis=0)).long(),
     }
+    # Without these keys the candidate-side entity branch never fires
+    # at training time and ``GLORYCandidateEncoder.attn_pool`` keeps its
+    # random init — which silently breaks test eval where the cached
+    # entity vectors get pooled by those random weights.
+    if "candidate_entity" in samples[0]:
+        batched["candidate_entity"] = torch.from_numpy(
+            np.stack([s["candidate_entity"] for s in samples], axis=0)
+        ).long()
+        batched["entity_mask"] = torch.from_numpy(
+            np.stack([s["entity_mask"] for s in samples], axis=0)
+        ).float()
     labels_t = torch.from_numpy(np.stack(labels, axis=0)).float()
     return batched, labels_t
 

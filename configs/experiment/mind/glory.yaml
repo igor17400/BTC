@@ -49,4 +49,13 @@ sampling:
 
 device:
   gpu_ids: [0]
-  precision: float32
+  # Mixed-precision dtype — read by ``pytorch/training.py``:
+  #   ``float32``  : no autocast, no GradScaler (slowest, most stable).
+  #   ``bfloat16`` : bf16 autocast, no GradScaler (mild slowdown vs fp32
+  #                  on RTX 3090 — bf16 has fp32-equivalent range).
+  #   ``float16``  : fp16 autocast + ``torch.amp.GradScaler('cuda')`` for
+  #                  loss scaling (matches the reference GLORY repo;
+  #                  ~1.7× faster than fp32 on Ampere/Ada GPUs).
+  # Set ``float16`` here by default since the entity-branch + GNN forward
+  # is matmul-heavy and benefits the most from Tensor-Core fp16 paths.
+  precision: float16

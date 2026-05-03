@@ -156,6 +156,12 @@ class GLORYConfig:
     entity_emb_dim: int = 100
     entity_neighbors: int = 10
 
+    # Backend for graph ops. ``True`` swaps our pure-PyTorch
+    # ``GatedGraphConv`` for ``torch_geometric.nn.GatedGraphConv``
+    # (CUDA-optimized scatter/gather). Default ``False`` keeps the
+    # framework-agnostic pure-PyTorch path.
+    use_torchgeo: bool = False
+
     # Standard
     process_user_id: bool = False
     gradient_clip_norm: float = 1.0

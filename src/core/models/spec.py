@@ -207,6 +207,7 @@ def spec_to_glory_config(spec: DictConfig) -> "GLORYConfig":
         k_hops=ge.get("k_hops", 2),
         num_neighbors=ge.get("num_neighbors", 8),
         use_entity=spec.model.get("use_entity", False),
+        use_torchgeo=spec.model.get("use_torchgeo", False),
         process_user_id=spec.inputs.get("process_user_id", False),
     )
 

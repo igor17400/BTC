@@ -23,6 +23,11 @@ model:
   seed: 42
   use_entity: true
   entity_emb_dim: 100
+  # Backend for the global GNN. ``true`` swaps in
+  # ``torch_geometric.nn.GatedGraphConv`` (CUDA-optimized scatter/gather)
+  # — matches the reference GLORY repo. ``false`` uses our
+  # framework-agnostic pure-PyTorch implementation.
+  use_torchgeo: false
 
 inputs:
   title: { max_length: 30 }
@@ -59,4 +64,10 @@ evaluation:
   mode: fast
   evaluator: default      # GLORY uses its own evaluator path (runner branches)
   metrics: [auc, mrr, ndcg@5, ndcg@10]
-  batch_size: 256
+  # eval batch_size mostly drives the news / entity pre-encode pass at
+  # the start of each val/test. 256 OOM'd on a shared 24 GiB 3090 in fp32
+  # because GLORY also keeps the full news graph + GNN activations on
+  # device. fp16 roughly doubles the memory headroom, so 128 is a
+  # comfortable default that's still fast enough for the corpus
+  # (~50K news items).
+  batch_size: 128
