@@ -353,6 +353,47 @@ class PPRecConfig:
 
 
 @dataclass
+class CAUMConfig:
+    """Configuration for CAUM (SIGIR 2022).
+
+    News Recommendation with Candidate-aware User Modeling.
+    Defaults match the official reference implementation.
+    """
+
+    # Word embeddings
+    embedding_size: int = 300
+    dropout_rate: float = 0.2
+    seed: int = 42
+
+    # News encoder — multi-head self-attention over title words
+    news_num_heads: int = 20
+    news_head_dim: int = 20
+    news_attention_hidden_dim: int = 200
+
+    # Candidate-aware self-attention (Candi-SelfAtt)
+    candi_selfatt_num_heads: int = 20
+    candi_selfatt_head_dim: int = 20
+
+    # Candidate-aware CNN (Candi-CNN) — window = 2*half_window+1
+    candi_cnn_half_window: int = 1
+
+    # Candidate-aware attention (Candi-Att) — DNN scorer
+    candi_att_hidden_dim: int = 400
+    candi_att_mid_dim: int = 256
+
+    # Output news/user dimension after fusion
+    news_dim: int = 400
+
+    # Input constraints
+    max_title_length: int = 30
+    max_history_length: int = 50
+    max_impressions_length: int = 5
+
+    # Training
+    process_user_id: bool = False
+
+
+@dataclass
 class MINERConfig:
     """Configuration for MINER (ACL Findings 2022).
 

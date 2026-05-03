@@ -20,6 +20,7 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 from .custom import (
+    caum_fast_evaluate,
     digat_evaluate,
     glory_evaluate,
     miner_fast_evaluate,
@@ -32,6 +33,7 @@ if TYPE_CHECKING:
 
 EVALUATOR_REGISTRY: dict[str, Callable] = {
     "default": fast_evaluate,
+    "caum": caum_fast_evaluate,
     "pp_rec": pprec_fast_evaluate,
     "miner": miner_fast_evaluate,
 }
@@ -59,6 +61,7 @@ def get_evaluator(evaluator_name: str, adapter: FrameworkAdapter) -> Callable:
 
 __all__ = [
     "EVALUATOR_REGISTRY",
+    "caum_fast_evaluate",
     "digat_evaluate",
     "fast_evaluate",
     "get_evaluator",

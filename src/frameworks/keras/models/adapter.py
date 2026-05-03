@@ -119,6 +119,61 @@ class KerasAdapter:
         return ops.convert_to_numpy(scores)
 
     # ------------------------------------------------------------------
+    # CAUM-specific methods
+    # ------------------------------------------------------------------
+
+    def score_caum_impression(
+        self,
+        inter_model: Any,
+        cand_vectors: Any,
+        clicked_vecs: Any,
+        _chunk_size: int = 64,
+    ) -> np.ndarray:
+        """Score all candidates in fixed-size chunks.
+
+        Uses a fixed chunk size so JAX only compiles the inter_model
+        once (for the padded chunk shape) instead of recompiling for
+        every unique impression size.
+
+        Args:
+            inter_model: The candidate-aware interaction model.
+            cand_vectors: (C, D) numpy array of candidate news vectors.
+            clicked_vecs: (H, D) numpy array of clicked news vectors.
+            _chunk_size: Fixed batch size for each forward pass.
+
+        Returns:
+            (C,) numpy array of scores, one per candidate.
+        """
+        import keras
+        C = cand_vectors.shape[0]
+        D = cand_vectors.shape[1]
+        H = clicked_vecs.shape[0]
+
+        all_scores = []
+        with _no_grad_context():
+            for start in range(0, C, _chunk_size):
+                end = min(start + _chunk_size, C)
+                actual = end - start
+
+                # Pad chunk to fixed size so JAX sees a stable shape
+                cand_chunk = np.zeros((_chunk_size, D), dtype=np.float32)
+                cand_chunk[:actual] = cand_vectors[start:end]
+
+                clicked_batch = np.broadcast_to(
+                    clicked_vecs[None], (_chunk_size, H, D)
+                ).copy()
+
+                cand_t = keras.ops.convert_to_tensor(cand_chunk, dtype="float32")
+                clicked_t = keras.ops.convert_to_tensor(clicked_batch, dtype="float32")
+
+                chunk_scores = ops.convert_to_numpy(
+                    inter_model([cand_t, clicked_t], training=False)
+                )
+                all_scores.append(chunk_scores[:actual])
+
+        return np.concatenate(all_scores, axis=0)
+
+    # ------------------------------------------------------------------
     # DIGAT-specific methods
     # ------------------------------------------------------------------
 

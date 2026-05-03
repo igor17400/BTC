@@ -9,7 +9,7 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from .configs import CROWNConfig, LSTURConfig, MINERConfig, NAMLConfig, NRMSConfig, PPRecConfig, TCCMConfig
+from .configs import CAUMConfig, CROWNConfig, LSTURConfig, MINERConfig, NAMLConfig, NRMSConfig, PPRecConfig, TCCMConfig
 
 # ---------------------------------------------------------------------------
 # Spec → Config translation functions
@@ -275,7 +275,33 @@ def spec_to_miner_config(spec: DictConfig) -> MINERConfig:
     )
 
 
+def spec_to_caum_config(spec: DictConfig) -> CAUMConfig:
+    """Convert a parsed CAUM spec into CAUMConfig."""
+    arch = spec.model.architecture
+    ne = arch.news_encoder
+    ue = arch.user_encoder
+    return CAUMConfig(
+        embedding_size=spec.model.embedding.size,
+        dropout_rate=spec.model.dropout_rate,
+        seed=spec.model.seed,
+        news_num_heads=ne.num_heads,
+        news_head_dim=ne.head_dim,
+        news_attention_hidden_dim=ne.attention_hidden_dim,
+        candi_selfatt_num_heads=ue.candi_selfatt.num_heads,
+        candi_selfatt_head_dim=ue.candi_selfatt.head_dim,
+        candi_cnn_half_window=ue.candi_cnn.half_window,
+        candi_att_hidden_dim=ue.candi_att.hidden_dim,
+        candi_att_mid_dim=ue.candi_att.mid_dim,
+        news_dim=spec.model.get("news_dim", 400),
+        max_title_length=spec.inputs.title.max_length,
+        max_history_length=spec.inputs.history.max_length,
+        max_impressions_length=spec.inputs.impressions.max_length,
+        process_user_id=spec.inputs.get("process_user_id", False),
+    )
+
+
 _SPEC_CONVERTERS = {
+    "caum": spec_to_caum_config,
     "nrms": spec_to_nrms_config,
     "naml": spec_to_naml_config,
     "lstur": spec_to_lstur_config,
@@ -313,6 +339,7 @@ def spec_to_config(spec: DictConfig):
 
 _MODEL_CLASS_PATHS = {
     "keras": {
+        "caum": "src.frameworks.keras.models.caum.CAUM",
         "nrms": "src.frameworks.keras.models.nrms.NRMS",
         "naml": "src.frameworks.keras.models.naml.NAML",
         "lstur": "src.frameworks.keras.models.lstur.LSTUR",
@@ -324,6 +351,7 @@ _MODEL_CLASS_PATHS = {
         "tccm": "src.frameworks.keras.models.tccm.TCCM",
     },
     "pytorch": {
+        "caum": "src.frameworks.pytorch.models.caum.CAUM",
         "nrms": "src.frameworks.pytorch.models.nrms.NRMS",
         "naml": "src.frameworks.pytorch.models.naml.NAML",
         "lstur": "src.frameworks.pytorch.models.lstur.LSTUR",
@@ -335,6 +363,7 @@ _MODEL_CLASS_PATHS = {
         "tccm": "src.frameworks.pytorch.models.tccm.TCCM",
     },
     "jax": {
+        "caum": "src.frameworks.jax.models.caum.CAUM",
         "nrms": "src.frameworks.jax.models.nrms.NRMS",
         "naml": "src.frameworks.jax.models.naml.NAML",
         "lstur": "src.frameworks.jax.models.lstur.LSTUR",
