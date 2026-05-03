@@ -280,18 +280,25 @@ def run(cfg: DictConfig):
                     def __init__(self, ds, bs, collate):
                         self._ds, self._bs, self._collate = ds, bs, collate
                         self._indices = np.arange(len(ds))
+
                     def __len__(self):
                         return len(self._ds) // self._bs
+
                     def __getitem__(self, idx):
                         start = idx * self._bs
-                        batch = [self._ds[int(self._indices[i])]
-                                 for i in range(start, start + self._bs)]
+                        batch = [
+                            self._ds[int(self._indices[i])]
+                            for i in range(start, start + self._bs)
+                        ]
                         return self._collate(batch)
+
                     def on_epoch_end(self):
                         np.random.shuffle(self._indices)
 
                 train_dataloader = _GLORYKerasSequence(
-                    model_setup.train_dataset, cfg.train.batch_size, _glory_collate_jax,
+                    model_setup.train_dataset,
+                    cfg.train.batch_size,
+                    _glory_collate_jax,
                 )
             else:
                 train_dataloader = DataLoader(
@@ -304,7 +311,8 @@ def run(cfg: DictConfig):
                 )
         else:
             train_dataloader = create_train_dataloader(
-                features=features, labels=labels,
+                features=features,
+                labels=labels,
                 batch_size=cfg.train.batch_size,
                 model_name=spec.model.name.lower(),
             )
@@ -315,8 +323,13 @@ def run(cfg: DictConfig):
         )
         _adapter = KerasAdapter()
         _raw_eval_fn = model_setup.make_eval_fn(
-            model, _adapter, metrics_engine, dataset_provider,
-            processed_news, cfg.eval.batch_size, output_run_dir,
+            model,
+            _adapter,
+            metrics_engine,
+            dataset_provider,
+            processed_news,
+            cfg.eval.batch_size,
+            output_run_dir,
             build_eval_dataloaders=_build_eval_dataloaders,
         )
 
@@ -403,8 +416,12 @@ def run(cfg: DictConfig):
         eval_path = output_run_dir / "test_results.json"
         with open(eval_path, "w") as f:
             json.dump(
-                {k: float(v) if isinstance(v, (int, float)) else v for k, v in test_metrics.items()},
-                f, indent=2,
+                {
+                    k: float(v) if isinstance(v, (int, float)) else v
+                    for k, v in test_metrics.items()
+                },
+                f,
+                indent=2,
             )
         console.log(f"Saved eval results to {eval_path}")
 

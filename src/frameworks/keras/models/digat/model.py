@@ -34,7 +34,6 @@ from .layers import (
     scatter_sum,
 )
 
-
 # ======================================================================
 # News encoder
 # ======================================================================
@@ -52,7 +51,9 @@ class DIGATNewsEncoder(keras.Model):
         super().__init__(name=name)
         self.config = config
         self.word_embedding = word_embedding
-        self.dropout = layers.Dropout(config.dropout_rate, seed=config.seed, name="emb_dropout")
+        self.dropout = layers.Dropout(
+            config.dropout_rate, seed=config.seed, name="emb_dropout"
+        )
         self.msa = MultiHeadSelfAttention(
             config.embedding_size,
             config.msa_head_num,
@@ -108,7 +109,12 @@ class DIGATGraphEncoder(keras.Model):
     incorporates the other channel's context vector.
     """
 
-    def __init__(self, config: DIGATConfig, num_categories: int, name: str = "digat_graph_encoder"):
+    def __init__(
+        self,
+        config: DIGATConfig,
+        num_categories: int,
+        name: str = "digat_graph_encoder",
+    ):
         super().__init__(name=name)
         D = config.news_embedding_dim
         depth = config.graph_depth
@@ -120,9 +126,15 @@ class DIGATGraphEncoder(keras.Model):
         # topic_dropout  -- full rate
         # attn_dropout   -- full rate
         # input_dropout  -- half rate (mirrors reference dropout__)
-        self.topic_dropout = layers.Dropout(config.dropout_rate, seed=config.seed, name="topic_dropout")
-        self.attn_dropout = layers.Dropout(config.dropout_rate, seed=config.seed, name="attn_dropout")
-        self.input_dropout = layers.Dropout(config.dropout_rate / 2, seed=config.seed, name="input_dropout")
+        self.topic_dropout = layers.Dropout(
+            config.dropout_rate, seed=config.seed, name="topic_dropout"
+        )
+        self.attn_dropout = layers.Dropout(
+            config.dropout_rate, seed=config.seed, name="attn_dropout"
+        )
+        self.input_dropout = layers.Dropout(
+            config.dropout_rate / 2, seed=config.seed, name="input_dropout"
+        )
 
         # --- News graph context ---
         self.news_ctx_attn = ScaledDotProductAttention(D, D, D, name="news_ctx_attn")
@@ -135,18 +147,38 @@ class DIGATGraphEncoder(keras.Model):
         self.user_ctx_attn = ScaledDotProductAttention(D, D, D, name="user_ctx_attn")
 
         # --- Per-depth news graph update layers ---
-        self.n_W = [layers.Dense(D, use_bias=True, name=f"n_W_{i}") for i in range(depth)]
-        self.n_ffn1 = [layers.Dense(D, use_bias=False, name=f"n_ffn1_{i}") for i in range(depth)]
-        self.n_ffn2 = [layers.Dense(D, use_bias=False, name=f"n_ffn2_{i}") for i in range(depth)]
-        self.n_ffn3 = [layers.Dense(D, use_bias=True, name=f"n_ffn3_{i}") for i in range(depth)]
-        self.n_a = [layers.Dense(1, use_bias=False, name=f"n_a_{i}") for i in range(depth)]
+        self.n_W = [
+            layers.Dense(D, use_bias=True, name=f"n_W_{i}") for i in range(depth)
+        ]
+        self.n_ffn1 = [
+            layers.Dense(D, use_bias=False, name=f"n_ffn1_{i}") for i in range(depth)
+        ]
+        self.n_ffn2 = [
+            layers.Dense(D, use_bias=False, name=f"n_ffn2_{i}") for i in range(depth)
+        ]
+        self.n_ffn3 = [
+            layers.Dense(D, use_bias=True, name=f"n_ffn3_{i}") for i in range(depth)
+        ]
+        self.n_a = [
+            layers.Dense(1, use_bias=False, name=f"n_a_{i}") for i in range(depth)
+        ]
 
         # --- Per-depth user graph update layers ---
-        self.u_W = [layers.Dense(D, use_bias=True, name=f"u_W_{i}") for i in range(depth)]
-        self.u_ffn1 = [layers.Dense(D, use_bias=False, name=f"u_ffn1_{i}") for i in range(depth)]
-        self.u_ffn2 = [layers.Dense(D, use_bias=False, name=f"u_ffn2_{i}") for i in range(depth)]
-        self.u_ffn3 = [layers.Dense(D, use_bias=True, name=f"u_ffn3_{i}") for i in range(depth)]
-        self.u_a = [layers.Dense(1, use_bias=False, name=f"u_a_{i}") for i in range(depth)]
+        self.u_W = [
+            layers.Dense(D, use_bias=True, name=f"u_W_{i}") for i in range(depth)
+        ]
+        self.u_ffn1 = [
+            layers.Dense(D, use_bias=False, name=f"u_ffn1_{i}") for i in range(depth)
+        ]
+        self.u_ffn2 = [
+            layers.Dense(D, use_bias=False, name=f"u_ffn2_{i}") for i in range(depth)
+        ]
+        self.u_ffn3 = [
+            layers.Dense(D, use_bias=True, name=f"u_ffn3_{i}") for i in range(depth)
+        ]
+        self.u_a = [
+            layers.Dense(1, use_bias=False, name=f"u_a_{i}") for i in range(depth)
+        ]
 
         # Learnable topic node embeddings — added as a weight variable.
         # Initialized in build() once shape is known, but we store the count.
@@ -179,10 +211,14 @@ class DIGATGraphEncoder(keras.Model):
         local = emb[:, 0, :]
         glob = self.news_ctx_attn(emb, local, mask=mask)
         gate_in = ops.concatenate([local, glob], axis=-1)
-        gate = ops.sigmoid(self.input_dropout(self.news_ctx_gate(gate_in), training=training))
+        gate = ops.sigmoid(
+            self.input_dropout(self.news_ctx_gate(gate_in), training=training)
+        )
         return gate * local + (1 - gate) * glob
 
-    def _user_graph_context(self, emb, cat_mask, cat_indices, news_ctx, num_categories, training=None):
+    def _user_graph_context(
+        self, emb, cat_mask, cat_indices, news_ctx, num_categories, training=None
+    ):
         """Two-level user context: topic-level scatter -> user-level attention.
 
         Args:
@@ -274,8 +310,15 @@ class DIGATGraphEncoder(keras.Model):
         Returns:
             (news_ctx, user_ctx) -- each (B, D).
         """
-        (news_emb, news_graph, news_mask, user_news_emb,
-         user_graph, user_cat_mask, user_cat_indices) = inputs
+        (
+            news_emb,
+            news_graph,
+            news_mask,
+            user_news_emb,
+            user_graph,
+            user_cat_mask,
+            user_cat_indices,
+        ) = inputs
         num_categories = self._num_categories
 
         batch_size = ops.shape(news_emb)[0]
@@ -291,26 +334,50 @@ class DIGATGraphEncoder(keras.Model):
 
         news_ctx = self._news_graph_context(news_emb, news_mask, training=training)
         user_ctx = self._user_graph_context(
-            user_emb, user_cat_mask, user_cat_indices, news_ctx, num_categories,
+            user_emb,
+            user_cat_mask,
+            user_cat_indices,
+            news_ctx,
+            num_categories,
             training=training,
         )
 
         for i in range(self.graph_depth):
             news_emb = self._update_graph(
-                i, news_emb, news_graph, user_ctx,
-                self.n_W, self.n_ffn1, self.n_ffn2, self.n_ffn3, self.n_a,
+                i,
+                news_emb,
+                news_graph,
+                user_ctx,
+                self.n_W,
+                self.n_ffn1,
+                self.n_ffn2,
+                self.n_ffn3,
+                self.n_a,
                 training=training,
             )
             user_emb = self._update_graph(
-                i, user_emb, user_graph, news_ctx,
-                self.u_W, self.u_ffn1, self.u_ffn2, self.u_ffn3, self.u_a,
+                i,
+                user_emb,
+                user_graph,
+                news_ctx,
+                self.u_W,
+                self.u_ffn1,
+                self.u_ffn2,
+                self.u_ffn3,
+                self.u_a,
                 training=training,
             )
             news_ctx = news_ctx + self._news_graph_context(
-                news_emb, news_mask, training=training,
+                news_emb,
+                news_mask,
+                training=training,
             )
             user_ctx = user_ctx + self._user_graph_context(
-                user_emb, user_cat_mask, user_cat_indices, news_ctx, num_categories,
+                user_emb,
+                user_cat_mask,
+                user_cat_indices,
+                news_ctx,
+                num_categories,
                 training=training,
             )
 
@@ -404,8 +471,12 @@ class DIGAT(BaseModel):
             if "cand_mask" in inputs
             else None
         )
-        cand_graph = ops.reshape(inputs["cand_graph"], (batch_cands, sag_size, sag_size))
-        cand_graph_mask = ops.reshape(inputs["cand_graph_mask"], (batch_cands, sag_size))
+        cand_graph = ops.reshape(
+            inputs["cand_graph"], (batch_cands, sag_size, sag_size)
+        )
+        cand_graph_mask = ops.reshape(
+            inputs["cand_graph_mask"], (batch_cands, sag_size)
+        )
 
         # Expand user data: (B, ...) -> (B*C, ...)
         user_graph = ops.reshape(
@@ -449,8 +520,15 @@ class DIGAT(BaseModel):
 
         # Dual graph interaction
         news_ctx, user_ctx = self.graph_encoder(
-            (cand_emb, cand_graph, cand_graph_mask,
-             user_news_emb, user_graph, user_cat_mask, user_cat_indices),
+            (
+                cand_emb,
+                cand_graph,
+                cand_graph_mask,
+                user_news_emb,
+                user_graph,
+                user_cat_mask,
+                user_cat_indices,
+            ),
             training=training,
         )
 

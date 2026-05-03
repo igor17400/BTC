@@ -11,15 +11,14 @@ import json
 import random
 import time
 
+import hydra
 import jax
 import jax.numpy as jnp
-from huggingface_hub import hf_hub_download
-from safetensors.numpy import load_file
-
-import hydra
 import numpy as np
 from flax import nnx
+from huggingface_hub import hf_hub_download
 from omegaconf import DictConfig, OmegaConf
+from safetensors.numpy import load_file
 
 import wandb
 from src.core.io.logging import (
@@ -214,8 +213,11 @@ def run(cfg: DictConfig):
             )
         else:
             train_dataloader = create_train_dataloader(
-                features=features, labels=labels,
-                batch_size=cfg.train.batch_size, shuffle=True, seed=cfg.seed,
+                features=features,
+                labels=labels,
+                batch_size=cfg.train.batch_size,
+                shuffle=True,
+                seed=cfg.seed,
             )
 
         # Build eval_fn from setup hook
@@ -224,16 +226,24 @@ def run(cfg: DictConfig):
         )
         _adapter = JAXAdapter()
         eval_fn = model_setup.make_eval_fn(
-            model, _adapter, metrics_engine, dataset_provider,
-            processed_news, cfg.eval.batch_size, output_run_dir,
+            model,
+            _adapter,
+            metrics_engine,
+            dataset_provider,
+            processed_news,
+            cfg.eval.batch_size,
+            output_run_dir,
             build_eval_dataloaders=_build_eval_dataloaders,
         )
     else:
         # Standard pipeline (NRMS, NAML, LSTUR, MINER, PP-REC, CROWN)
         features, labels = _build_train_features(dataset_provider)
         train_dataloader = create_train_dataloader(
-            features=features, labels=labels,
-            batch_size=cfg.train.batch_size, shuffle=True, seed=cfg.seed,
+            features=features,
+            labels=labels,
+            batch_size=cfg.train.batch_size,
+            shuffle=True,
+            seed=cfg.seed,
         )
         metrics_engine = NewsRecommenderMetrics(
             **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
@@ -286,7 +296,9 @@ def run(cfg: DictConfig):
         learning_rate=cfg.train.learning_rate,
         gradient_clip_norm=cfg.train.get("gradient_clip_val", 0.0),
         early_stopping_patience=cfg.train.early_stopping.patience,
-        early_stopping_min_improvement=cfg.train.early_stopping.get("min_improvement", 0.01),
+        early_stopping_min_improvement=cfg.train.early_stopping.get(
+            "min_improvement", 0.01
+        ),
         loss_fn=loss_fn,
         get_aux_loss=get_aux_loss,
         use_jit=True,
@@ -316,8 +328,12 @@ def run(cfg: DictConfig):
         eval_path = output_run_dir / "test_results.json"
         with open(eval_path, "w") as f:
             json.dump(
-                {k: float(v) if isinstance(v, (int, float)) else v for k, v in test_metrics.items()},
-                f, indent=2,
+                {
+                    k: float(v) if isinstance(v, (int, float)) else v
+                    for k, v in test_metrics.items()
+                },
+                f,
+                indent=2,
             )
         console.log(f"Saved eval results to {eval_path}")
 
@@ -362,7 +378,8 @@ def _load_safetensors(model, weights_path: str):
         else:
             new_leaves.append(leaf)
     new_state = jax.tree_util.tree_unflatten(
-        jax.tree_util.tree_structure(state), new_leaves,
+        jax.tree_util.tree_structure(state),
+        new_leaves,
     )
     nnx.update(model, new_state)
     console.log(f"Loaded {restored}/{len(weights)} weights from {weights_path}")

@@ -14,10 +14,9 @@ from __future__ import annotations
 
 import math
 
-import numpy as np
 import keras
+import numpy as np
 from keras import layers, ops
-
 
 # ======================================================================
 # Attention primitives (mirror GLORY's ``src/models/base/layers.py``)
@@ -69,16 +68,19 @@ class MultiHeadAttention(keras.layers.Layer):
         out_dim = head_num * head_dim
 
         self.W_Q = layers.Dense(
-            out_dim, use_bias=True,
+            out_dim,
+            use_bias=True,
             kernel_initializer="glorot_uniform",
             bias_initializer="zeros",
         )
         self.W_K = layers.Dense(
-            out_dim, use_bias=False,
+            out_dim,
+            use_bias=False,
             kernel_initializer="glorot_uniform",
         )
         self.W_V = layers.Dense(
-            out_dim, use_bias=True,
+            out_dim,
+            use_bias=True,
             kernel_initializer="glorot_uniform",
             bias_initializer="zeros",
         )
@@ -130,12 +132,14 @@ class AttentionPooling(keras.layers.Layer):
     def __init__(self, emb_size: int, hidden_size: int, **kwargs):
         super().__init__(**kwargs)
         self.att_fc1 = layers.Dense(
-            hidden_size, use_bias=True,
+            hidden_size,
+            use_bias=True,
             kernel_initializer=keras.initializers.GlorotUniform(),
             bias_initializer="zeros",
         )
         self.att_fc2 = layers.Dense(
-            1, use_bias=True,
+            1,
+            use_bias=True,
             kernel_initializer=keras.initializers.GlorotUniform(),
         )
 
@@ -149,9 +153,7 @@ class AttentionPooling(keras.layers.Layer):
             alpha = alpha * ops.expand_dims(attn_mask, axis=2)
         alpha = alpha / (ops.sum(alpha, axis=1, keepdims=True) + 1e-8)
         # (B, E, N) @ (B, N, 1) -> (B, E, 1) -> (B, E)
-        return ops.squeeze(
-            ops.matmul(ops.swapaxes(x, 1, 2), alpha), axis=-1
-        )
+        return ops.squeeze(ops.matmul(ops.swapaxes(x, 1, 2), alpha), axis=-1)
 
 
 # ======================================================================
@@ -164,9 +166,7 @@ class DotProduct(keras.layers.Layer):
 
     def call(self, left, right):
         # left: (B, C, D), right: (B, D)  ->  (B, C)
-        return ops.squeeze(
-            ops.matmul(left, ops.expand_dims(right, axis=-1)), axis=-1
-        )
+        return ops.squeeze(ops.matmul(left, ops.expand_dims(right, axis=-1)), axis=-1)
 
 
 # ======================================================================
@@ -189,12 +189,14 @@ def _scatter_add(src, index, dim_size):
     backend = keras.backend.backend()
     if backend == "torch":
         import torch
+
         index_t = index.to(device=src.device)
         out = torch.zeros(dim_size, src.shape[1], device=src.device, dtype=src.dtype)
         idx = index_t.unsqueeze(-1).expand_as(src)
         return out.scatter_add_(0, idx.long(), src)
     elif backend == "jax":
         import jax.numpy as jnp
+
         return jnp.zeros((dim_size, src.shape[1]), dtype=src.dtype).at[index].add(src)
     else:
         # Fallback: one_hot approach (only safe for small graphs).
@@ -219,13 +221,15 @@ class GRUCell(keras.layers.Layer):
         uniform_init = keras.initializers.RandomUniform(-k, k)
         # Input-to-hidden weights for r, z, n gates (stacked).
         self.W_ih = layers.Dense(
-            3 * hidden_size, use_bias=True,
+            3 * hidden_size,
+            use_bias=True,
             kernel_initializer=uniform_init,
             bias_initializer=uniform_init,
         )
         # Hidden-to-hidden weights for r, z, n gates (stacked).
         self.W_hh = layers.Dense(
-            3 * hidden_size, use_bias=True,
+            3 * hidden_size,
+            use_bias=True,
             kernel_initializer=uniform_init,
             bias_initializer=uniform_init,
         )
@@ -233,15 +237,15 @@ class GRUCell(keras.layers.Layer):
     def call(self, x, h):
         """Forward: x (N, input_size), h (N, hidden_size) -> h' (N, hidden_size)."""
         H = self.hidden_size
-        gi = self.W_ih(x)   # (N, 3H)
-        gh = self.W_hh(h)   # (N, 3H)
+        gi = self.W_ih(x)  # (N, 3H)
+        gh = self.W_hh(h)  # (N, 3H)
 
         i_r = gi[:, :H]
-        i_z = gi[:, H:2*H]
-        i_n = gi[:, 2*H:]
+        i_z = gi[:, H : 2 * H]
+        i_n = gi[:, 2 * H :]
         h_r = gh[:, :H]
-        h_z = gh[:, H:2*H]
-        h_n = gh[:, 2*H:]
+        h_z = gh[:, H : 2 * H]
+        h_n = gh[:, 2 * H :]
 
         r = ops.sigmoid(i_r + h_r)
         z = ops.sigmoid(i_z + h_z)
@@ -329,9 +333,9 @@ class GatedGraphConv(keras.layers.Layer):
         num_nodes = ops.shape(x)[0]
 
         for i in range(self.num_layers):
-            m = ops.matmul(x, self.weight[i])          # (N, D)
+            m = ops.matmul(x, self.weight[i])  # (N, D)
             agg = _scatter_add(m[src], dst, num_nodes)  # (N, D)
-            x = self.rnn(agg, x)                        # (N, D)
+            x = self.rnn(agg, x)  # (N, D)
             if real_mask is not None:
                 x = ops.where(real_mask, x, 0)
 

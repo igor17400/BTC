@@ -291,7 +291,11 @@ class EntityEncoder(nn.Module):
         head_num = entity_dim // head_dim
         self.dropout1 = nn.Dropout(dropout_rate)
         self.msa = MultiHeadAttention(
-            entity_dim, entity_dim, entity_dim, head_num, head_dim,
+            entity_dim,
+            entity_dim,
+            entity_dim,
+            head_num,
+            head_dim,
         )
         self.layernorm1 = nn.LayerNorm(entity_dim)
         self.dropout2 = nn.Dropout(dropout_rate)
@@ -345,7 +349,11 @@ class GlobalEntityEncoder(nn.Module):
         self.news_dim = head_num * head_dim
         self.dropout1 = nn.Dropout(dropout_rate)
         self.msa = MultiHeadAttention(
-            entity_dim, entity_dim, entity_dim, head_num, head_dim,
+            entity_dim,
+            entity_dim,
+            entity_dim,
+            head_num,
+            head_dim,
         )
         self.layernorm1 = nn.LayerNorm(self.news_dim)
         self.dropout2 = nn.Dropout(dropout_rate)

@@ -36,7 +36,6 @@ from .layers import (
     MultiHeadAttention,
 )
 
-
 # ======================================================================
 # News encoder (local — no graph)
 # ======================================================================
@@ -74,7 +73,9 @@ class GLORYNewsEncoder(nnx.Module):
         self.layernorm1 = nnx.LayerNorm(self.news_dim, rngs=rngs)
         self.dropout2 = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
         self.attn_pool = AttentionPooling(
-            self.news_dim, config.attention_hidden_dim, rngs=rngs,
+            self.news_dim,
+            config.attention_hidden_dim,
+            rngs=rngs,
         )
         self.layernorm2 = nnx.LayerNorm(self.news_dim, rngs=rngs)
 
@@ -91,7 +92,8 @@ class GLORYNewsEncoder(nnx.Module):
         flat_title = title_tokens.reshape(B * N, self.title_size)
 
         word_emb = self.dropout1(
-            self.word_embedding(flat_title), deterministic=det,
+            self.word_embedding(flat_title),
+            deterministic=det,
         )
 
         attn_out = self.msa(word_emb, word_emb, word_emb, mask)
@@ -119,24 +121,28 @@ class GLORYClickEncoder(nnx.Module):
     def __init__(self, config: GLORYConfig, *, rngs: nnx.Rngs):
         self.news_dim = config.head_num * config.head_dim
         self.attn_pool = AttentionPooling(
-            self.news_dim, config.attention_hidden_dim, rngs=rngs,
+            self.news_dim,
+            config.attention_hidden_dim,
+            rngs=rngs,
         )
 
     def __call__(
         self,
-        title_emb: jax.Array,   # (B, N, D)
-        graph_emb: jax.Array,   # (B, N, D)
+        title_emb: jax.Array,  # (B, N, D)
+        graph_emb: jax.Array,  # (B, N, D)
         entity_emb: jax.Array | None = None,  # (B, N, D)
     ) -> jax.Array:
         B, N = title_emb.shape[:2]
         if entity_emb is not None:
             stacked = jnp.stack(
-                [title_emb, graph_emb, entity_emb], axis=-2,
+                [title_emb, graph_emb, entity_emb],
+                axis=-2,
             )  # (B, N, 3, D)
             num_views = 3
         else:
             stacked = jnp.stack(
-                [title_emb, graph_emb], axis=-2,
+                [title_emb, graph_emb],
+                axis=-2,
             )  # (B, N, 2, D)
             num_views = 2
         stacked = stacked.reshape(B * N, num_views, self.news_dim)
@@ -158,7 +164,9 @@ class GLORYUserEncoder(nnx.Module):
             rngs=rngs,
         )
         self.attn_pool = AttentionPooling(
-            self.news_dim, config.attention_hidden_dim, rngs=rngs,
+            self.news_dim,
+            config.attention_hidden_dim,
+            rngs=rngs,
         )
 
     def __call__(
@@ -183,7 +191,9 @@ class GLORYCandidateEncoder(nnx.Module):
         self.use_entity = config.use_entity
         if self.use_entity:
             self.attn_pool = AttentionPooling(
-                self.news_dim, config.attention_hidden_dim, rngs=rngs,
+                self.news_dim,
+                config.attention_hidden_dim,
+                rngs=rngs,
             )
         self.linear = nnx.Linear(self.news_dim, self.news_dim, rngs=rngs)
 
@@ -193,10 +203,15 @@ class GLORYCandidateEncoder(nnx.Module):
         origin_entity_emb: jax.Array | None = None,
         neighbor_entity_emb: jax.Array | None = None,
     ) -> jax.Array:
-        if self.use_entity and origin_entity_emb is not None and neighbor_entity_emb is not None:
+        if (
+            self.use_entity
+            and origin_entity_emb is not None
+            and neighbor_entity_emb is not None
+        ):
             B, C = cand_emb.shape[:2]
             stacked = jnp.stack(
-                [cand_emb, origin_entity_emb, neighbor_entity_emb], axis=-2,
+                [cand_emb, origin_entity_emb, neighbor_entity_emb],
+                axis=-2,
             )  # (B, C, 3, D)
             stacked = stacked.reshape(B * C, 3, self.news_dim)
             pooled = self.attn_pool(stacked)  # (B*C, D)
@@ -234,12 +249,16 @@ class GLORY(BaseModel):
         vocab_size = int(processed_news["vocab_size"])
         embeddings_matrix = np.asarray(processed_news["embeddings"])
         self.word_embedding = nnx.Embed(
-            num_embeddings=vocab_size, features=config.word_emb_dim, rngs=rngs,
+            num_embeddings=vocab_size,
+            features=config.word_emb_dim,
+            rngs=rngs,
         )
         self.word_embedding.embedding.value = jnp.asarray(embeddings_matrix)
 
         self.local_news_encoder = GLORYNewsEncoder(
-            config, self.word_embedding, rngs=rngs,
+            config,
+            self.word_embedding,
+            rngs=rngs,
         )
         self.global_news_encoder = GatedGraphConv(
             self.news_dim,
@@ -262,7 +281,8 @@ class GLORY(BaseModel):
                 entity_vocab = 1
                 self.entity_emb_dim = config.entity_emb_dim
                 entity_emb = np.zeros(
-                    (entity_vocab, self.entity_emb_dim), dtype=np.float32,
+                    (entity_vocab, self.entity_emb_dim),
+                    dtype=np.float32,
                 )
             self.entity_embedding = nnx.Embed(
                 num_embeddings=entity_vocab,
@@ -328,14 +348,16 @@ class GLORY(BaseModel):
         # Encode every subgraph node once with the local encoder.
         flat = jnp.expand_dims(subgraph_x, axis=0)  # (1, N_total, feat)
         x_encoded = self.local_news_encoder(
-            flat, training=training,
+            flat,
+            training=training,
         ).squeeze(axis=0)  # (N_total, D)
 
         # Zero out padding nodes before GNN (JAX fixed-shape padding).
         if "num_real_nodes" in inputs:
             node_idx = jnp.arange(x_encoded.shape[0])
             real_mask = jnp.expand_dims(
-                node_idx < inputs["num_real_nodes"], axis=-1,
+                node_idx < inputs["num_real_nodes"],
+                axis=-1,
             )
             x_encoded = jnp.where(real_mask, x_encoded, 0)
 
@@ -344,30 +366,38 @@ class GLORY(BaseModel):
 
         # Gather history embeddings from both views.
         valid_mask = jnp.expand_dims(valid, axis=-1)  # (B, H, 1)
-        clicked_title = jnp.where(valid_mask, x_encoded[mapping], 0)   # (B, H, D)
-        clicked_graph = jnp.where(valid_mask, graph_emb[mapping], 0)   # (B, H, D)
+        clicked_title = jnp.where(valid_mask, x_encoded[mapping], 0)  # (B, H, D)
+        clicked_graph = jnp.where(valid_mask, graph_emb[mapping], 0)  # (B, H, D)
 
         # Clicked entity encoding (optional).
         clicked_entity_emb = None
         if self.use_entity:
             # Extract entity IDs for clicked news from subgraph features.
             clicked_entity_ids = subgraph_x[
-                mapping, self.title_size : self.title_size + self.entity_size,
+                mapping,
+                self.title_size : self.title_size + self.entity_size,
             ].astype(jnp.int32)  # (B, H, entity_size)
             clicked_entity_ids = jnp.where(valid_mask, clicked_entity_ids, 0)
-            entity_embedded = self.entity_embedding(clicked_entity_ids)  # (B, H, E, entity_dim)
+            entity_embedded = self.entity_embedding(
+                clicked_entity_ids
+            )  # (B, H, E, entity_dim)
             clicked_entity_emb = self.local_entity_encoder(
-                entity_embedded, training=training,
+                entity_embedded,
+                training=training,
             )  # (B, H, D)
 
         # Fuse → pool into user vector.
         fused = self.click_encoder(
-            clicked_title, clicked_graph, clicked_entity_emb,
+            clicked_title,
+            clicked_graph,
+            clicked_entity_emb,
         )  # (B, H, D)
         user_emb = self.user_encoder(fused, valid.astype(jnp.float32))  # (B, D)
 
         # Candidates: encode locally then project.
-        cand_local = self.local_news_encoder(cand_tokens, training=training)  # (B, C, D)
+        cand_local = self.local_news_encoder(
+            cand_tokens, training=training
+        )  # (B, C, D)
 
         # Candidate entity encoding (optional).
         cand_origin_emb = None
@@ -382,7 +412,8 @@ class GLORY(BaseModel):
 
             origin_embedded = self.entity_embedding(origin_ids)  # (B, C, E, dim)
             cand_origin_emb = self.local_entity_encoder(
-                origin_embedded, training=training,
+                origin_embedded,
+                training=training,
             )  # (B, C, D)
 
             B, C = neighbor_ids.shape[:2]
@@ -397,12 +428,18 @@ class GLORY(BaseModel):
                 ent_mask = entity_mask.reshape(B * C, n_neighbors)
 
             cand_neighbor_emb = self.global_entity_encoder(
-                neighbor_embedded, ent_mask, training=training,
+                neighbor_embedded,
+                ent_mask,
+                training=training,
             )  # (B, C, D)
 
         cand_final = self.candidate_encoder(
-            cand_local, cand_origin_emb, cand_neighbor_emb,
+            cand_local,
+            cand_origin_emb,
+            cand_neighbor_emb,
         )  # (B, C, D)
 
         # Dot-product scoring.
-        return jnp.sum(cand_final * jnp.expand_dims(user_emb, axis=1), axis=-1)  # (B, C)
+        return jnp.sum(
+            cand_final * jnp.expand_dims(user_emb, axis=1), axis=-1
+        )  # (B, C)

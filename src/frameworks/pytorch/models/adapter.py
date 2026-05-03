@@ -72,9 +72,7 @@ class PyTorchAdapter:
                 vec = encoder(features, training=False)
         return vec.detach().cpu().numpy()
 
-    def encode_user_interests(
-        self, user_encoder: Any, features: Any
-    ) -> np.ndarray:
+    def encode_user_interests(self, user_encoder: Any, features: Any) -> np.ndarray:
         """Run the MINER user encoder to get K interest vectors.
 
         Returns:
@@ -206,10 +204,15 @@ class PyTorchAdapter:
         with torch.no_grad():
             for start in range(0, num_news, batch_size):
                 end = min(start + batch_size, num_news)
-                batch = torch.as_tensor(
-                    news_features[start:end], dtype=torch.long,
-                ).to(device).unsqueeze(0)             # (1, B, feat)
-                emb = news_encoder(batch).squeeze(0)   # (B, D)
+                batch = (
+                    torch.as_tensor(
+                        news_features[start:end],
+                        dtype=torch.long,
+                    )
+                    .to(device)
+                    .unsqueeze(0)
+                )  # (1, B, feat)
+                emb = news_encoder(batch).squeeze(0)  # (B, D)
                 out[start:end] = emb.detach().cpu().numpy()
         return out
 
@@ -254,12 +257,12 @@ class PyTorchAdapter:
         def _encode(ids_np: np.ndarray) -> np.ndarray:
             ids = torch.as_tensor(ids_np, dtype=torch.long).to(device)
             with torch.no_grad():
-                embedded = entity_embedding(ids)        # (n, E, dim)
+                embedded = entity_embedding(ids)  # (n, E, dim)
                 # add a leading batch axis (treated as B=1, N=n)
                 out = entity_encoder(embedded.unsqueeze(0)).squeeze(0)  # (n, D)
             return out.cpu().numpy()
 
-        if batch_size > 0 and N > batch_size:
+        if batch_size > 0 and batch_size < N:
             chunks: list[np.ndarray] = []
             for start in range(0, N, batch_size):
                 end = min(start + batch_size, N)
@@ -304,7 +307,7 @@ class PyTorchAdapter:
                 out = global_entity_encoder(embedded.unsqueeze(0), mask).squeeze(0)
             return out.cpu().numpy()
 
-        if batch_size > 0 and N > batch_size:
+        if batch_size > 0 and batch_size < N:
             chunks: list[np.ndarray] = []
             for start in range(0, N, batch_size):
                 end = min(start + batch_size, N)
@@ -338,30 +341,49 @@ class PyTorchAdapter:
         device = next(click_encoder.parameters()).device
 
         # Add batch dim for the encoders.
-        ct = torch.as_tensor(clicked_title, dtype=torch.float32).to(device).unsqueeze(0)   # (1, H, D)
+        ct = (
+            torch.as_tensor(clicked_title, dtype=torch.float32).to(device).unsqueeze(0)
+        )  # (1, H, D)
         cg = torch.as_tensor(clicked_graph, dtype=torch.float32).to(device).unsqueeze(0)
-        cl = torch.as_tensor(cand_local, dtype=torch.float32).to(device).unsqueeze(0)      # (1, C, D)
+        cl = (
+            torch.as_tensor(cand_local, dtype=torch.float32).to(device).unsqueeze(0)
+        )  # (1, C, D)
 
         ce = None
         if clicked_entity_emb is not None:
-            ce = torch.as_tensor(
-                clicked_entity_emb, dtype=torch.float32,
-            ).to(device).unsqueeze(0)
+            ce = (
+                torch.as_tensor(
+                    clicked_entity_emb,
+                    dtype=torch.float32,
+                )
+                .to(device)
+                .unsqueeze(0)
+            )
         co = None
         cn = None
         if cand_origin_emb is not None:
-            co = torch.as_tensor(
-                cand_origin_emb, dtype=torch.float32,
-            ).to(device).unsqueeze(0)
+            co = (
+                torch.as_tensor(
+                    cand_origin_emb,
+                    dtype=torch.float32,
+                )
+                .to(device)
+                .unsqueeze(0)
+            )
         if cand_neighbor_emb is not None:
-            cn = torch.as_tensor(
-                cand_neighbor_emb, dtype=torch.float32,
-            ).to(device).unsqueeze(0)
+            cn = (
+                torch.as_tensor(
+                    cand_neighbor_emb,
+                    dtype=torch.float32,
+                )
+                .to(device)
+                .unsqueeze(0)
+            )
 
         with torch.no_grad():
-            fused = click_encoder(ct, cg, ce)               # (1, H, D)
-            user_emb = user_encoder(fused)                  # (1, D)
-            cand_final = candidate_encoder(cl, co, cn)      # (1, C, D)
+            fused = click_encoder(ct, cg, ce)  # (1, H, D)
+            user_emb = user_encoder(fused)  # (1, D)
+            cand_final = candidate_encoder(cl, co, cn)  # (1, C, D)
             scores = click_predictor(cand_final, user_emb)  # (1, C)
         return scores.squeeze(0).detach().cpu().numpy()
 
@@ -414,8 +436,13 @@ class PyTorchAdapter:
 
         with torch.no_grad():
             news_ctx, user_ctx = graph_encoder(
-                cand_emb_t, cand_graph_t, cand_mask_t,
-                hist_t, u_graph_t, u_cat_mask_t, u_cat_idx_t,
+                cand_emb_t,
+                cand_graph_t,
+                cand_mask_t,
+                hist_t,
+                u_graph_t,
+                u_cat_mask_t,
+                u_cat_idx_t,
                 num_categories,
             )
         return (news_ctx * user_ctx).sum(dim=-1).detach().cpu().numpy()

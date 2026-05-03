@@ -15,13 +15,13 @@ import time
 from pathlib import Path
 from typing import Any
 
-import numpy as np
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 from flax import nnx
-from safetensors.numpy import save_file as save_safetensors
 from rich.console import Console
+from safetensors.numpy import save_file as save_safetensors
 
 import wandb
 from src.core.io.logging import (
@@ -363,7 +363,9 @@ def training_loop(
             flat = {}
             for key_path, leaf in jax.tree_util.tree_leaves_with_path(best_state):
                 name = ".".join(str(k) for k in key_path)
-                if hasattr(leaf, 'dtype') and jnp.issubdtype(leaf.dtype, jax.dtypes.prng_key):
+                if hasattr(leaf, "dtype") and jnp.issubdtype(
+                    leaf.dtype, jax.dtypes.prng_key
+                ):
                     continue  # skip RNG state
                 flat[name] = np.asarray(leaf)
             save_safetensors(flat, str(ckpt_path))

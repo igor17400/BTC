@@ -216,7 +216,6 @@ def training_loop(
     wandb_history = {} if cfg.logging.enable_wandb else None
     log_training_start(cfg.model_name, framework, cfg.train.num_epochs)
 
-
     # Steps per epoch
     steps_per_epoch = len(train_dataset) if hasattr(train_dataset, "__len__") else None
 

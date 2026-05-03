@@ -136,7 +136,8 @@ class GLORYClickEncoder(nn.Module):
         B, N = title_emb.shape[:2]
         if entity_emb is not None:
             stacked = torch.stack(
-                [title_emb, graph_emb, entity_emb], dim=-2,
+                [title_emb, graph_emb, entity_emb],
+                dim=-2,
             )  # (B, N, 3, D)
             num_views = 3
         else:
@@ -184,7 +185,9 @@ class GLORYCandidateEncoder(nn.Module):
         self.news_dim = config.head_num * config.head_dim
         self.use_entity = config.use_entity
         if self.use_entity:
-            self.attn_pool = AttentionPooling(self.news_dim, config.attention_hidden_dim)
+            self.attn_pool = AttentionPooling(
+                self.news_dim, config.attention_hidden_dim
+            )
         self.linear = nn.Linear(self.news_dim, self.news_dim)
         self.act = nn.LeakyReLU(0.2)
 
@@ -201,7 +204,8 @@ class GLORYCandidateEncoder(nn.Module):
         ):
             B, C = cand_emb.shape[:2]
             stacked = torch.stack(
-                [cand_emb, origin_entity_emb, neighbor_entity_emb], dim=-2,
+                [cand_emb, origin_entity_emb, neighbor_entity_emb],
+                dim=-2,
             )  # (B, C, 3, D)
             stacked = stacked.view(B * C, 3, self.news_dim)
             pooled = self.attn_pool(stacked)  # (B*C, D)
@@ -267,7 +271,8 @@ class GLORY(BaseModel):
                 entity_vocab = 1
                 self.entity_emb_dim = config.entity_emb_dim
                 entity_emb = np.zeros(
-                    (entity_vocab, self.entity_emb_dim), dtype=np.float32,
+                    (entity_vocab, self.entity_emb_dim),
+                    dtype=np.float32,
                 )
             self.entity_embedding = nn.Embedding(entity_vocab, self.entity_emb_dim)
             self.entity_embedding.weight = nn.Parameter(
@@ -343,17 +348,22 @@ class GLORY(BaseModel):
         if self.use_entity:
             # Extract entity IDs for clicked news from subgraph features.
             clicked_entity_ids = subgraph_x[
-                mapping, self.title_size : self.title_size + self.entity_size,
+                mapping,
+                self.title_size : self.title_size + self.entity_size,
             ].long()  # (B, H, entity_size)
             clicked_entity_ids = clicked_entity_ids.masked_fill(~valid_mask, 0)
-            entity_embedded = self.entity_embedding(clicked_entity_ids)  # (B, H, E, dim)
+            entity_embedded = self.entity_embedding(
+                clicked_entity_ids
+            )  # (B, H, E, dim)
             clicked_entity_emb = self.local_entity_encoder(
                 entity_embedded,
             )  # (B, H, D)
 
         # Fuse → pool into user vector.
         fused = self.click_encoder(
-            clicked_title, clicked_graph, clicked_entity_emb,
+            clicked_title,
+            clicked_graph,
+            clicked_entity_emb,
         )  # (B, H, D)
         user_emb = self.user_encoder(fused, valid.float())  # (B, D)
 
@@ -387,11 +397,14 @@ class GLORY(BaseModel):
                 ent_mask = entity_mask.float().reshape(B * C, n_neighbors)
 
             cand_neighbor_emb = self.global_entity_encoder(
-                neighbor_embedded, ent_mask,
+                neighbor_embedded,
+                ent_mask,
             )  # (B, C, D)
 
         cand_final = self.candidate_encoder(
-            cand_local, cand_origin_emb, cand_neighbor_emb,
+            cand_local,
+            cand_origin_emb,
+            cand_neighbor_emb,
         )  # (B, C, D)
 
         # Dot-product scoring.

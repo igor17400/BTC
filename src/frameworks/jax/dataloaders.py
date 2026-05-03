@@ -395,11 +395,12 @@ def _glory_collate_jax(
         offset += n
 
     # Concatenate real data.
-    real_x = np.concatenate(sub_xs, axis=0)                    # (N_real, feat)
+    real_x = np.concatenate(sub_xs, axis=0)  # (N_real, feat)
     real_edges = (
-        np.concatenate(sub_edges, axis=1) if sub_edges
+        np.concatenate(sub_edges, axis=1)
+        if sub_edges
         else np.zeros((2, 0), dtype=np.int64)
-    )                                                           # (2, E_real)
+    )  # (2, E_real)
     N_real = real_x.shape[0]
     E_real = real_edges.shape[1]
     feat_dim = real_x.shape[1]
@@ -411,9 +412,14 @@ def _glory_collate_jax(
         real_x = real_x[:_GLORY_MAX_NODES]
         N_real = _GLORY_MAX_NODES
     node_pad = _GLORY_MAX_NODES - N_real
-    padded_x = np.concatenate(
-        [real_x, np.zeros((node_pad, feat_dim), dtype=real_x.dtype)], axis=0,
-    ) if node_pad > 0 else real_x
+    padded_x = (
+        np.concatenate(
+            [real_x, np.zeros((node_pad, feat_dim), dtype=real_x.dtype)],
+            axis=0,
+        )
+        if node_pad > 0
+        else real_x
+    )
 
     # Pad edges — point at the last (isolated) padding node so
     # scatter-add doesn't accumulate messages on real nodes.
@@ -439,10 +445,12 @@ def _glory_collate_jax(
     # Pass through entity data if present (use_entity=True).
     if "candidate_entity" in samples[0]:
         batched["candidate_entity"] = np.stack(
-            [s["candidate_entity"] for s in samples], axis=0,
+            [s["candidate_entity"] for s in samples],
+            axis=0,
         ).astype(np.int32)
         batched["entity_mask"] = np.stack(
-            [s["entity_mask"] for s in samples], axis=0,
+            [s["entity_mask"] for s in samples],
+            axis=0,
         ).astype(np.float32)
 
     labels_out = np.stack(labels, axis=0).astype(np.float32)

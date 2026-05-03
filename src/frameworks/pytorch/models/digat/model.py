@@ -33,7 +33,6 @@ from .layers import (
     scatter_sum,
 )
 
-
 # ======================================================================
 # News encoder
 # ======================================================================
@@ -51,10 +50,14 @@ class DIGATNewsEncoder(nn.Module):
         self.word_embedding = word_embedding
         self.dropout = nn.Dropout(config.dropout_rate)
         self.msa = MultiHeadSelfAttention(
-            config.embedding_size, config.msa_head_num, config.msa_head_dim,
+            config.embedding_size,
+            config.msa_head_num,
+            config.msa_head_dim,
         )
         self.news_embedding_dim = config.news_embedding_dim
-        self.attention = AdditiveAttention(self.news_embedding_dim, config.attention_dim)
+        self.attention = AdditiveAttention(
+            self.news_embedding_dim, config.attention_dim
+        )
 
     def forward(
         self, title_text: torch.Tensor, title_mask: torch.Tensor | None = None
@@ -69,7 +72,11 @@ class DIGATNewsEncoder(nn.Module):
         """
         batch_size, num_news, title_len = title_text.shape
         flat_text = title_text.reshape(batch_size * num_news, title_len)
-        flat_mask = title_mask.reshape(batch_size * num_news, title_len) if title_mask is not None else None
+        flat_mask = (
+            title_mask.reshape(batch_size * num_news, title_len)
+            if title_mask is not None
+            else None
+        )
 
         w = self.dropout(self.word_embedding(flat_text))
         h = F.relu(self.msa(w))
@@ -134,7 +141,9 @@ class DIGATGraphEncoder(nn.Module):
         self.u_a = nn.ModuleList([nn.Linear(D, 1, bias=False) for _ in range(depth)])
 
         # Learnable topic node embeddings
-        self.topic_node_emb: nn.Parameter  # set in DIGAT.__init__ once category_num is known
+        self.topic_node_emb: (
+            nn.Parameter
+        )  # set in DIGAT.__init__ once category_num is known
 
         self._initialize_weights()
 
@@ -143,18 +152,34 @@ class DIGATGraphEncoder(nn.Module):
         for i in range(self.graph_depth):
             nn.init.xavier_uniform_(self.n_W[i].weight)
             nn.init.zeros_(self.n_W[i].bias)
-            nn.init.xavier_uniform_(self.n_a[i].weight, gain=nn.init.calculate_gain("leaky_relu", 0.2))
-            nn.init.xavier_uniform_(self.n_ffn1[i].weight, gain=nn.init.calculate_gain("relu"))
-            nn.init.xavier_uniform_(self.n_ffn2[i].weight, gain=nn.init.calculate_gain("relu"))
-            nn.init.xavier_uniform_(self.n_ffn3[i].weight, gain=nn.init.calculate_gain("relu"))
+            nn.init.xavier_uniform_(
+                self.n_a[i].weight, gain=nn.init.calculate_gain("leaky_relu", 0.2)
+            )
+            nn.init.xavier_uniform_(
+                self.n_ffn1[i].weight, gain=nn.init.calculate_gain("relu")
+            )
+            nn.init.xavier_uniform_(
+                self.n_ffn2[i].weight, gain=nn.init.calculate_gain("relu")
+            )
+            nn.init.xavier_uniform_(
+                self.n_ffn3[i].weight, gain=nn.init.calculate_gain("relu")
+            )
             nn.init.zeros_(self.n_ffn3[i].bias)
 
             nn.init.xavier_uniform_(self.u_W[i].weight)
             nn.init.zeros_(self.u_W[i].bias)
-            nn.init.xavier_uniform_(self.u_a[i].weight, gain=nn.init.calculate_gain("leaky_relu", 0.2))
-            nn.init.xavier_uniform_(self.u_ffn1[i].weight, gain=nn.init.calculate_gain("relu"))
-            nn.init.xavier_uniform_(self.u_ffn2[i].weight, gain=nn.init.calculate_gain("relu"))
-            nn.init.xavier_uniform_(self.u_ffn3[i].weight, gain=nn.init.calculate_gain("relu"))
+            nn.init.xavier_uniform_(
+                self.u_a[i].weight, gain=nn.init.calculate_gain("leaky_relu", 0.2)
+            )
+            nn.init.xavier_uniform_(
+                self.u_ffn1[i].weight, gain=nn.init.calculate_gain("relu")
+            )
+            nn.init.xavier_uniform_(
+                self.u_ffn2[i].weight, gain=nn.init.calculate_gain("relu")
+            )
+            nn.init.xavier_uniform_(
+                self.u_ffn3[i].weight, gain=nn.init.calculate_gain("relu")
+            )
             nn.init.zeros_(self.u_ffn3[i].bias)
 
         # news context gate
@@ -165,7 +190,9 @@ class DIGATGraphEncoder(nn.Module):
         nn.init.xavier_uniform_(self.user_news_K.weight)
         nn.init.xavier_uniform_(self.user_news_Q.weight)
         nn.init.zeros_(self.user_news_Q.bias)
-        nn.init.xavier_uniform_(self.topic_affine.weight, gain=nn.init.calculate_gain("relu"))
+        nn.init.xavier_uniform_(
+            self.topic_affine.weight, gain=nn.init.calculate_gain("relu")
+        )
         nn.init.zeros_(self.topic_affine.bias)
 
         # ScaledDotProductAttention layers
@@ -192,7 +219,9 @@ class DIGATGraphEncoder(nn.Module):
         """
         local = emb[:, 0, :]
         glob = self.news_ctx_attn(emb, local, mask=mask)
-        gate = torch.sigmoid(self.input_dropout(self.news_ctx_gate(torch.cat([local, glob], dim=-1))))
+        gate = torch.sigmoid(
+            self.input_dropout(self.news_ctx_gate(torch.cat([local, glob], dim=-1)))
+        )
         return gate * local + (1 - gate) * glob
 
     def _user_graph_context(
@@ -297,12 +326,26 @@ class DIGATGraphEncoder(nn.Module):
 
         for i in range(self.graph_depth):
             news_emb = self._update_graph(
-                i, news_emb, news_graph, user_ctx,
-                self.n_W, self.n_ffn1, self.n_ffn2, self.n_ffn3, self.n_a,
+                i,
+                news_emb,
+                news_graph,
+                user_ctx,
+                self.n_W,
+                self.n_ffn1,
+                self.n_ffn2,
+                self.n_ffn3,
+                self.n_a,
             )
             user_emb = self._update_graph(
-                i, user_emb, user_graph, news_ctx,
-                self.u_W, self.u_ffn1, self.u_ffn2, self.u_ffn3, self.u_a,
+                i,
+                user_emb,
+                user_graph,
+                news_ctx,
+                self.u_W,
+                self.u_ffn1,
+                self.u_ffn2,
+                self.u_ffn3,
+                self.u_a,
             )
             news_ctx = news_ctx + self._news_graph_context(news_emb, news_mask)
             user_ctx = user_ctx + self._user_graph_context(
@@ -387,29 +430,59 @@ class DIGAT(BaseModel):
 
         # Flatten candidates: (batch_size, num_cands, sag_size, title_len) → (batch_cands, sag_size, title_len)
         cand_tokens = inputs["cand_tokens"].view(batch_cands, sag_size, -1)
-        cand_mask = inputs["cand_mask"].view(batch_cands, sag_size, -1) if "cand_mask" in inputs else None
+        cand_mask = (
+            inputs["cand_mask"].view(batch_cands, sag_size, -1)
+            if "cand_mask" in inputs
+            else None
+        )
         cand_graph = inputs["cand_graph"].view(batch_cands, sag_size, sag_size)
         cand_graph_mask = inputs["cand_graph_mask"].view(batch_cands, sag_size)
 
         # Expand user data: (batch_size, ...) → (batch_cands, ...)
-        user_graph = inputs["user_graph"].unsqueeze(1).expand(-1, num_cands, -1, -1).reshape(batch_cands, user_graph_size, user_graph_size)
-        user_cat_mask = inputs["user_category_mask"].unsqueeze(1).expand(-1, num_cands, -1).reshape(batch_cands, self.num_categories)
-        user_cat_indices = inputs["user_category_indices"].unsqueeze(1).expand(-1, num_cands, -1).reshape(batch_cands, self.max_history)
+        user_graph = (
+            inputs["user_graph"]
+            .unsqueeze(1)
+            .expand(-1, num_cands, -1, -1)
+            .reshape(batch_cands, user_graph_size, user_graph_size)
+        )
+        user_cat_mask = (
+            inputs["user_category_mask"]
+            .unsqueeze(1)
+            .expand(-1, num_cands, -1)
+            .reshape(batch_cands, self.num_categories)
+        )
+        user_cat_indices = (
+            inputs["user_category_indices"]
+            .unsqueeze(1)
+            .expand(-1, num_cands, -1)
+            .reshape(batch_cands, self.max_history)
+        )
 
         # Encode candidate news (each with SAG neighbors)
-        cand_emb = self.news_encoder(cand_tokens, cand_mask)  # (batch_cands, sag_size, feat_dim)
+        cand_emb = self.news_encoder(
+            cand_tokens, cand_mask
+        )  # (batch_cands, sag_size, feat_dim)
 
         # Encode user history
         user_news_emb = self.news_encoder(
             inputs["hist_tokens"],
             inputs.get("hist_mask"),
         )  # (batch_size, hist_len, feat_dim)
-        user_news_emb = user_news_emb.unsqueeze(1).expand(-1, num_cands, -1, -1).reshape(batch_cands, self.max_history, self.D)
+        user_news_emb = (
+            user_news_emb.unsqueeze(1)
+            .expand(-1, num_cands, -1, -1)
+            .reshape(batch_cands, self.max_history, self.D)
+        )
 
         # Dual graph interaction
         news_ctx, user_ctx = self.graph_encoder(
-            cand_emb, cand_graph, cand_graph_mask,
-            user_news_emb, user_graph, user_cat_mask, user_cat_indices,
+            cand_emb,
+            cand_graph,
+            cand_graph_mask,
+            user_news_emb,
+            user_graph,
+            user_cat_mask,
+            user_cat_indices,
             self.num_categories,
         )
 

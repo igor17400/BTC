@@ -23,7 +23,6 @@ from keras import layers, ops
 from src.core.models.configs import TCCMConfig
 from src.frameworks.keras.layers import AdditiveAttention, GlorotUniformMHA
 
-
 # ---------------------------------------------------------------------------
 # News encoder (paper ``co1``)
 # ---------------------------------------------------------------------------

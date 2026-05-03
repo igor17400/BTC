@@ -10,9 +10,7 @@ from __future__ import annotations
 
 import math
 
-import keras
 from keras import layers, ops
-
 
 # ======================================================================
 # Scatter utilities (batched, pure keras.ops)
@@ -137,7 +135,9 @@ class DIGATAdditiveAttention(layers.Layer):
         Returns:
             (B, F)
         """
-        scores = ops.squeeze(self.project(ops.tanh(self.affine(features))), axis=-1)  # (B, N)
+        scores = ops.squeeze(
+            self.project(ops.tanh(self.affine(features))), axis=-1
+        )  # (B, N)
         if mask is not None:
             scores = ops.where(ops.equal(mask, 0), -1e9, scores)
         weights = ops.softmax(scores, axis=1)  # (B, N)

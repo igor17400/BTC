@@ -124,9 +124,7 @@ class TCCM(BaseModel):
         entity_emb = layers.Embedding(
             input_dim=pn["entity_vocab_size"],
             output_dim=cfg.entity_embedding_dim,
-            embeddings_initializer=keras.initializers.Constant(
-                pn["entity_embeddings"]
-            ),
+            embeddings_initializer=keras.initializers.Constant(pn["entity_embeddings"]),
             trainable=True,
             name="entity_embedding",
         )

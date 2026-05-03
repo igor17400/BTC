@@ -24,7 +24,6 @@ from src.core.models.configs import TCCMConfig
 
 from ...layers import AdditiveAttention as _AdditiveAttention
 
-
 # ---------------------------------------------------------------------------
 # News encoder (paper ``co1``)
 # ---------------------------------------------------------------------------
@@ -245,8 +244,12 @@ class TCCMPopularityEncoder(nn.Module):
         title_h = self.title_proj(title_emb)
         entity_h = self.entity_proj(entity_emb)
 
-        title_co, _ = self.title_co_mhca(title_h, entity_h, entity_h, need_weights=False)
-        entity_co, _ = self.entity_co_mhca(entity_h, title_h, title_h, need_weights=False)
+        title_co, _ = self.title_co_mhca(
+            title_h, entity_h, entity_h, need_weights=False
+        )
+        entity_co, _ = self.entity_co_mhca(
+            entity_h, title_h, title_h, need_weights=False
+        )
 
         title_self, _ = self.title_mhsa(title_h, title_h, title_h, need_weights=False)
         title_seq = title_self + title_co

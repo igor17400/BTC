@@ -37,7 +37,6 @@ from .layers import (
     MultiHeadAttention,
 )
 
-
 # ======================================================================
 # News encoder (local -- no graph)
 # ======================================================================
@@ -76,7 +75,9 @@ class GLORYNewsEncoder(keras.Model):
         self.layernorm1 = layers.LayerNormalization(name="ln1")
         self.dropout2 = layers.Dropout(config.dropout_rate, name="attn_dropout")
         self.attn_pool = AttentionPooling(
-            self.news_dim, config.attention_hidden_dim, name="attn_pool",
+            self.news_dim,
+            config.attention_hidden_dim,
+            name="attn_pool",
         )
         self.layernorm2 = layers.LayerNormalization(name="ln2")
 
@@ -99,7 +100,8 @@ class GLORYNewsEncoder(keras.Model):
         flat_title = ops.reshape(title_tokens, (B * N, self.title_size))
 
         word_emb = self.dropout1(
-            self.word_embedding(flat_title), training=training,
+            self.word_embedding(flat_title),
+            training=training,
         )  # (B*N, T, E)
 
         attn_out = self.msa(word_emb, word_emb, word_emb, mask)  # (B*N, T, D)
@@ -124,7 +126,9 @@ class GLORYClickEncoder(keras.layers.Layer):
         super().__init__(**kwargs)
         self.news_dim = config.head_num * config.head_dim
         self.attn_pool = AttentionPooling(
-            self.news_dim, config.attention_hidden_dim, name="click_attn_pool",
+            self.news_dim,
+            config.attention_hidden_dim,
+            name="click_attn_pool",
         )
 
     def call(self, title_emb, graph_emb):
@@ -153,7 +157,9 @@ class GLORYUserEncoder(keras.layers.Layer):
             name="user_msa",
         )
         self.attn_pool = AttentionPooling(
-            self.news_dim, config.attention_hidden_dim, name="user_attn_pool",
+            self.news_dim,
+            config.attention_hidden_dim,
+            name="user_attn_pool",
         )
 
     def call(self, clicked_news, mask=None):
@@ -211,7 +217,8 @@ class GLORY(BaseModel):
         )
 
         self.local_news_encoder = GLORYNewsEncoder(
-            config, self.word_embedding,
+            config,
+            self.word_embedding,
         )
         self.global_news_encoder = GatedGraphConv(
             self.news_dim,
@@ -259,7 +266,8 @@ class GLORY(BaseModel):
         # Encode every subgraph node once with the local encoder.
         flat = ops.expand_dims(subgraph_x, axis=0)  # (1, N_total, feat)
         x_encoded = ops.squeeze(
-            self.local_news_encoder(flat, training=training), axis=0,
+            self.local_news_encoder(flat, training=training),
+            axis=0,
         )  # (N_total, D)
 
         # Build padding mask for GNN.  The JAX collate pads to fixed
@@ -271,33 +279,42 @@ class GLORY(BaseModel):
         if "num_real_nodes" in inputs:
             node_idx = ops.arange(ops.shape(x_encoded)[0])
             real_mask = ops.expand_dims(
-                node_idx < inputs["num_real_nodes"], axis=-1,
+                node_idx < inputs["num_real_nodes"],
+                axis=-1,
             )  # (N_total, 1)
             x_encoded = ops.where(real_mask, x_encoded, 0)
 
         # GNN over the full (batched) subgraph.
         graph_emb = self.global_news_encoder(
-            x_encoded, edge_index, real_mask=real_mask,
+            x_encoded,
+            edge_index,
+            real_mask=real_mask,
         )  # (N_total, D)
 
         # Gather history embeddings from both views.
         valid_mask = ops.expand_dims(valid, axis=-1)  # (B, H, 1)
         clicked_title = ops.where(
-            valid_mask, ops.take(x_encoded, mapping, axis=0), 0,
+            valid_mask,
+            ops.take(x_encoded, mapping, axis=0),
+            0,
         )  # (B, H, D)
         clicked_graph = ops.where(
-            valid_mask, ops.take(graph_emb, mapping, axis=0), 0,
+            valid_mask,
+            ops.take(graph_emb, mapping, axis=0),
+            0,
         )  # (B, H, D)
 
         # Fuse -> pool into user vector.
         fused = self.click_encoder(clicked_title, clicked_graph)  # (B, H, D)
         user_emb = self._user_encoder(
-            fused, ops.cast(valid, "float32"),
+            fused,
+            ops.cast(valid, "float32"),
         )  # (B, D)
 
         # Candidates: encode locally then project.
         cand_local = self.local_news_encoder(
-            cand_tokens, training=training,
+            cand_tokens,
+            training=training,
         )  # (B, C, D)
         cand_final = self.candidate_encoder(cand_local)  # (B, C, D)
 

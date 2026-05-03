@@ -102,9 +102,7 @@ class PolyAttention(nnx.Module):
         tanh_gain = 5.0 / 3.0
         key_cc = rngs.params()
 
-        self.context_codes = nnx.Param(
-            glorot(key_cc, (K, D)) * tanh_gain
-        )
+        self.context_codes = nnx.Param(glorot(key_cc, (K, D)) * tanh_gain)
         # Reference uses bias=False for the projection
         self.W_h = nnx.Param(glorot(rngs.params(), (E, D)))
 
@@ -123,9 +121,7 @@ class PolyAttention(nnx.Module):
             ``(B, K, E)`` interest vectors.
         """
         # No bias (matching reference)
-        projected = jnp.tanh(
-            jnp.matmul(news_embeddings, self.W_h.value)
-        )  # (B, M, D)
+        projected = jnp.tanh(jnp.matmul(news_embeddings, self.W_h.value))  # (B, M, D)
 
         logits = jnp.einsum("bmd,kd->bkm", projected, self.context_codes.value)
 

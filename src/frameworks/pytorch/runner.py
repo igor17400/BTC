@@ -12,6 +12,7 @@ import hydra
 import numpy as np
 import torch
 from omegaconf import DictConfig
+from safetensors.torch import load_file as load_safetensors
 
 import wandb
 from src.core.io.logging import (
@@ -226,8 +227,10 @@ def run(cfg: DictConfig):
             )
         else:
             train_dataloader = create_train_dataloader(
-                features=features, labels=labels,
-                batch_size=cfg.train.batch_size, shuffle=True,
+                features=features,
+                labels=labels,
+                batch_size=cfg.train.batch_size,
+                shuffle=True,
             )
 
         # Build eval_fn from setup hook
@@ -236,8 +239,13 @@ def run(cfg: DictConfig):
         )
         _adapter = PyTorchAdapter()
         eval_fn = model_setup.make_eval_fn(
-            model, _adapter, metrics_engine, dataset_provider,
-            processed_news, cfg.eval.batch_size, output_run_dir,
+            model,
+            _adapter,
+            metrics_engine,
+            dataset_provider,
+            processed_news,
+            cfg.eval.batch_size,
+            output_run_dir,
             build_eval_dataloaders=_build_eval_dataloaders,
         )
     else:
@@ -309,7 +317,9 @@ def run(cfg: DictConfig):
         num_epochs=cfg.train.num_epochs,
         learning_rate=cfg.train.learning_rate,
         early_stopping_patience=cfg.train.early_stopping.patience,
-        early_stopping_min_improvement=cfg.train.early_stopping.get("min_improvement", 0.01),
+        early_stopping_min_improvement=cfg.train.early_stopping.get(
+            "min_improvement", 0.01
+        ),
         enable_wandb=cfg.logging.enable_wandb,
         save_dir=str(output_run_dir / "models"),
         gpu_ids=cfg.device.gpu_ids if hasattr(cfg.device, "gpu_ids") else None,
@@ -323,7 +333,6 @@ def run(cfg: DictConfig):
         # Load best checkpoint (safetensors — HF canonical, matches JAX).
         ckpt_path = output_run_dir / "models" / "model.safetensors"
         if ckpt_path.exists():
-            from safetensors.torch import load_file as load_safetensors
             model.load_state_dict(load_safetensors(str(ckpt_path)))
 
         # Load test data (not loaded during mode="train" init)
@@ -345,8 +354,12 @@ def run(cfg: DictConfig):
         eval_path = output_run_dir / "test_results.json"
         with open(eval_path, "w") as f:
             json.dump(
-                {k: float(v) if isinstance(v, (int, float)) else v for k, v in test_metrics.items()},
-                f, indent=2,
+                {
+                    k: float(v) if isinstance(v, (int, float)) else v
+                    for k, v in test_metrics.items()
+                },
+                f,
+                indent=2,
             )
         console.log(f"Saved eval results to {eval_path}")
 

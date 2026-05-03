@@ -80,8 +80,11 @@ class NewsEncoder(keras.Model):
 
         padding_mask = ops.not_equal(inputs, 0)
         y = self.multi_head_attention(
-            y, y, y,
-            key_mask=padding_mask, value_mask=padding_mask,
+            y,
+            y,
+            y,
+            key_mask=padding_mask,
+            value_mask=padding_mask,
             training=training,
         )
         y = self.dropout2(y, training=training)
@@ -140,7 +143,6 @@ class InterModel(keras.Model):
         )
 
         # Candi-CNN: projects [left, center, right, candidate] → D
-        window = 2 * config.candi_cnn_half_window + 1
         self.cnn_projection = layers.Dense(D, name="candi_cnn_proj")
 
         # Candi-SelfAtt: projects [candidate, click] → D, then MHSA
@@ -185,18 +187,12 @@ class InterModel(keras.Model):
         user_vecs = self.dropout_clicks(clicked_vecs, training=training)
 
         # Repeat candidate across history length: (B, H, D)
-        cand_repeated = ops.repeat(
-            ops.expand_dims(cand_vec, axis=1), H, axis=1
-        )
+        cand_repeated = ops.repeat(ops.expand_dims(cand_vec, axis=1), H, axis=1)
 
         # ----- Candi-CNN -----
         # Circular shift: left by 1, right by 1
-        left = ops.concatenate(
-            [user_vecs[:, -1:, :], user_vecs[:, :-1, :]], axis=1
-        )
-        right = ops.concatenate(
-            [user_vecs[:, 1:, :], user_vecs[:, :1, :]], axis=1
-        )
+        left = ops.concatenate([user_vecs[:, -1:, :], user_vecs[:, :-1, :]], axis=1)
+        right = ops.concatenate([user_vecs[:, 1:, :], user_vecs[:, :1, :]], axis=1)
         # Concat [left, center, right, candidate] → Dense
         cnn_input = ops.concatenate(
             [left, user_vecs, right, cand_repeated], axis=-1
@@ -212,13 +208,14 @@ class InterModel(keras.Model):
 
         # Compute history mask for MHSA (True = valid position)
         # clicked_vecs is already encoded — check for all-zero vectors
-        history_mask = ops.any(
-            ops.not_equal(clicked_vecs, 0.0), axis=-1
-        )  # (B, H)
+        history_mask = ops.any(ops.not_equal(clicked_vecs, 0.0), axis=-1)  # (B, H)
 
         selfatt_out = self.selfatt_mha(
-            selfatt_input, selfatt_input, selfatt_input,
-            key_mask=history_mask, value_mask=history_mask,
+            selfatt_input,
+            selfatt_input,
+            selfatt_input,
+            key_mask=history_mask,
+            value_mask=history_mask,
             training=training,
         )  # (B, H, D)
 
@@ -229,9 +226,7 @@ class InterModel(keras.Model):
 
         # ----- Candi-Att -----
         # Concat [fused, candidate] for each click → DNN scorer
-        att_input = ops.concatenate(
-            [fused, cand_repeated], axis=-1
-        )  # (B, H, 2*D)
+        att_input = ops.concatenate([fused, cand_repeated], axis=-1)  # (B, H, 2*D)
 
         # Apply scorer per time step (manual TimeDistributed)
         B = ops.shape(att_input)[0]
@@ -294,9 +289,7 @@ class UserEncoder(keras.Model):
         mask = ops.any(ops.not_equal(inputs, 0), axis=-1)  # (B, H)
         mask_f = ops.cast(mask, dtype=news_embeds.dtype)
         count = ops.maximum(ops.sum(mask_f, axis=-1, keepdims=True), 1.0)
-        return ops.sum(
-            news_embeds * ops.expand_dims(mask_f, axis=-1), axis=1
-        ) / count
+        return ops.sum(news_embeds * ops.expand_dims(mask_f, axis=-1), axis=1) / count
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +360,7 @@ class CAUM(BaseModel):
         # Force-build sub-models with concrete shapes so kernel initializers
         # run eagerly (required for JAX tracing).
         import numpy as np
+
         T = self.config.max_title_length
         H = self.config.max_history_length
         D = self.config.news_dim
@@ -426,17 +420,19 @@ class CAUM(BaseModel):
 
     def get_config(self):
         base_config = super().get_config()
-        base_config.update({
-            "embedding_size": self.config.embedding_size,
-            "news_dim": self.config.news_dim,
-            "news_num_heads": self.config.news_num_heads,
-            "news_head_dim": self.config.news_head_dim,
-            "news_attention_hidden_dim": self.config.news_attention_hidden_dim,
-            "candi_selfatt_num_heads": self.config.candi_selfatt_num_heads,
-            "candi_selfatt_head_dim": self.config.candi_selfatt_head_dim,
-            "candi_cnn_half_window": self.config.candi_cnn_half_window,
-            "candi_att_hidden_dim": self.config.candi_att_hidden_dim,
-            "candi_att_mid_dim": self.config.candi_att_mid_dim,
-            "dropout_rate": self.config.dropout_rate,
-        })
+        base_config.update(
+            {
+                "embedding_size": self.config.embedding_size,
+                "news_dim": self.config.news_dim,
+                "news_num_heads": self.config.news_num_heads,
+                "news_head_dim": self.config.news_head_dim,
+                "news_attention_hidden_dim": self.config.news_attention_hidden_dim,
+                "candi_selfatt_num_heads": self.config.candi_selfatt_num_heads,
+                "candi_selfatt_head_dim": self.config.candi_selfatt_head_dim,
+                "candi_cnn_half_window": self.config.candi_cnn_half_window,
+                "candi_att_hidden_dim": self.config.candi_att_hidden_dim,
+                "candi_att_mid_dim": self.config.candi_att_mid_dim,
+                "dropout_rate": self.config.dropout_rate,
+            }
+        )
         return base_config

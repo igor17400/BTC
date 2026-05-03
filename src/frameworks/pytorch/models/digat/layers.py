@@ -6,8 +6,6 @@ import math
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
 
 # ======================================================================
 # Scatter utilities (replace torch_scatter)
@@ -27,10 +25,12 @@ def scatter_softmax(
     Returns:
         (B, N) softmax-normalised within each group.
     """
-    batch_size, num_items = src.shape
+    batch_size, _ = src.shape
     idx = index.long()
 
-    group_max = torch.full((batch_size, num_groups), float("-inf"), device=src.device, dtype=src.dtype)
+    group_max = torch.full(
+        (batch_size, num_groups), float("-inf"), device=src.device, dtype=src.dtype
+    )
     group_max.scatter_reduce_(1, idx, src, reduce="amax", include_self=True)
     element_max = group_max.gather(1, idx)  # (batch_size, num_items)
 
@@ -58,7 +58,9 @@ def scatter_sum(
         (B, dim_size, D) summed values per group.
     """
     batch_size, _, feat_dim = src.shape
-    out = torch.zeros(batch_size, dim_size, feat_dim, device=src.device, dtype=src.dtype)
+    out = torch.zeros(
+        batch_size, dim_size, feat_dim, device=src.device, dtype=src.dtype
+    )
     idx = index.unsqueeze(-1).expand_as(src)
     return out.scatter_add_(dim, idx, src)
 
@@ -78,9 +80,15 @@ class ScaledDotProductAttention(nn.Module):
         self.scale = math.sqrt(float(attention_dim))
 
     def forward(
-        self, features: torch.Tensor, query: torch.Tensor, mask: torch.Tensor | None = None
+        self,
+        features: torch.Tensor,
+        query: torch.Tensor,
+        mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        scores = torch.bmm(self.K(features), self.Q(query).unsqueeze(2)).squeeze(2) / self.scale
+        scores = (
+            torch.bmm(self.K(features), self.Q(query).unsqueeze(2)).squeeze(2)
+            / self.scale
+        )
         if mask is not None:
             scores = scores.masked_fill(mask == 0, -1e9)
         weights = torch.softmax(scores, dim=1)
@@ -95,7 +103,9 @@ class AdditiveAttention(nn.Module):
         self.affine = nn.Linear(feature_dim, attention_dim, bias=True)
         self.project = nn.Linear(attention_dim, 1, bias=False)
 
-    def forward(self, features: torch.Tensor, mask: torch.Tensor | None = None) -> torch.Tensor:
+    def forward(
+        self, features: torch.Tensor, mask: torch.Tensor | None = None
+    ) -> torch.Tensor:
         scores = self.project(torch.tanh(self.affine(features))).squeeze(-1)
         if mask is not None:
             scores = scores.masked_fill(mask == 0, -1e9)
@@ -123,5 +133,7 @@ class MultiHeadSelfAttention(nn.Module):
         K = self.W_K(x).view(B, L, H, D).transpose(1, 2)
         V = self.W_V(x).view(B, L, H, D).transpose(1, 2)
         attn = torch.softmax(torch.matmul(Q, K.transpose(-2, -1)) / self.scale, dim=-1)
-        out = torch.matmul(attn, V).transpose(1, 2).contiguous().view(B, L, self.out_dim)
+        out = (
+            torch.matmul(attn, V).transpose(1, 2).contiguous().view(B, L, self.out_dim)
+        )
         return out

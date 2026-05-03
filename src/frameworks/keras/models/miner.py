@@ -57,7 +57,11 @@ class NewsEncoder(keras.Model):
 
         padding_mask = ops.not_equal(inputs, 0)
         y = self.multi_head_attention(
-            y, y, y, key_mask=padding_mask, value_mask=padding_mask,
+            y,
+            y,
+            y,
+            key_mask=padding_mask,
+            value_mask=padding_mask,
             training=training,
         )
         y = self.dropout2(y, training=training)
@@ -186,7 +190,11 @@ class MINER(BaseModel):
 
         dummy_input_shape = {
             "hist_tokens": (None, config.max_history_length, config.max_title_length),
-            "cand_tokens": (None, config.max_impressions_length, config.max_title_length),
+            "cand_tokens": (
+                None,
+                config.max_impressions_length,
+                config.max_title_length,
+            ),
         }
         self.build(dummy_input_shape)
 
@@ -251,13 +259,15 @@ class MINER(BaseModel):
 
     def get_config(self):
         base_config = super().get_config()
-        base_config.update({
-            "embedding_size": self.config.embedding_size,
-            "num_heads": self.config.num_heads,
-            "head_dim": self.config.head_dim,
-            "attention_hidden_dim": self.config.attention_hidden_dim,
-            "num_interest_vectors": self.config.num_interest_vectors,
-            "context_code_dim": self.config.context_code_dim,
-            "dropout_rate": self.config.dropout_rate,
-        })
+        base_config.update(
+            {
+                "embedding_size": self.config.embedding_size,
+                "num_heads": self.config.num_heads,
+                "head_dim": self.config.head_dim,
+                "attention_hidden_dim": self.config.attention_hidden_dim,
+                "num_interest_vectors": self.config.num_interest_vectors,
+                "context_code_dim": self.config.context_code_dim,
+                "dropout_rate": self.config.dropout_rate,
+            }
+        )
         return base_config

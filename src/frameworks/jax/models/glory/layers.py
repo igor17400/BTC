@@ -18,7 +18,6 @@ import jax
 import jax.numpy as jnp
 from flax import nnx
 
-
 # ======================================================================
 # Attention primitives (mirror GLORY's ``src/models/base/layers.py``)
 # ======================================================================
@@ -73,17 +72,26 @@ class MultiHeadAttention(nnx.Module):
 
         xavier = nnx.initializers.xavier_uniform()
         self.W_Q = nnx.Linear(
-            key_size, out_dim, use_bias=True,
-            kernel_init=xavier, bias_init=nnx.initializers.zeros_init(),
+            key_size,
+            out_dim,
+            use_bias=True,
+            kernel_init=xavier,
+            bias_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.W_K = nnx.Linear(
-            query_size, out_dim, use_bias=False,
-            kernel_init=xavier, rngs=rngs,
+            query_size,
+            out_dim,
+            use_bias=False,
+            kernel_init=xavier,
+            rngs=rngs,
         )
         self.W_V = nnx.Linear(
-            value_size, out_dim, use_bias=True,
-            kernel_init=xavier, bias_init=nnx.initializers.zeros_init(),
+            value_size,
+            out_dim,
+            use_bias=True,
+            kernel_init=xavier,
+            bias_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.attn = ScaledDotProductAttention(head_dim)
@@ -123,22 +131,27 @@ class AttentionPooling(nnx.Module):
 
     def __init__(self, emb_size: int, hidden_size: int, *, rngs: nnx.Rngs):
         xavier_tanh = nnx.initializers.variance_scaling(
-            math.sqrt(5.0 / 3.0) ** 2, "fan_avg", "uniform",
+            math.sqrt(5.0 / 3.0) ** 2,
+            "fan_avg",
+            "uniform",
         )
         self.att_fc1 = nnx.Linear(
-            emb_size, hidden_size, use_bias=True,
-            kernel_init=xavier_tanh, bias_init=nnx.initializers.zeros_init(),
+            emb_size,
+            hidden_size,
+            use_bias=True,
+            kernel_init=xavier_tanh,
+            bias_init=nnx.initializers.zeros_init(),
             rngs=rngs,
         )
         self.att_fc2 = nnx.Linear(
-            hidden_size, 1, use_bias=True,
+            hidden_size,
+            1,
+            use_bias=True,
             kernel_init=nnx.initializers.xavier_uniform(),
             rngs=rngs,
         )
 
-    def __call__(
-        self, x: jax.Array, attn_mask: jax.Array | None = None
-    ) -> jax.Array:
+    def __call__(self, x: jax.Array, attn_mask: jax.Array | None = None) -> jax.Array:
         # x: (B, N, E)
         e = jnp.tanh(self.att_fc1(x))
         raw = self.att_fc2(e)  # (B, N, 1)
@@ -188,25 +201,31 @@ class GRUCell(nnx.Module):
 
         # Input-to-hidden weights for r, z, n gates (stacked).
         self.W_ih = nnx.Linear(
-            input_size, 3 * hidden_size, use_bias=True,
-            kernel_init=uniform_init, bias_init=uniform_init,
+            input_size,
+            3 * hidden_size,
+            use_bias=True,
+            kernel_init=uniform_init,
+            bias_init=uniform_init,
             rngs=rngs,
         )
         # Hidden-to-hidden weights for r, z, n gates (stacked).
         self.W_hh = nnx.Linear(
-            hidden_size, 3 * hidden_size, use_bias=True,
-            kernel_init=uniform_init, bias_init=uniform_init,
+            hidden_size,
+            3 * hidden_size,
+            use_bias=True,
+            kernel_init=uniform_init,
+            bias_init=uniform_init,
             rngs=rngs,
         )
 
     def __call__(self, x: jax.Array, h: jax.Array) -> jax.Array:
         """Forward: x (N, input_size), h (N, hidden_size) → h' (N, hidden_size)."""
         H = self.hidden_size
-        gi = self.W_ih(x)   # (N, 3H)
-        gh = self.W_hh(h)   # (N, 3H)
+        gi = self.W_ih(x)  # (N, 3H)
+        gh = self.W_hh(h)  # (N, 3H)
 
-        i_r, i_z, i_n = gi[:, :H], gi[:, H:2*H], gi[:, 2*H:]
-        h_r, h_z, h_n = gh[:, :H], gh[:, H:2*H], gh[:, 2*H:]
+        i_r, i_z, i_n = gi[:, :H], gi[:, H : 2 * H], gi[:, 2 * H :]
+        h_r, h_z, h_n = gh[:, :H], gh[:, H : 2 * H], gh[:, 2 * H :]
 
         r = jax.nn.sigmoid(i_r + h_r)
         z = jax.nn.sigmoid(i_z + h_z)
@@ -273,9 +292,9 @@ class GatedGraphConv(nnx.Module):
         num_nodes = x.shape[0]
 
         for i in range(self.num_layers):
-            m = x @ self.weight.value[i]           # (N, D)
+            m = x @ self.weight.value[i]  # (N, D)
             agg = _scatter_add(m[src], dst, num_nodes)  # (N, D)
-            x = self.rnn(agg, x)                   # (N, D)
+            x = self.rnn(agg, x)  # (N, D)
 
         return x
 
@@ -304,20 +323,29 @@ class EntityEncoder(nnx.Module):
         head_num = entity_dim // head_dim
         self.dropout1 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
         self.msa = MultiHeadAttention(
-            entity_dim, entity_dim, entity_dim,
-            head_num, head_dim, rngs=rngs,
+            entity_dim,
+            entity_dim,
+            entity_dim,
+            head_num,
+            head_dim,
+            rngs=rngs,
         )
         self.layernorm1 = nnx.LayerNorm(entity_dim, rngs=rngs)
         self.dropout2 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
         self.attn_pool = AttentionPooling(
-            entity_dim, attention_hidden_dim, rngs=rngs,
+            entity_dim,
+            attention_hidden_dim,
+            rngs=rngs,
         )
         self.layernorm2 = nnx.LayerNorm(entity_dim, rngs=rngs)
         self.linear = nnx.Linear(entity_dim, news_dim, rngs=rngs)
 
     def __call__(
-        self, entity_input: jax.Array, mask: jax.Array | None = None,
-        *, training: bool = False,
+        self,
+        entity_input: jax.Array,
+        mask: jax.Array | None = None,
+        *,
+        training: bool = False,
     ) -> jax.Array:
         """Encode entities.
 
@@ -362,19 +390,28 @@ class GlobalEntityEncoder(nnx.Module):
         self.news_dim = head_num * head_dim
         self.dropout1 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
         self.msa = MultiHeadAttention(
-            entity_dim, entity_dim, entity_dim,
-            head_num, head_dim, rngs=rngs,
+            entity_dim,
+            entity_dim,
+            entity_dim,
+            head_num,
+            head_dim,
+            rngs=rngs,
         )
         self.layernorm1 = nnx.LayerNorm(self.news_dim, rngs=rngs)
         self.dropout2 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
         self.attn_pool = AttentionPooling(
-            self.news_dim, attention_hidden_dim, rngs=rngs,
+            self.news_dim,
+            attention_hidden_dim,
+            rngs=rngs,
         )
         self.layernorm2 = nnx.LayerNorm(self.news_dim, rngs=rngs)
 
     def __call__(
-        self, entity_input: jax.Array, mask: jax.Array | None = None,
-        *, training: bool = False,
+        self,
+        entity_input: jax.Array,
+        mask: jax.Array | None = None,
+        *,
+        training: bool = False,
     ) -> jax.Array:
         """Encode neighbor entities.
 
