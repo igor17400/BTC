@@ -142,6 +142,24 @@ def training_loop(
     }
     experiment_start = time.time()
 
+    # ---- Mixed precision setup (once, outside the epoch loop) ----
+    # ``cfg.device.precision`` selects the autocast dtype:
+    #   - ``"bfloat16"`` / ``"bf16"`` — bf16 autocast, no GradScaler
+    #     (bf16 has fp32-equivalent range, scaler would be a no-op).
+    #   - ``"float16"`` / ``"fp16"`` / ``"half"`` — fp16 autocast +
+    #     ``GradScaler`` for loss scaling. Matches the reference GLORY
+    #     (and most production training) on Ampere/Ada GPUs.
+    amp_dtype: torch.dtype | None = None
+    if cfg and hasattr(cfg, "device") and hasattr(cfg.device, "precision"):
+        precision = str(cfg.device.precision).lower()
+        if precision in ("bfloat16", "bf16"):
+            amp_dtype = torch.bfloat16
+        elif precision in ("float16", "fp16", "half"):
+            amp_dtype = torch.float16
+    use_autocast = amp_dtype is not None and device.type == "cuda"
+    use_scaler = use_autocast and amp_dtype is torch.float16
+    scaler = torch.amp.GradScaler("cuda") if use_scaler else None
+
     # ---- Main loop ----
     with _build_progress() as progress:
         epoch_task = progress.add_task("Epochs", total=num_epochs)
@@ -161,16 +179,6 @@ def training_loop(
             if cfg and hasattr(cfg, "train") and hasattr(cfg.train, "grad_accum_steps"):
                 grad_accum_steps = max(int(cfg.train.grad_accum_steps), 1)
             total_micro = len(train_dataloader)
-
-            # Mixed precision via cfg.device.precision = "bfloat16" | "float16"
-            amp_dtype: torch.dtype | None = None
-            if cfg and hasattr(cfg, "device") and hasattr(cfg.device, "precision"):
-                precision = str(cfg.device.precision).lower()
-                if precision in ("bfloat16", "bf16"):
-                    amp_dtype = torch.bfloat16
-                elif precision in ("float16", "fp16", "half"):
-                    amp_dtype = torch.float16
-            use_autocast = amp_dtype is not None and device.type == "cuda"
 
             optimizer.zero_grad(set_to_none=True)
             for micro_idx, (batch_features, batch_labels) in enumerate(
@@ -194,7 +202,11 @@ def training_loop(
                 display_loss = loss.detach()
                 if grad_accum_steps > 1:
                     loss = loss / grad_accum_steps
-                loss.backward()
+
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                else:
+                    loss.backward()
 
                 is_step = (micro_idx + 1) % grad_accum_steps == 0 or (
                     micro_idx + 1
@@ -205,10 +217,19 @@ def training_loop(
                         and hasattr(cfg, "train")
                         and hasattr(cfg.train, "gradient_clip_val")
                     ):
+                        # Gradient clipping must run on **unscaled** grads,
+                        # otherwise the clip threshold is wrong by the
+                        # current loss scale.
+                        if scaler is not None:
+                            scaler.unscale_(optimizer)
                         torch.nn.utils.clip_grad_norm_(
                             model.parameters(), cfg.train.gradient_clip_val
                         )
-                    optimizer.step()
+                    if scaler is not None:
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        optimizer.step()
                     optimizer.zero_grad(set_to_none=True)
 
                 running_loss += display_loss.item()
