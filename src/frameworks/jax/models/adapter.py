@@ -150,9 +150,7 @@ class JAXAdapter:
     # MINER-specific methods
     # ------------------------------------------------------------------
 
-    def encode_user_interests(
-        self, user_encoder: Any, features: Any
-    ) -> np.ndarray:
+    def encode_user_interests(self, user_encoder: Any, features: Any) -> np.ndarray:
         """Run the MINER user encoder to get K interest vectors.
 
         Args:
@@ -165,6 +163,57 @@ class JAXAdapter:
         if not isinstance(features, jnp.ndarray):
             features = jnp.asarray(features)
         return np.asarray(user_encoder.encode_interests(features, training=False))
+
+    # ------------------------------------------------------------------
+    # CAUM-specific methods
+    # ------------------------------------------------------------------
+
+    def score_caum_impression(
+        self,
+        inter_model: Any,
+        cand_vectors: Any,
+        clicked_vecs: Any,
+        _chunk_size: int = 64,
+    ) -> np.ndarray:
+        """Score all candidates in fixed-size chunks.
+
+        Uses a fixed chunk size so JAX only compiles the inter_model
+        once (for the padded chunk shape) instead of recompiling for
+        every unique impression size.
+
+        Args:
+            inter_model: The candidate-aware interaction model.
+            cand_vectors: (C, D) numpy array of candidate news vectors.
+            clicked_vecs: (H, D) numpy array of clicked news vectors.
+            _chunk_size: Fixed batch size for each forward pass.
+
+        Returns:
+            (C,) numpy array of scores, one per candidate.
+        """
+        C = cand_vectors.shape[0]
+        D = cand_vectors.shape[1]
+        H = clicked_vecs.shape[0]
+
+        all_scores = []
+        for start in range(0, C, _chunk_size):
+            end = min(start + _chunk_size, C)
+            actual = end - start
+
+            # Pad chunk to fixed size so JAX sees a stable shape
+            cand_chunk = np.zeros((_chunk_size, D), dtype=np.float32)
+            cand_chunk[:actual] = cand_vectors[start:end]
+
+            clicked_batch = np.broadcast_to(
+                clicked_vecs[None], (_chunk_size, H, D)
+            ).copy()
+
+            cand_j = jnp.asarray(cand_chunk, dtype=jnp.float32)
+            clicked_j = jnp.asarray(clicked_batch, dtype=jnp.float32)
+
+            chunk_scores = np.asarray(inter_model(cand_j, clicked_j, training=False))
+            all_scores.append(chunk_scores[:actual])
+
+        return np.concatenate(all_scores, axis=0)
 
     # ------------------------------------------------------------------
     # DIGAT-specific methods
@@ -289,7 +338,8 @@ class JAXAdapter:
             end = min(start + batch_size, num_news)
             batch = jnp.asarray(news_features[start:end], dtype=jnp.int32)
             emb = news_encoder(
-                batch[None, :, :], training=False,
+                batch[None, :, :],
+                training=False,
             ).squeeze(axis=0)  # (B, D)
             out[start:end] = np.asarray(emb)
         return out
@@ -325,7 +375,7 @@ class JAXAdapter:
             (N, D) entity representations.
         """
         N = entity_ids.shape[0]
-        if batch_size > 0 and N > batch_size:
+        if batch_size > 0 and batch_size < N:
             chunks = []
             for start in range(0, N, batch_size):
                 end = min(start + batch_size, N)
@@ -360,20 +410,32 @@ class JAXAdapter:
             (N, D) entity representations.
         """
         N = neighbor_ids.shape[0]
-        if batch_size > 0 and N > batch_size:
+        if batch_size > 0 and batch_size < N:
             chunks = []
             for start in range(0, N, batch_size):
                 end = min(start + batch_size, N)
                 ids = jnp.asarray(neighbor_ids[start:end], dtype=jnp.int32)
                 embedded = entity_embedding(ids)
-                mask = jnp.asarray(entity_mask[start:end], dtype=jnp.float32) if entity_mask is not None else None
-                out = global_entity_encoder(embedded[None], mask, training=False).squeeze(axis=0)
+                mask = (
+                    jnp.asarray(entity_mask[start:end], dtype=jnp.float32)
+                    if entity_mask is not None
+                    else None
+                )
+                out = global_entity_encoder(
+                    embedded[None], mask, training=False
+                ).squeeze(axis=0)
                 chunks.append(np.asarray(out))
             return np.concatenate(chunks, axis=0)
         ids = jnp.asarray(neighbor_ids, dtype=jnp.int32)
         embedded = entity_embedding(ids)
-        mask = jnp.asarray(entity_mask, dtype=jnp.float32) if entity_mask is not None else None
-        out = global_entity_encoder(embedded[None], mask, training=False).squeeze(axis=0)
+        mask = (
+            jnp.asarray(entity_mask, dtype=jnp.float32)
+            if entity_mask is not None
+            else None
+        )
+        out = global_entity_encoder(embedded[None], mask, training=False).squeeze(
+            axis=0
+        )
         return np.asarray(out)
 
     def score_glory_impression(
@@ -390,16 +452,16 @@ class JAXAdapter:
         cand_neighbor_emb: Any = None,
     ) -> np.ndarray:
         """Fuse + score a single impression's candidates."""
-        ct = jnp.asarray(clicked_title, dtype=jnp.float32)[None]   # (1, H, D)
+        ct = jnp.asarray(clicked_title, dtype=jnp.float32)[None]  # (1, H, D)
         cg = jnp.asarray(clicked_graph, dtype=jnp.float32)[None]
-        cl = jnp.asarray(cand_local, dtype=jnp.float32)[None]      # (1, C, D)
+        cl = jnp.asarray(cand_local, dtype=jnp.float32)[None]  # (1, C, D)
 
         ce = None
         if clicked_entity_emb is not None:
             ce = jnp.asarray(clicked_entity_emb, dtype=jnp.float32)[None]
 
-        fused = click_encoder(ct, cg, ce)               # (1, H, D)
-        user_emb = user_encoder(fused)                  # (1, D)
+        fused = click_encoder(ct, cg, ce)  # (1, H, D)
+        user_emb = user_encoder(fused)  # (1, D)
 
         co = None
         cn = None
@@ -408,7 +470,7 @@ class JAXAdapter:
         if cand_neighbor_emb is not None:
             cn = jnp.asarray(cand_neighbor_emb, dtype=jnp.float32)[None]
 
-        cand_final = candidate_encoder(cl, co, cn)      # (1, C, D)
+        cand_final = candidate_encoder(cl, co, cn)  # (1, C, D)
         # Dot-product scoring
         scores = jnp.sum(cand_final * user_emb[:, None, :], axis=-1)  # (1, C)
         return np.asarray(scores.squeeze(axis=0))

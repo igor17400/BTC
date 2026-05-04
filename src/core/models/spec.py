@@ -9,7 +9,18 @@ from typing import Any
 
 from omegaconf import DictConfig
 
-from .configs import CAUMConfig, CROWNConfig, LSTURConfig, MINERConfig, NAMLConfig, NRMSConfig, PPRecConfig, TCCMConfig
+from .configs import (
+    CAUMConfig,
+    CROWNConfig,
+    DIGATConfig,
+    GLORYConfig,
+    LSTURConfig,
+    MINERConfig,
+    NAMLConfig,
+    NRMSConfig,
+    PPRecConfig,
+    TCCMConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Spec → Config translation functions
@@ -107,8 +118,12 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
         # Bipartite GNN (paper §3.3)
         gnn_type=ue.get("gnn_type", "gat"),
         graph_num_layers=ue.get("graph_num_layers", 1),
+        graph_hidden_dim=ue.get("graph_hidden_dim", 0),
         gat_num_heads=ue.get("gat_num_heads", 4),
         gat_alpha=ue.get("gat_alpha", 0.2),
+        gat_concat_heads=ue.get("gat_concat_heads", True),
+        sage_aggregator=ue.get("sage_aggregator", "mean"),
+        sage_normalize=ue.get("sage_normalize", True),
         # Candidate-aware attention
         user_attention_dim=ue.get("user_attention_dim", 400),
         # Input constraints
@@ -162,9 +177,8 @@ def spec_to_pprec_config(spec: DictConfig) -> PPRecConfig:
     )
 
 
-def spec_to_digat_config(spec: DictConfig) -> "DIGATConfig":
+def spec_to_digat_config(spec: DictConfig) -> DIGATConfig:
     """Convert a parsed DIGAT spec into DIGATConfig."""
-    from src.core.models.configs import DIGATConfig
 
     ne = spec.model.architecture.news_encoder
     ge = spec.model.architecture.graph_encoder
@@ -185,10 +199,8 @@ def spec_to_digat_config(spec: DictConfig) -> "DIGATConfig":
     )
 
 
-def spec_to_glory_config(spec: DictConfig) -> "GLORYConfig":
+def spec_to_glory_config(spec: DictConfig) -> GLORYConfig:
     """Convert a parsed GLORY spec into GLORYConfig."""
-    from src.core.models.configs import GLORYConfig
-
     ne = spec.model.architecture.news_encoder
     ge = spec.model.architecture.graph_encoder
     return GLORYConfig(
@@ -287,6 +299,12 @@ def spec_to_caum_config(spec: DictConfig) -> CAUMConfig:
         news_num_heads=ne.num_heads,
         news_head_dim=ne.head_dim,
         news_attention_hidden_dim=ne.attention_hidden_dim,
+        entity_embedding_dim=ne.get("entity_embedding_dim", 100),
+        entity_num_heads=ne.get("entity_num_heads", 4),
+        entity_head_dim=ne.get("entity_head_dim", 40),
+        category_embedding_dim=ne.get("category_embedding_dim", 100),
+        use_entity=spec.model.get("use_entity", True),
+        use_category=spec.model.get("use_category", True),
         candi_selfatt_num_heads=ue.candi_selfatt.num_heads,
         candi_selfatt_head_dim=ue.candi_selfatt.head_dim,
         candi_cnn_half_window=ue.candi_cnn.half_window,
@@ -296,6 +314,7 @@ def spec_to_caum_config(spec: DictConfig) -> CAUMConfig:
         max_title_length=spec.inputs.title.max_length,
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
+        max_entities=spec.inputs.get("max_entities", 5),
         process_user_id=spec.inputs.get("process_user_id", False),
     )
 

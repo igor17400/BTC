@@ -37,60 +37,162 @@ from src.frameworks.keras.models.base import BaseModel
 
 
 class NewsEncoder(keras.Model):
-    """Encode a news article from its title token sequence.
+    """Encode a news article from title, entities, and category.
 
-    Pipeline: Embedding → Dropout → MultiHeadSelfAttention → Dropout
-    → AdditiveAttention → Dense(news_dim) → news vector.
+    Following the reference code:
+        title:    Embedding → Dropout → MHSA(20h×20d) → Dropout → AdditivePool → 400d
+        entity:   Embedding → Dropout → MHSA(4h×40d)  → Dropout → AdditivePool → 160d
+        category: Embedding → Reshape → Dropout → Dense → 100d
+        fusion:   Concat([title, entity, category]) → Dense(news_dim)
+
+    When entities/category are disabled, falls back to title-only.
+    Input is a concatenated tensor [title_tokens | entity_indices | category_index]
+    following the PP-Rec packing convention.
     """
 
     def __init__(
         self,
         config: CAUMConfig,
         embedding_layer: layers.Embedding,
+        entity_embedding_layer: layers.Embedding | None = None,
+        category_embedding_layer: layers.Embedding | None = None,
         name: str = "news_encoder",
     ):
         super().__init__(name=name)
         self.config = config
         self.embedding_layer = embedding_layer
+        self.entity_embedding = entity_embedding_layer
+        self.category_embedding = category_embedding_layer
 
-        self.dropout1 = layers.Dropout(
-            config.dropout_rate, seed=config.seed, name="embedding_dropout"
+        # --- Title branch ---
+        self.title_dropout = layers.Dropout(
+            config.dropout_rate, seed=config.seed, name="title_dropout"
         )
-        self.multi_head_attention = layers.MultiHeadAttention(
+        self.title_mhsa = layers.MultiHeadAttention(
             num_heads=config.news_num_heads,
             key_dim=config.news_head_dim,
             dropout=config.dropout_rate,
             kernel_initializer=GlorotUniformMHA(),
-            name="title_word_self_attention",
+            name="title_mhsa",
         )
-        self.dropout2 = layers.Dropout(
-            config.dropout_rate, seed=config.seed, name="attention_dropout"
+        self.title_dropout2 = layers.Dropout(
+            config.dropout_rate, seed=config.seed, name="title_attn_dropout"
         )
-        self.additive_attention = AdditiveAttention(
+        self.title_attention = AdditiveAttention(
             query_vec_dim=config.news_attention_hidden_dim,
             seed=config.seed,
             name="title_additive_attention",
         )
-        self.projection = layers.Dense(config.news_dim, name="news_projection")
+
+        # --- Entity branch (reference: 4h×40d=160, frozen embeddings) ---
+        if entity_embedding_layer is not None:
+            self.entity_dropout = layers.Dropout(
+                config.dropout_rate, seed=config.seed, name="entity_dropout"
+            )
+            self.entity_mhsa = layers.MultiHeadAttention(
+                num_heads=config.entity_num_heads,
+                key_dim=config.entity_head_dim,
+                dropout=config.dropout_rate,
+                kernel_initializer=GlorotUniformMHA(),
+                name="entity_mhsa",
+            )
+            self.entity_dropout2 = layers.Dropout(
+                config.dropout_rate, seed=config.seed, name="entity_attn_dropout"
+            )
+            self.entity_attention = AdditiveAttention(
+                query_vec_dim=config.news_attention_hidden_dim,
+                seed=config.seed,
+                name="entity_additive_attention",
+            )
+
+        # --- Category branch ---
+        if category_embedding_layer is not None:
+            self.category_dropout = layers.Dropout(
+                config.dropout_rate, seed=config.seed, name="category_dropout"
+            )
+            self.category_dense = layers.Dense(
+                config.category_embedding_dim, name="category_proj"
+            )
+
+        # --- Fusion → news_dim ---
+        self.fusion_dense = layers.Dense(config.news_dim, name="news_fusion")
 
     def call(self, inputs, training=None):
-        """inputs: (batch, title_length) → (batch, news_dim)."""
-        embedded = self.embedding_layer(inputs)
-        y = self.dropout1(embedded, training=training)
+        """Encode news features.
 
-        padding_mask = ops.not_equal(inputs, 0)
-        y = self.multi_head_attention(
-            y,
-            y,
-            y,
-            key_mask=padding_mask,
-            value_mask=padding_mask,
+        Args:
+            inputs: (batch, feature_dim) where feature_dim is
+                [title_tokens | entity_indices | category_index].
+                Entity and category are optional.
+
+        Returns:
+            (batch, news_dim) news vector.
+        """
+        offset = 0
+        title_len = self.config.max_title_length
+
+        # --- Slice and encode title ---
+        title_tokens = inputs[:, offset : offset + title_len]
+        offset += title_len
+        title_mask = ops.not_equal(title_tokens, 0)
+
+        title_emb = self.title_dropout(
+            self.embedding_layer(title_tokens), training=training
+        )
+        title_vecs = self.title_mhsa(
+            title_emb,
+            title_emb,
+            title_emb,
+            key_mask=title_mask,
+            value_mask=title_mask,
             training=training,
         )
-        y = self.dropout2(y, training=training)
+        title_vecs = self.title_dropout2(title_vecs, training=training)
+        title_vec = self.title_attention(title_vecs, mask=title_mask)
 
-        news_vec = self.additive_attention(y, mask=padding_mask)
-        return self.projection(news_vec)
+        vecs = [title_vec]
+
+        # --- Entity branch ---
+        has_entity = self.entity_embedding is not None and self.config.use_entity
+        if has_entity:
+            entity_len = self.config.max_entities
+            entity_indices = inputs[:, offset : offset + entity_len]
+            offset += entity_len
+            entity_mask = ops.not_equal(entity_indices, 0)
+
+            entity_emb = self.entity_dropout(
+                self.entity_embedding(entity_indices), training=training
+            )
+            entity_vecs = self.entity_mhsa(
+                entity_emb,
+                entity_emb,
+                entity_emb,
+                key_mask=entity_mask,
+                value_mask=entity_mask,
+                training=training,
+            )
+            entity_vecs = self.entity_dropout2(entity_vecs, training=training)
+            entity_vec = self.entity_attention(entity_vecs, mask=entity_mask)
+            vecs.append(entity_vec)
+
+        # --- Category branch ---
+        has_category = self.category_embedding is not None and self.config.use_category
+        if has_category:
+            category_idx = inputs[:, offset : offset + 1]
+            offset += 1
+
+            cat_emb = self.category_embedding(category_idx)
+            cat_emb = ops.reshape(cat_emb, (-1, self.config.category_embedding_dim))
+            cat_emb = self.category_dropout(cat_emb, training=training)
+            cat_vec = self.category_dense(cat_emb)
+            vecs.append(cat_vec)
+
+        # --- Fusion ---
+        if len(vecs) > 1:
+            fused = ops.concatenate(vecs, axis=-1)
+        else:
+            fused = vecs[0]
+        return self.fusion_dense(fused)
 
 
 # ---------------------------------------------------------------------------
@@ -328,17 +430,16 @@ class CAUM(BaseModel):
         self.user_encoder = None
         self.inter_model = None
 
+        # Compute feature dim: title + entities + category
+        feat_dim = config.max_title_length
+        if config.use_entity:
+            feat_dim += config.max_entities
+        if config.use_category:
+            feat_dim += 1
+
         dummy_input_shape = {
-            "hist_tokens": (
-                None,
-                config.max_history_length,
-                config.max_title_length,
-            ),
-            "cand_tokens": (
-                None,
-                config.max_impressions_length,
-                config.max_title_length,
-            ),
+            "hist_tokens": (None, config.max_history_length, feat_dim),
+            "cand_tokens": (None, config.max_impressions_length, feat_dim),
         }
         self.build(dummy_input_shape)
 
@@ -353,7 +454,40 @@ class CAUM(BaseModel):
             name="word_embedding",
         )
 
-        self.news_encoder = NewsEncoder(self.config, self.embedding_layer)
+        # Entity embedding (frozen, from pretrained WikiData)
+        entity_emb_layer = None
+        if self.config.use_entity:
+            entity_indices = self.processed_news.get("entity_indices")
+            num_entities = self.processed_news.get("num_entities")
+            if num_entities is None and entity_indices is not None:
+                import numpy as np
+
+                num_entities = int(np.max(entity_indices)) + 1
+            num_entities = num_entities or 1
+            entity_emb_layer = layers.Embedding(
+                input_dim=num_entities,
+                output_dim=self.config.entity_embedding_dim,
+                trainable=False,
+                name="entity_embedding",
+            )
+
+        # Category embedding (frozen)
+        category_emb_layer = None
+        if self.config.use_category:
+            num_categories = self.processed_news.get("num_categories", 1)
+            category_emb_layer = layers.Embedding(
+                input_dim=num_categories + 1,
+                output_dim=self.config.category_embedding_dim,
+                trainable=False,
+                name="category_embedding",
+            )
+
+        self.news_encoder = NewsEncoder(
+            self.config,
+            self.embedding_layer,
+            entity_embedding_layer=entity_emb_layer,
+            category_embedding_layer=category_emb_layer,
+        )
         self.user_encoder = UserEncoder(self.config, self.news_encoder)
         self.inter_model = InterModel(self.config)
 
@@ -361,14 +495,20 @@ class CAUM(BaseModel):
         # run eagerly (required for JAX tracing).
         import numpy as np
 
-        T = self.config.max_title_length
+        # Compute feature dim: title + entities + category
+        feat_dim = self.config.max_title_length
+        if self.config.use_entity:
+            feat_dim += self.config.max_entities
+        if self.config.use_category:
+            feat_dim += 1
+
         H = self.config.max_history_length
         D = self.config.news_dim
 
-        dummy_tokens = np.zeros((1, T), dtype="int32")
+        dummy_tokens = np.zeros((1, feat_dim), dtype="int32")
         self.news_encoder(dummy_tokens, training=False)
 
-        dummy_hist = np.zeros((1, H, T), dtype="int32")
+        dummy_hist = np.zeros((1, H, feat_dim), dtype="int32")
         self.user_encoder(dummy_hist, training=False)
 
         dummy_cand = np.zeros((1, D), dtype="float32")

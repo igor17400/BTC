@@ -104,8 +104,13 @@ class CROWNConfig:
     # Paper uses GAT; reference code ships GraphSAGE. Both supported for ablation.
     gnn_type: str = "gat"  # 'gat' or 'graphsage'
     graph_num_layers: int = 1
+    graph_hidden_dim: int = 0  # 0 = auto (news_embedding_dim); set explicitly for Keras
     gat_num_heads: int = 4
     gat_alpha: float = 0.2
+    gat_concat_heads: bool = True
+    # GraphSAGE-specific
+    sage_aggregator: str = "mean"
+    sage_normalize: bool = True
 
     # Candidate-aware attention (paper: scaled dot-product)
     user_attention_dim: int = 400
@@ -145,11 +150,11 @@ class GLORYConfig:
     max_impressions_length: int = 5
 
     # Global news graph
-    use_graph_type: int = 0         # 0 = trajectory, 1 = co-occurrence
+    use_graph_type: int = 0  # 0 = trajectory, 1 = co-occurrence
     directed: bool = True
     gnn_num_layers: int = 3
-    k_hops: int = 2                 # subgraph sampling depth
-    num_neighbors: int = 8          # max neighbors per node per hop
+    k_hops: int = 2  # subgraph sampling depth
+    num_neighbors: int = 8  # max neighbors per node per hop
 
     # Entity support (off in v1 — add later)
     use_entity: bool = False
@@ -370,6 +375,18 @@ class CAUMConfig:
     news_head_dim: int = 20
     news_attention_hidden_dim: int = 200
 
+    # Entity encoder (reference: 4 heads × 40 dim = 160)
+    entity_embedding_dim: int = 100
+    entity_num_heads: int = 4
+    entity_head_dim: int = 40
+
+    # Category encoder (reference: embedding 100d → Dense 100d)
+    category_embedding_dim: int = 100
+
+    # Feature flags
+    use_entity: bool = True
+    use_category: bool = True
+
     # Candidate-aware self-attention (Candi-SelfAtt)
     candi_selfatt_num_heads: int = 20
     candi_selfatt_head_dim: int = 20
@@ -388,6 +405,7 @@ class CAUMConfig:
     max_title_length: int = 30
     max_history_length: int = 50
     max_impressions_length: int = 5
+    max_entities: int = 5
 
     # Training
     process_user_id: bool = False

@@ -23,6 +23,7 @@ dataset:
   process_category: ${spec.inputs.process_category}
   process_subcategory: ${spec.inputs.process_subcategory}
   process_user_id: ${spec.inputs.process_user_id}
+  process_entities: ${spec.inputs.process_entities}
 
 train:
   batch_size: 8

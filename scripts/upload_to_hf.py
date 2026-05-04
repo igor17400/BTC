@@ -41,7 +41,18 @@ def _detect_model_name(run_path: Path) -> str:
     """Detect model name from the run path."""
     for parent in [run_path] + list(run_path.parents):
         name = parent.name
-        for model in ["nrms", "naml", "lstur", "pprec", "crown", "digat", "glory"]:
+        for model in [
+            "nrms",
+            "naml",
+            "lstur",
+            "pprec",
+            "crown",
+            "digat",
+            "glory",
+            "miner",
+            "caum",
+            "tccm",
+        ]:
             if model in name.lower():
                 return model.upper()
     return "unknown"
@@ -164,18 +175,20 @@ license: apache-2.0
     # Compute mean ± std
     if len(seed_results) > 1:
         import numpy as np
+
         metrics = ["auc", "mrr", "ndcg@5", "ndcg@10"]
         means = {m: np.mean([sr[m] for sr in seed_results if m in sr]) for m in metrics}
         stds = {m: np.std([sr[m] for sr in seed_results if m in sr]) for m in metrics}
         card += f"| **mean ± std** | **{means['auc']:.4f}±{stds['auc']:.4f}** | **{means['mrr']:.4f}±{stds['mrr']:.4f}** | **{means['ndcg@5']:.4f}±{stds['ndcg@5']:.4f}** | **{means['ndcg@10']:.4f}±{stds['ndcg@10']:.4f}** |\n"
 
-    card += f"\n\\* Best seed (weights at repo root)\n"
+    card += "\n\\* Best seed (weights at repo root)\n"
 
     # Include spec from Hydra config if available.
     if run_path:
         hydra_cfg_path = run_path / ".hydra" / "config.yaml"
         if hydra_cfg_path.exists():
             import yaml
+
             with open(hydra_cfg_path) as f:
                 hydra_cfg = yaml.safe_load(f)
             spec = hydra_cfg.get("spec", {})
@@ -290,7 +303,9 @@ def upload(
         raise FileNotFoundError("No seeds with weights found")
 
     # Find best seed.
-    best_idx = max(range(len(seed_results)), key=lambda i: seed_results[i].get("auc", -1))
+    best_idx = max(
+        range(len(seed_results)), key=lambda i: seed_results[i].get("auc", -1)
+    )
     best_seed = seed_results[best_idx]["seed"]
     best_dir = seed_results[best_idx]["_dir"]
 
@@ -299,7 +314,9 @@ def upload(
     print(f"Dataset:   {dataset}")
     print(f"Repo:      {repo_id}")
     print(f"Seeds:     {[sr['seed'] for sr in seed_results]}")
-    print(f"Best seed: {best_seed} (AUC={seed_results[best_idx].get('auc', 'N/A'):.4f})")
+    print(
+        f"Best seed: {best_seed} (AUC={seed_results[best_idx].get('auc', 'N/A'):.4f})"
+    )
 
     if dry_run:
         print("\n[DRY RUN] Would upload the above. Exiting.")
@@ -332,9 +349,16 @@ def upload(
 
         # Generate README.
         readme = _generate_readme(
-            repo_id, model_name, framework, dataset,
-            [{k: v for k, v in sr.items() if not k.startswith("_")} for sr in seed_results],
-            best_seed, best_dir,
+            repo_id,
+            model_name,
+            framework,
+            dataset,
+            [
+                {k: v for k, v in sr.items() if not k.startswith("_")}
+                for sr in seed_results
+            ],
+            best_seed,
+            best_dir,
         )
         (tmp_path / "README.md").write_text(readme)
 
@@ -356,23 +380,29 @@ def main():
     )
     group = parser.add_mutually_exclusive_group(required=True)
     group.add_argument(
-        "--run-dir", type=str,
+        "--run-dir",
+        type=str,
         help="Directory containing seed_* folders (uploads all seeds)",
     )
     group.add_argument(
-        "--run-path", type=str,
+        "--run-path",
+        type=str,
         help="Single seed run directory",
     )
     parser.add_argument(
-        "--org", type=str, default="newsrex",
+        "--org",
+        type=str,
+        default="newsrex",
         help="HuggingFace org (default: newsrex)",
     )
     parser.add_argument(
-        "--private", action="store_true",
+        "--private",
+        action="store_true",
         help="Create a private repository",
     )
     parser.add_argument(
-        "--dry-run", action="store_true",
+        "--dry-run",
+        action="store_true",
         help="Show what would be uploaded without actually uploading",
     )
     args = parser.parse_args()

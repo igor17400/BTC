@@ -6,6 +6,10 @@ model:
       num_heads: 20
       head_dim: 20
       attention_hidden_dim: 200
+      entity_embedding_dim: 100
+      entity_num_heads: 4
+      entity_head_dim: 40
+      category_embedding_dim: 100
     user_encoder:
       type: candidate_aware
       candi_selfatt:
@@ -22,6 +26,8 @@ model:
     size: 300
     trainable: true
   news_dim: 400
+  use_entity: true
+  use_category: true
   dropout_rate: 0.2
   seed: 42
 
@@ -29,11 +35,13 @@ inputs:
   title: { max_length: 30 }
   history: { max_length: 50 }
   impressions: { max_length: 5 }
+  max_entities: 5
   process_title: true
   process_abstract: false
-  process_category: false
+  process_category: true
   process_subcategory: false
   process_user_id: false
+  process_entities: true
 
 training:
   loss:
