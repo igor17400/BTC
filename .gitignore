@@ -48,9 +48,11 @@ checkpoints/
 *.pt
 logs/
 .hydra/
+reference_codes/
+reference_papers/
 
-# Do not keep dataset files
-data/
+# Do not keep dataset files (root-level only, not src/core/data/)
+/data/
 
 # Jupyter
 .ipynb_checkpoints
@@ -74,6 +76,10 @@ poetry.lock
 coverage.xml
 .pytest_cache/
 htmlcov/
+tests/.smoke_logs/
+
+# VewsX precomputed stats
+**/vewsx_*.parquet
 
 # Documentation
 docs/_build/
@@ -82,3 +88,5 @@ site/
 # Environment variables
 .env
 .env.*
+.claude
+.data/

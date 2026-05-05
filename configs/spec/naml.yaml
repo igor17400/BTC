@@ -1,0 +1,69 @@
+model:
+  name: naml
+  architecture:
+    news_encoder:
+      type: cnn_multi_view
+      views:
+        title:
+          type: cnn
+          filter_num: 400
+          kernel_size: 3
+          activation: relu
+          attention_query_dim: 200
+        abstract:
+          type: cnn
+          filter_num: 400
+          kernel_size: 3
+          activation: relu
+          attention_query_dim: 200
+        category:
+          type: embedding
+          embedding_dim: 100
+        subcategory:
+          type: embedding
+          embedding_dim: 100
+      view_attention_query_dim: 200
+    user_encoder:
+      type: additive_attention
+      attention_query_dim: 200
+      num_attention_heads: 10
+    click_predictor:
+      type: dot_product
+  embedding:
+    size: 300
+    trainable: true
+  dropout_rate: 0.2
+  seed: 42
+
+inputs:
+  title: { max_length: 32 }
+  abstract: { max_length: 50 }
+  history: { max_length: 50 }
+  impressions: { max_length: 5 }
+  process_title: true
+  process_abstract: true
+  process_category: true
+  process_subcategory: true
+  process_user_id: false
+
+training:
+  loss:
+    name: categorical_crossentropy
+    from_logits: true
+    reduction: sum_over_batch_size
+    label_smoothing: 0.0
+  optimizer: adam
+  learning_rate: 0.0001
+  batch_size: 256
+  num_epochs: 20
+  early_stopping:
+    patience: 5
+    min_improvement: 0.01
+  negative_sampling:
+    strategy: random
+    candidates: 4
+
+evaluation:
+  mode: fast
+  metrics: [auc, mrr, ndcg@5, ndcg@10]
+  batch_size: 512

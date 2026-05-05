@@ -1,0 +1,11 @@
+# @package _global_
+#
+# PP-Rec on fastMIND (25% user subset of MIND-small for fast iteration)
+# Usage: python src/train.py experiment=fastmind/pprec framework=keras
+
+defaults:
+  - /experiment/mind/pprec
+  - override /dataset: fastmind
+  - _self_
+
+name: fastmind_pprec

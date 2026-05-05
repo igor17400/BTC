@@ -1,148 +1,121 @@
-import os
+"""NewsReX training entry point.
+
+Thin Hydra dispatcher — all framework logic lives in
+``src.frameworks.{keras,pytorch,jax}.runner.run(cfg)``.
+
+When ``multi_seed.enabled`` is true, trains the model multiple times
+with different seeds, collects metrics, and reports mean ± std.
+"""
+
+import importlib
+from pathlib import Path
 
 import hydra
-
-# Set JAX as Keras backend before importing keras
-os.environ["KERAS_BACKEND"] = "jax"
-
-import keras
-
+import pandas as pd
 from omegaconf import DictConfig, OmegaConf
-from rich.progress import (
-    BarColumn,
-    Progress,
-    SpinnerColumn,
-    TaskProgressColumn,
-    TextColumn,
-    TimeElapsedColumn,
-    TimeRemainingColumn,
-)
 
-from src.utils.metrics.functions_optimized import NewsRecommenderMetricsOptimized as NewsRecommenderMetrics
-from src.utils.io.saving import get_output_run_dir
-from src.utils.io.logging import setup_logging, console
-from src.utils.model.model import initialize_model_and_dataset
-from src.utils.training.orchestration import training_loop_orchestrator
-from src.utils.metrics.wrapper import create_news_metrics, LightweightNewsMetrics
-from src.utils.io.logging import setup_wandb_session
-from src.utils.device.device import setup_device
+from src.core.io.logging import console, setup_logging
+from src.core.io.progress import set_default_backend
+
+FRAMEWORK_MODULES = {
+    "keras": "src.frameworks.keras.runner",
+    "pytorch": "src.frameworks.pytorch.runner",
+    "jax": "src.frameworks.jax.runner",
+}
 
 
-def setup_precision(precision: str = 'float32'):
-    """Sets the global Keras precision policy.
-    
-    Args:
-        precision: Precision type - 'float32', 'float16', or 'bfloat16'.
-                  When using float16 or bfloat16, automatically enables mixed precision.
-    """
-    # Map simple precision names to Keras mixed precision policies
-    precision_map = {
-        'float32': 'float32',
-        'float16': 'mixed_float16',  # Automatically use mixed precision for float16
-        'bfloat16': 'mixed_bfloat16'  # Automatically use mixed precision for bfloat16
-    }
+def _run_single(cfg: DictConfig) -> dict:
+    """Run a single training pass and return metrics."""
+    framework = getattr(cfg, "framework", "keras")
+    runner = importlib.import_module(FRAMEWORK_MODULES[framework])
+    return runner.run(cfg) or {}
 
-    # Get the policy name
-    policy_name = precision_map.get(precision, 'float32')
 
-    if precision not in precision_map:
-        console.log(f"[yellow]Warning: Invalid precision '{precision}'. Using 'float32'.[/yellow]")
-        console.log(f"[yellow]Valid options: float32, float16, bfloat16[/yellow]")
-        policy_name = 'float32'
+def _run_multi_seed(cfg: DictConfig) -> None:
+    """Run training across multiple seeds and report aggregated results."""
+    seeds = list(cfg.multi_seed.seeds)
+    framework = getattr(cfg, "framework", "keras")
+    model_name = cfg.model_name
 
-    console.log(f"Setting Keras precision policy to '{policy_name}' (precision: {precision}).")
-    policy = keras.mixed_precision.Policy(policy_name)
-    keras.mixed_precision.set_global_policy(policy)
+    console.rule(
+        f"[bold]Multi-Seed Training: {model_name} / {framework} ({len(seeds)} seeds)"
+    )
 
-    # Log compute and variable dtypes
-    console.log(f"  Compute dtype: {policy.compute_dtype}")
-    console.log(f"  Variable dtype: {policy.variable_dtype}")
+    all_metrics = []
+    for i, seed in enumerate(seeds):
+        console.rule(f"Seed {seed} ({i + 1}/{len(seeds)})")
 
-    if precision in ['float16', 'bfloat16']:
-        console.log(f"  [green]Mixed precision enabled: Computations in {precision}, variables in float32[/green]")
+        # Override the seed and output dir for this run.
+        # Hydra's runtime.output_dir is frozen at startup (seed 42),
+        # so we build a per-seed output path explicitly.
+        cfg_copy = OmegaConf.to_container(cfg, resolve=True)
+        cfg_copy["seed"] = seed
+        cfg_copy["_output_run_dir"] = str(
+            Path(cfg_copy["output_base_dir"])
+            / "train"
+            / cfg_copy.get("dataset", {}).get("name", "unknown")
+            / model_name
+            / framework
+            / f"seed_{seed}"
+        )
+        cfg_run = OmegaConf.create(cfg_copy)
+
+        metrics = _run_single(cfg_run)
+        if metrics:
+            metrics["seed"] = seed
+            all_metrics.append(metrics)
+            console.log(f"Seed {seed} results: {metrics}")
+
+    if not all_metrics:
+        console.log("[red]No seeds produced metrics.[/red]")
+        return
+
+    # Aggregate results
+    results_df = pd.DataFrame(all_metrics)
+    metric_cols = [c for c in results_df.columns if c != "seed"]
+
+    console.rule("[bold]Multi-Seed Results")
+    console.print(results_df.to_string(index=False))
+
+    # Compute mean ± std
+    summary = {}
+    for col in metric_cols:
+        if pd.api.types.is_numeric_dtype(results_df[col]):
+            mean = results_df[col].mean()
+            std = results_df[col].std()
+            summary[col] = f"{mean:.4f} ± {std:.4f}"
+
+    console.print()
+    console.rule("[bold]Mean ± Std")
+    for metric, value in summary.items():
+        console.print(f"  {metric}: {value}")
 
 
 @hydra.main(version_base=None, config_path="../configs", config_name="config")
-def main_training_entry(cfg: DictConfig) -> None:
+def main(cfg: DictConfig) -> None:
     """Main entry point for training, configured by Hydra."""
-    # Setup logging with rich formatting
     setup_logging(level=cfg.logging.level if hasattr(cfg.logging, "level") else "INFO")
+    set_default_backend(cfg.logging.get("progress_backend", "rich"))
 
-    console.log(f"--- {cfg.model_name} Training Run Initializing ---")
+    framework = getattr(cfg, "framework", "keras")
+
+    if framework not in FRAMEWORK_MODULES:
+        raise ValueError(
+            f"Unknown framework: '{framework}'. Available: {list(FRAMEWORK_MODULES.keys())}"
+        )
+
+    console.log(
+        f"--- {cfg.model_name} Training Run Initializing (framework: {framework}) ---"
+    )
     console.log("Configuration used:")
     console.log(OmegaConf.to_yaml(cfg))
     console.log("------------------------------------")
 
-    # Setup device configuration
-    setup_device(
-        gpu_ids=cfg.device.gpu_ids if hasattr(cfg.device, "gpu_ids") else [],
-        memory_limit=cfg.device.memory_limit if hasattr(cfg.device, "memory_limit") else 0.9
-    )
-    # Determine precision policy
-    if hasattr(cfg.device, "precision"):
-        # New format: precision as string (float32, float16, bfloat16)
-        precision = cfg.device.precision
+    if getattr(cfg, "multi_seed", None) and cfg.multi_seed.enabled:
+        _run_multi_seed(cfg)
     else:
-        precision = "float32"  # Default
-
-    # Set global Keras precision policy
-    setup_precision(precision)
-
-    # Set random seeds for all backends (Keras 3 handles backend-specific seeding)
-    keras.utils.set_random_seed(cfg.seed)
-
-    # Initialize WandB
-    setup_wandb_session(cfg)
-
-    # Prepare training metrics
-    if LightweightNewsMetrics.should_use_lightweight_metrics(cfg):
-        # Use lightweight metrics during training, custom metrics in callbacks
-        training_metrics = LightweightNewsMetrics.create_training_metrics()
-        console.log("Using lightweight metrics during training with custom metrics in callbacks")
-    else:
-        # Use full custom metrics during training (slower but more comprehensive)
-        training_metrics = create_news_metrics(
-            NewsRecommenderMetrics(**cfg.metrics.params if hasattr(cfg.metrics, "params") else {}))
-        console.log("Using full custom metrics during training")
-
-    # Model and Dataset Initialization (includes compilation with metrics)
-    model, dataset_provider = initialize_model_and_dataset(cfg, training_metrics)
-
-    # Metrics Calculator
-    metrics_engine = NewsRecommenderMetrics(
-        **cfg.metrics.params if hasattr(cfg.metrics, "params") else {}
-    )
-
-    # Setup output directory based on Hydra's current run path
-    output_run_dir = get_output_run_dir(cfg)
-    output_run_dir.mkdir(parents=True, exist_ok=True)
-    console.log(f"All outputs for this run will be saved in: {output_run_dir.resolve()}")
-
-    # Rich Progress Bar context manager
-    with Progress(
-            SpinnerColumn(),
-            TextColumn("[progress.description]{task.description}"),
-            BarColumn(bar_width=None),
-            TaskProgressColumn(),
-            TextColumn("({task.completed} of {task.total} batches)"),
-            TimeElapsedColumn(),
-            TextColumn("|"),
-            TimeRemainingColumn(),
-            console=console,
-            transient=False,
-    ) as global_progress_bar:
-
-        training_loop_orchestrator(
-            model,
-            dataset_provider,
-            cfg,
-            metrics_engine,
-            global_progress_bar,
-            output_run_dir,
-        )
-
-    console.log(f"--- {cfg.model_name} Training Run Finished ---")
+        _run_single(cfg)
 
 
 if __name__ == "__main__":
-    main_training_entry()
+    main()

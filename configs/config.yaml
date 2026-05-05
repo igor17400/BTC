@@ -1,63 +1,73 @@
 defaults:
 - _self_
-- model: nrms # default model
-- dataset: mind # default dataset
-- experiment: nrms_mind_small # default experiment
+- experiment: mind/nrms  # default experiment (loads spec + dataset)
 - override hydra/hydra_logging: disabled
 - override hydra/job_logging: disabled
 
 # Hydra configuration
 hydra:
   run:
-    dir: ${output_base_dir}/${name}/${now:%Y-%m-%d-%H-%M-%S}
+    dir: ${output_base_dir}/train/${dataset.name}/${model_name}/${framework}/seed_${seed}
   sweep:
     dir: ${output_base_dir}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
     subdir: ${hydra.job.num}
   job:
-    chdir: false  # Don't change working directory
+    chdir: false
 
-# Basic configuration (fallback values if not specified in experiment)
+# Framework selection (override per run: framework=pytorch)
+framework: keras  # Options: keras, pytorch, jax
+
+# Pre-trained weights for eval-only mode (used by src/eval.py)
+weights: null
+
+# Basic configuration
 seed: 42
-output_base_dir: "outputs"
+output_base_dir: outputs
 device:
-  gpu_ids: [ 0 ] # Use all 4 GPUs
-  memory_limit: 1 # Use 100% of each GPU's memory
+  gpu_ids: [0]
+  memory_limit: 1
+  keras_backend: jax  # Options: jax, torch
 num_workers: 4
 
-# Default training parameters (can be overridden by experiment)
+# Default training parameters (overridden by experiment → spec)
 train:
-  batch_size: 32
+  batch_size: 512
   num_epochs: 10
   learning_rate: 0.0001
   gradient_clip_val: 1.0
+  grad_accum_steps: 1
   early_stopping:
     patience: 5
     min_improvement: 0.01
 
-# Default evaluation parameters (can be overridden by experiment)
+# Default evaluation parameters (overridden by experiment → spec)
 eval:
-  fast_evaluation: true # Whether to use fast evaluation with precomputed vectors
-  batch_size: 4096 # Batch size for evaluation
-  save_predictions: true # Whether to save predictions to file
-  predictions_dir: "predictions" # Directory to save predictions
-  run_initial_eval: false # <-- (optional, it's interesting to see performance improve, but it takes longer)
-  run_test_after_training: true # <--- (optional, if you want to run test after training)
+  fast_evaluation: true
+  batch_size: 4096
+  save_predictions: true
+  predictions_dir: predictions
+  run_initial_eval: false
+  run_test_after_training: true
 
-# Default logging configuration (can be overridden by experiment)
+# Default logging configuration
 logging:
-  project_name: "NewsReX"
-  enable_wandb: false
-  experiment_name: ${model._target_}_${dataset.version} # This will create names like "src.models.nrms.NRMS_small"
+  project_name: NewsReX
+  enable_wandb: true
+  experiment_name: ${framework}/${dataset.name}/${model_name}
+  wandb_group: ${framework}/${dataset.name}/${model_name}
+  progress_backend: rich  # "rich" (interactive) or "tqdm" (line-by-line, for background agents)
 
 # Metrics configuration
 metrics:
-  params: {} # Empty dict for default parameters
-  _target_: src.utils.metrics.NewsRecommenderMetrics
+  params: {}
+  _target_: src.core.metrics.functions.NewsRecommenderMetrics
 
-# Remove or comment out the root level experiment_name since we're using the one in logging
-# experiment_name: None
+# Multi-seed evaluation (for paper-ready results with mean ± std)
+multi_seed:
+  enabled: false
+  seeds: [42, 123, 456]
 
 # Cache configuration
 cache:
-  root_dir: ".cache" # Hidden cache directory in project root
-  clear_on_start: false # Whether to clear cache when starting training
+  root_dir: .cache
+  clear_on_start: false

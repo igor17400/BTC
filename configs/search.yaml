@@ -1,0 +1,27 @@
+# Hyperparameter search configuration
+#
+# Usage:
+#   python src/search.py search.model=nrms search.framework=pytorch
+#   python src/search.py search.model=naml search.framework=pytorch search.n_trials=20
+#   python src/search.py search.model=lstur search.framework=pytorch search.phase=2
+
+defaults:
+  - config  # inherit the full training config (experiment, dataset, spec, etc.)
+  - _self_
+
+search:
+  model: nrms           # nrms, naml, lstur
+  framework: pytorch    # pytorch, keras, jax
+  dataset: mind         # experiment dataset group
+  phase: 1              # 1 = training dynamics, 2 = architecture
+  n_trials: 20
+  epochs: 5
+  batch_size: 512
+  wandb: true
+  storage: "sqlite:///outputs/search/optuna.db"
+  study_name: null      # auto-generated if null: {model}_{framework}_phase{phase}
+
+# Override Hydra output dir for search runs
+hydra:
+  run:
+    dir: ${output_base_dir}/search/${now:%Y-%m-%d-%H-%M-%S}

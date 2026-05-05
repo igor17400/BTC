@@ -1,51 +1,26 @@
+# Pre-commit hooks for NewsReX.
+# Install once:   uv run pre-commit install
+# Run manually:   uv run pre-commit run --all-files
+# Update hooks:   uv run pre-commit autoupdate
+
 repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+  # Ruff: lint + format. Reads settings from pyproject.toml ([tool.ruff]).
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.8
     hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
-    -   id: check-added-large-files
-    -   id: debug-statements
-    -   id: check-merge-conflict
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
 
--   repo: https://github.com/psf/black
-    rev: 23.3.0
+  # Generic hygiene
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
     hooks:
-    -   id: black
-        language_version: python3
-        args: [--line-length=130]
-
--   repo: https://github.com/pycqa/isort
-    rev: 5.12.0
-    hooks:
-    -   id: isort
-        args: ["--profile", "black", "--filter-files"]
-
--   repo: https://github.com/pycqa/flake8
-    rev: 6.0.0
-    hooks:
-    -   id: flake8
-        additional_dependencies: [flake8-docstrings]
-        args: [
-            "--max-line-length=130",
-            "--docstring-convention=google",
-            "--ignore=D100,D104,W503,D415,D107,D101,D102,D103,E203"  # Added E203 to ignore list
-        ]
-
--   repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.4.1
-    hooks:
-    -   id: mypy
-        additional_dependencies: [
-            'types-requests',
-            'types-PyYAML',
-            'types-setuptools',
-            'types-click',
-            'types-tqdm'
-        ]
-        args: [
-            "--ignore-missing-imports",
-            "--disallow-untyped-defs",
-            "--explicit-package-bases"
-        ]
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: debug-statements
+      - id: check-added-large-files
+        args: [--maxkb=1024]

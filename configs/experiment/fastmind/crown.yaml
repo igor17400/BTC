@@ -1,0 +1,11 @@
+# @package _global_
+#
+# CROWN on fastMIND (25% user subset of MIND-small for fast iteration)
+# Usage: python src/train.py experiment=fastmind/crown framework=keras
+
+defaults:
+  - /experiment/mind/crown
+  - override /dataset: fastmind
+  - _self_
+
+name: fastmind_crown

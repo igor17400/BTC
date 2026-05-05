@@ -1,6 +1,0 @@
-# Base configuration for all news recommendation models
-
-# Common model parameters
-embedding_size: 300
-dropout_rate: 0.2
-seed: 42

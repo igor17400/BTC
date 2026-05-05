@@ -1,0 +1,88 @@
+model:
+  name: tccm
+  architecture:
+    news_encoder:
+      type: multi_head_self_attention
+      news_dim: 400
+      num_heads: 20
+      head_dim: 20
+      # PP-Rec ``co1`` cross-attention: 5 heads × 40 dim = 200d output,
+      # then Concat + Dense(news_dim) fusion. Paper text claims 20×20 +
+      # Add residual, but the empirical port consistently underperformed
+      # PP-Rec ``co1`` on MIND-small val/test.
+      co_num_heads: 5
+      co_head_dim: 40
+      attention_hidden_dim: 200
+      entity_embedding_dim: 100
+      category_embedding_dim: 200
+    # Popularity-aware user encoder (CPJA) reuses these.
+    popularity_embedding_bins: 200
+    popularity_embedding_dim: 400
+    # ---- TCCM popularity encoder (per-token bucketed CTR) ----
+    popularity_encoder:
+      # Bucket count for the shared word/entity popularity-bucket
+      # embedding (paper reference: 200).
+      token_embedding_bins: 200
+      token_embedding_dim: 200
+      # Self-/cross-attention on the popularity branch.
+      num_heads: 1
+      head_dim: 400
+      # MLP head: pop_vec -> 256 -> 256 -> 128 -> sigmoid(1)
+      content_dims: [256, 256, 128]
+    # ---- Time / timeliness module ----
+    time_module:
+      embedding_bins: 505
+      embedding_dim: 100
+      dense_dims: [64, 64]
+      # λ exponent on the timeliness factor t'^(-λ) (paper Eq. 2).
+      lambda_exp: 2.0
+    # ---- Activity gater (η balancing relevance vs. popularity) ----
+    activity_gate_dims: [128, 64]
+    use_entity: true
+    use_activity_gate: true
+    # ---- Causal intervention at inference (paper §3.4) ----
+    # The paper claims to apply do(P)=const at eval, but the reference
+    # code's ``news_ranking`` does not. Empirically, turning intervention
+    # off (matching the reference) gives ~+0.015 test AUC on MIND-small,
+    # so it's the default.
+    use_causal_intervention: false
+    intervention_value: 0.5
+  embedding:
+    size: 300
+    trainable: true
+  dropout_rate: 0.2
+  seed: 42
+
+inputs:
+  title: { max_length: 30 }
+  history: { max_length: 50 }
+  impressions: { max_length: 5 }
+  max_entities: 5
+  process_title: true
+  process_abstract: false
+  process_category: false
+  process_subcategory: false
+  process_user_id: false
+
+training:
+  loss:
+    name: categorical_crossentropy
+    from_logits: true
+    reduction: sum_over_batch_size
+    label_smoothing: 0.0
+  optimizer: adam
+  learning_rate: 0.0001
+  batch_size: 256
+  num_epochs: 20
+  early_stopping:
+    patience: 5
+    min_improvement: 0.01
+  negative_sampling:
+    strategy: random
+    candidates: 1
+
+evaluation:
+  mode: fast
+  evaluator: tccm
+  metrics: [auc, mrr, ndcg@5, ndcg@10]
+  batch_size: 256

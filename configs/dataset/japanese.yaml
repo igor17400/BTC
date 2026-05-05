@@ -1,17 +1,17 @@
-_target_: src.datasets.japanese.JapaneseDataset
+_target_: src.core.data.datasets.japanese.JapaneseDataset
 
 # Inherit from base configuration
 defaults:
-- base
+  - base
 
 # Dataset configuration
-name: "japanese"  # Customizable dataset name
-version: "v1"  # Dataset version identifier
-language: "japanese"  # Language of the dataset
+name: "japanese" # Customizable dataset name
+version: "v1" # Dataset version identifier
+language: "japanese" # Language of the dataset
 
 # Data location (can be path or URLs)
-data_path: null  # Optional: Path to dataset directory (if null, uses cache directory)
-download_if_missing: true  # Whether to download dataset if not found
+data_path: null # Optional: Path to dataset directory (if null, uses cache directory)
+download_if_missing: true # Whether to download dataset if not found
 
 # Dataset URLs (can be null if data is local)
 # Replace these with your actual Japanese dataset URLs following MIND format
@@ -24,38 +24,33 @@ urls: null
 
 # Japanese-specific embedding configuration
 embedding_type: "bpemb"
-embedding_size: 300  # Size of the embeddings (BPEmb supports: 25, 50, 100, 200, 300)
+embedding_size: 300 # Size of the embeddings (BPEmb supports: 25, 50, 100, 200, 300)
 
 # Japanese text processing
-word_threshold: 3  # Word frequency threshold for vocabulary
+word_threshold: 3 # Word frequency threshold for vocabulary
 
 # ID format configuration (many Japanese datasets don't use prefixes)
-id_prefix: ""  # News ID prefix (empty for most Japanese datasets)
-user_id_prefix: ""  # User ID prefix (empty for most Japanese datasets)
+id_prefix: "" # News ID prefix (empty for most Japanese datasets)
+user_id_prefix: "" # User ID prefix (empty for most Japanese datasets)
 
 # Dataset behavior configuration
 random_train_samples: false
-validation_split_strategy: "random"  # Options: chronological, random
+validation_split_strategy: "random" # Options: chronological, random
 validation_split_percentage: 0.05
 validation_split_seed: 42
-
-# Data sampling fractions
-data_fraction_train: 1.0
-data_fraction_val: 1.0
-data_fraction_test: 1.0
 
 # Dataset mode
 mode: "train"
 
 # Preprocessing parameters (adjusted for Japanese text)
-max_title_length: 40  # Slightly longer for Japanese due to character density
-max_abstract_length: 60  # Slightly longer for Japanese
+max_title_length: 40 # Slightly longer for Japanese due to character density
+max_abstract_length: 60 # Slightly longer for Japanese
 max_history_length: 50
 max_impressions_length: 5
 
 # Knowledge graph configuration
-use_knowledge_graph: false  # Enable/disable knowledge graph processing
-max_entities: 100
+use_knowledge_graph: false # Enable/disable knowledge graph processing
+max_entities: 5 # Max entities per news article (overridden by spec when available)
 max_relations: 50
 
 # Pass sampling configuration directly

@@ -1,0 +1,11 @@
+# @package _global_
+#
+# GLORY on fastMIND (25% user subset of MIND-small for fast iteration)
+# Usage: python src/train.py experiment=fastmind/glory framework=pytorch
+
+defaults:
+  - /experiment/mind/glory
+  - override /dataset: fastmind
+  - _self_
+
+name: fastmind_glory

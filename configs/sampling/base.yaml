@@ -1,14 +1,14 @@
 # Base sampling configuration
-max_impressions_length: 5  # Maximum number of impressions to keep per user
-strategy: "random"  # Options: random, topic_diverse, temporal, popularity
-random_seed: ${seed}  # Use global seed from base config
+max_impressions_length: 5 # Maximum number of impressions to keep per user
+strategy: "random" # Options: random, topic_diverse, temporal, popularity
+random_seed: ${seed} # Use global seed from base config
 
 # Strategy-specific parameters
 random:
-  replace: false  # Sample without replacement
+  replace: false # Sample without replacement
 
 topic_diverse: # TODO: add support for such sampling strategy
-  min_categories: 3  # Minimum number of different categories to include
+  min_categories: 3 # Minimum number of different categories to include
   category_weights:
     entertainment: 1.0
     sports: 1.0
@@ -18,9 +18,9 @@ topic_diverse: # TODO: add support for such sampling strategy
     news: 1.0
 
 temporal: # TODO: add support for such sampling strategy
-  time_window: 24  # Hours
-  recency_weight: 0.7  # Weight for recency in sampling
+  time_window: 24 # Hours
+  recency_weight: 0.7 # Weight for recency in sampling
 
 popularity: # TODO: add support for such sampling strategy
-  top_k_ratio: 0.8  # Ratio of popular articles to include
-  popularity_metric: "clicks"  # Options: clicks, impressions, ctr
+  top_k_ratio: 0.8 # Ratio of popular articles to include
+  popularity_metric: "clicks" # Options: clicks, impressions, ctr

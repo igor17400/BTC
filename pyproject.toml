@@ -1,56 +1,182 @@
-[tool.poetry]
-name = "NewsReX"
+[project]
+name = "newsrex"
 version = "0.1.0"
 description = "A modular framework for news recommendation systems research using Keras, JAX, and Hydra"
-authors = ["Igor L.R. Azevedo <igorlima1740@gmail.com>", "David Phol <davidphol@gmail.com>"]
-license = "MIT"
+authors = [
+  { name = "Igor L.R. Azevedo", email = "igorlima1740@gmail.com" },
+  { name = "David Phol", email = "davidphol@gmail.com" },
+]
+license = { text = "MIT" }
 readme = "README.md"
-packages = [{include = "src"}]
+requires-python = ">=3.12,<3.15"
+dependencies = [
+  # Core (always required)
+  "hydra-core>=1.3.2",
+  "numpy>=2.3.2",
+  "pandas>=2.0.0",
+  "PyYAML>=6.0",
+  "rich>=13.0.0",
+  "tqdm>=4.65.0",
+  "omegaconf>=2.3.0",
+  # ML utilities
+  "scikit-learn>=1.3.0",
+  "nltk>=3.9.1",
+  "networkx>=3.5",
+  # Experiment tracking
+  "wandb>=0.17.2",
+  # Visualization
+  "plotly>=5.13.0",
+  "seaborn>=0.12.0",
+  "wordcloud>=1.9.0",
+  "sentence-transformers>=5.4.0",
+  "pyarrow>=23.0.1",
+]
 
-[tool.poetry.dependencies]
-python = ">=3.11,<=3.12"
-keras = "^3.10.0"
-jax = "^0.6.2"
-jaxlib = "^0.6.2"
-jax-cuda12-plugin = "^0.6.2"
-hydra-core = "^1.3.2"
-wandb = "^0.17.2"
-pandas = "^2.0.0"
-numpy = "^2.3.2"
-scikit-learn = "^1.3.0"
-tqdm = "^4.65.0"
-PyYAML = "^6.0"
-plotly = "^5.13.0"
-seaborn = "^0.12.0"
-wordcloud = "^1.9.0"
-transformers = "^4.49.0"
-nltk = "^3.9.1"
-networkx = "^3.5"
-optax = "^0.2.5"
+[project.optional-dependencies]
+# ----- Framework extras -----
+# Convention: bare name = CPU/portable default, "-cuda" suffix = NVIDIA GPU.
+# Compose with --extra dev for development tools.
 
-[tool.poetry.group.dev.dependencies]
-pytest = "^7.4.0"
-black = "^23.3.0"
-isort = "^5.12.0"
-flake8 = "^6.0.0"
-mypy = "^1.4.0"
-pytest-cov = "^4.1.0"
-pre-commit = "^3.3.0"
+keras = ["keras>=3.10.0"]
+
+# JAX
+jax = [
+  "keras>=3.10.0",
+  "jax>=0.6.2",
+  "jaxlib>=0.6.2",
+  "flax>=0.10.0",
+  "optax>=0.2.5",
+]
+jax-cuda = ["newsrex[jax]", "jax-cuda12-plugin>=0.6.2"]
+
+# PyTorch
+pytorch = ["keras>=3.10.0", "torch>=2.6.0"]
+pytorch-cuda = ["keras>=3.10.0", "torch>=2.6.0"]
+
+# All frameworks (Keras + JAX + PyTorch)
+all = ["newsrex[jax]", "newsrex[pytorch]"]
+all-cuda = [
+  "keras>=3.10.0",
+  "jax>=0.6.2",
+  "jaxlib>=0.6.2",
+  "flax>=0.10.0",
+  "optax>=0.2.5",
+  "jax-cuda12-plugin>=0.6.2",
+  "torch>=2.6.0",
+]
+
+# Hyperparameter search
+search = ["optuna>=3.6.0", "optuna-dashboard>=0.15.0"]
+
+# VewsX visualization platform
+viz = [
+  "streamlit>=1.45.0",
+  "scipy>=1.11.0",
+  "wordcloud>=1.9.0",
+]
+
+# Development tools — framework-agnostic. Compose with any framework extra:
+#   uv sync --extra dev --extra all        # CPU dev environment
+#   uv sync --extra dev --extra all-cuda   # GPU dev environment
+dev = [
+  "pytest>=7.4.0",
+  "pytest-cov>=4.1.0",
+  "ruff>=0.8.0",
+  "mypy>=1.4.0",
+  "pre-commit>=3.3.0",
+  "newsrex[search]",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["hatchling"]
+build-backend = "hatchling.build"
 
-[tool.black]
-line-length = 100
-target-version = ['py38']
+[tool.hatch.build.targets.wheel]
+packages = ["src"]
 
-[tool.isort]
-profile = "black"
-multi_line_output = 3
-line_length = 100
+[tool.ruff]
+line-length = 88
+target-version = "py312"
+extend-exclude = [
+  "reference_codes", # third-party reference implementations — keep verbatim
+  "outputs",
+  ".data",
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false # respect trailing commas to keep multi-line formatting
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # isort
+  "UP",  # pyupgrade
+  "B",   # flake8-bugbear
+  "SIM", # flake8-simplify
+]
+ignore = [
+  "E501",   # line length (handled by formatter)
+  "B905",   # zip without strict= (python 3.10+)
+  "SIM108", # ternary operator (readability preference)
+]
+
+[tool.ruff.lint.per-file-ignores]
+# __init__.py files re-export public API; unused-import is intentional
+"**/__init__.py" = ["F401"]
+# Test entry points manipulate sys.path before importing — late imports are intentional
+"tests/**" = ["E402"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["src"]
+
+[tool.uv]
+# Declare CPU and CUDA extras as mutually exclusive so uv doesn't try
+# to satisfy both in a single universal lockfile (the wheels don't coexist).
+conflicts = [
+  [
+    { extra = "pytorch" },
+    { extra = "pytorch-cuda" },
+  ],
+  [
+    { extra = "jax" },
+    { extra = "jax-cuda" },
+  ],
+  [
+    { extra = "all" },
+    { extra = "all-cuda" },
+  ],
+]
+
+# PyTorch wheel index for the CUDA 12.6 variant.
+# `explicit = true` means packages are only pulled from here when
+# specifically requested via [tool.uv.sources] — never as a fallback.
+[[tool.uv.index]]
+name = "pytorch-cu126"
+url = "https://download.pytorch.org/whl/cu126"
+
+[tool.uv.sources]
+# Always resolve torch from the CUDA 12.6 index so that transitive
+# dependencies (e.g. sentence-transformers) don't pull a cu130 wheel
+# that requires a newer driver than we have.
+torch = { index = "pytorch-cu126" }
+
+[tool.pyright]
+typeCheckingMode = "basic"
+pythonVersion = "3.12"
+reportAttributeAccessIssue = false
+reportPossiblyUnbound = false
+reportArgumentType = false
+reportOptionalCall = false
+reportOptionalSubscript = false
+reportOptionalMemberAccess = false
+reportOperatorIssue = false
+reportCallIssue = false
+reportIndexIssue = false
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.12"
 ignore_missing_imports = true
 disallow_untyped_defs = true

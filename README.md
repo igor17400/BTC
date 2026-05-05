@@ -1,178 +1,222 @@
-# _NewsRex_: A More Efficient Approach to News Recommendation with Keras 3 and JAX
+# _NewsReX_: A Modular Framework for News Recommendation Research
 
-[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/release/python-3110/)
+[![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/release/python-3120/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
+[![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-NewsRex is a modular and extensible framework for news recommendation systems research, implementing state-of-the-art models with a focus on reproducibility and ease of use. The framework has been optimized with **Keras 3 + JAX backend** for enhanced performance through JIT compilation and XLA acceleration. This project draws inspiration from the work done by [newsreclib](https://github.com/andreeaiana/newsreclib) with PyTorch Lightning.
+NewsReX is a modular and extensible framework for news recommendation systems research, implementing state-of-the-art models with a focus on reproducibility and ease of use. The framework supports three backends — **JAX/Flax**, **Keras 3**, and **PyTorch** — behind a unified Hydra-based configuration system. This project draws inspiration from [newsreclib](https://github.com/andreeaiana/newsreclib).
 
-## 🌟 Features
+## Features
 
-- 📚 Multiple SOTA news recommendation models
-- ⚡ **JAX Backend Optimization**: Keras 3 + JAX for JIT compilation and XLA acceleration
-- 🔄 Easy-to-use training and evaluation pipeline
-- 📦 Comprehensive JAX-optimized metrics and evaluation
-- 🎛️ Hydra-based configuration system
-- 🚀 Weights & Biases integration for experiment tracking
-- 🔌 Modular design for easy extension
-- 🚀 **Performance**: Faster training and inference through JAX optimizations
+- **6 SOTA news recommendation models** with a unified training and evaluation pipeline
+- **Multi-framework support**: JAX/Flax (JIT + XLA), Keras 3, PyTorch — switchable via a single flag
+- **Hydra-based configuration** with composable experiment, model spec, and dataset configs
+- **Multi-seed training** with automatic mean ± std aggregation
+- **Optuna hyperparameter search** with a two-phase search strategy
+- **VewsX** — interactive Streamlit dashboard for dataset and prediction analysis
+- **W&B integration** for experiment tracking
+- **Cross-framework benchmarking** utilities
 
-## 🏗️ Supported Models
+## Supported Models
 
-- **NRMS**: Neural News Recommendation with Multi-Head Self-Attention (Keras 3 + JAX)
-- **NAML**: Neural News Recommendation with Attentive Multi-View Learning
-- **LSTUR**: Long- and Short-term User Representations
-- *(More models coming soon)*
+| Model | Keras | JAX | PyTorch | Reference |
+|-------|:-----:|:---:|:-------:|-----------|
+| **NRMS** — Neural Recommendation with Multi-Head Self-Attention | ✓ | ✓ | ✓ | EMNLP 2019 |
+| **NAML** — Attentive Multi-View Learning | ✓ | ✓ | ✓ | EMNLP 2019 |
+| **LSTUR** — Long- and Short-term User Representations | ✓ | ✓ | ✓ | NAACL 2020 |
+| **CROWN** — Intent Disentanglement + Bipartite GNN | ✓ | ✓ | ✓ | WWW 2025 |
+| **PP-Rec** — Popularity-Aware Recommendation | ✓ | ✓ | ✓ | ACL 2021 |
+| **DIGAT** — Dual Interactive Graph Attention Networks | — | — | ✓ | EMNLP 2022 |
 
-## 📦 Supported Datasets
+## Supported Datasets
 
-- **MIND**: Microsoft News Dataset (small and large versions)
-- *(More datasets coming soon)*
+| Dataset | Description |
+|---------|-------------|
+| **MIND** | Microsoft News Dataset (small and large) — downloaded from HuggingFace |
+| **Japanese** | Japanese news dataset with language-specific text processing |
+| **Custom** | Generic loader for MIND-format datasets |
+| **Synthetic** | In-memory randomly generated data — no downloads, used for smoke tests |
 
-## 🚀 Quick Start
+## Project Structure
+
+```
+NewsReX/
+├── src/
+│   ├── train.py                    # Main entry point (Hydra dispatcher)
+│   ├── search.py                   # Hyperparameter search entry point
+│   ├── core/                       # Framework-agnostic logic
+│   │   ├── data/
+│   │   │   ├── datasets/           # Dataset classes (MIND, Japanese, Custom, Synthetic)
+│   │   │   ├── download/           # HuggingFace downloader
+│   │   │   ├── encoders/           # GloVe, BPEmb embedding encoders
+│   │   │   ├── loaders/            # Data caching
+│   │   │   └── processing/         # Pipeline: news, behaviors, vocab, embeddings,
+│   │   │                           #   sampling, popularity, SAG (DIGAT), knowledge graph
+│   │   ├── models/
+│   │   │   ├── configs.py          # Model config dataclasses (one per model)
+│   │   │   ├── spec.py             # Spec → config factory
+│   │   │   └── evaluations/        # Evaluation strategies (default, pp_rec)
+│   │   ├── metrics/                # AUC, MRR, NDCG@5, NDCG@10
+│   │   ├── losses.py               # Unified loss registry
+│   │   ├── search/                 # Optuna-based HPO (optimizer, search spaces)
+│   │   └── io/                     # Logging (Rich + W&B), config utils, saving
+│   ├── frameworks/
+│   │   ├── keras/                  # runner, models, dataloaders, losses, layers
+│   │   ├── pytorch/                # runner, models, dataloaders, losses, layers
+│   │   │   └── models/digat.py     # DIGAT (PyTorch-only)
+│   │   └── jax/                    # runner, models, dataloaders, losses, layers
+│   └── benchmarks/                 # Cross-framework benchmarking runner + reporting
+├── configs/
+│   ├── config.yaml                 # Base config (framework, device, train/eval defaults)
+│   ├── spec/                       # Model architecture specs (nrms, naml, lstur, crown, pprec, digat)
+│   ├── experiment/
+│   │   ├── mind/                   # mind/{nrms,naml,lstur,crown,pprec,digat}.yaml
+│   │   ├── japanese/               # japanese/{nrms,naml,lstur}.yaml
+│   │   └── smoke/                  # Fast smoke-test configs for all models
+│   ├── dataset/                    # mind, japanese, custom, synthetic
+│   └── search.yaml                 # HPO config
+├── vewsx/                          # Streamlit visualization platform
+│   ├── app.py
+│   ├── pages/raw/                  # Dataset overview, news corpus, temporal, user behavior
+│   └── pages/processed/            # Tensor shapes, popularity features, sampling stats
+├── tests/
+│   ├── smoke.py                    # All-model smoke tests (all frameworks)
+│   ├── smoke_digat.py              # DIGAT-specific tests
+│   └── parity.py                   # Cross-framework parity verification
+└── scripts/                        # Diagnostics and utility scripts
+```
+
+## Quick Start
 
 ### Prerequisites
 
-1.  **Install Conda** (if not already installed):
+Python 3.12–3.14 is required. The project uses [uv](https://docs.astral.sh/uv/) as the primary package manager.
 
-    ```bash
-    # Download and install Miniconda (or Anaconda)
-    wget [https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh](https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh)
-    bash Miniconda3-latest-Linux-x86_64.sh -b -p $HOME/miniconda # Install silently to your home directory
-    eval "$($HOME/miniconda/bin/conda shell hook)" # Initialize conda in your shell
-    ```
-    *Note: Adjust the Miniconda path if you install it elsewhere.*
-
-2.  **Create and activate a Conda environment** with Python 3.11:
-
-    ```bash
-    conda create -n nrex_env python=3.11 -y
-    conda activate nrex_env
-    ```
-
-3.  **Install Poetry** (Python package manager) within your `nrex_env`:
-
-    ```bash
-    conda install poetry -y
-    ```
-
-4.  **Verify Poetry's setup:**
-
-    ```bash
-    poetry --version
-    # This should show your Poetry version (e.g., Poetry (version 1.7.1))
-    ```
-    *Note: We will configure Poetry to use your conda environment in the next steps.*
-
-
-5. **If you're running poetry with an ssh connnection maybe you need to execute the following:**
-
-    ```
-    export PYTHON_KEYRING_BACKEND=keyring.backends.null.Keyring
-    ```
-
-    Reference: https://github.com/python-poetry/poetry/issues/1917
+```bash
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+```
 
 ### Installation
 
-1.  **Clone the repository:**
+```bash
+git clone https://github.com/igor17400/NewsReX.git
+cd NewsReX
 
-    ```bash
-    git clone [https://github.com/igor17400/NewsRex.git](https://github.com/igor17400/NewsRex.git)
-    cd NewsRex
-    ```
+# Install with JAX backend (CPU)
+uv sync --extra jax
 
-2.  **Point Poetry to your `nrex_env` Conda environment:**
-    This step ensures Poetry uses your existing Python 3.11 environment.
+# Install with JAX + CUDA 12 GPU support
+uv sync --extra jax-cuda
 
-    ```bash
-    # First, ensure Poetry's cache directories exist (resolves common errors)
-    mkdir -p ~/.cache/pypoetry/virtualenvs
+# Install with PyTorch backend
+uv sync --extra pytorch
 
-    # Now, tell Poetry to use the Python from your active conda environment
-    poetry env use $(which python)
-    ```
-    *Expected output for `poetry env info` after this step:*
-    ```
-    Virtualenv
-    Python:          3.11.13
-    Implementation: CPython
-    Path:           /root/miniconda3/envs/nrex_env  # Or your specific conda env path
-    Executable:     /root/miniconda3/envs/nrex_env/bin/python
-    Valid:          True
-    ```
+# Install all frameworks
+uv sync --extra all-cuda
+```
 
-3.  **Install project dependencies:**
-    Poetry will now install the project's dependencies into your `nrex_env`.
-
-    ```bash
-    poetry install 
-    ```
-
-4.  **Activate Poetry's shell (optional but recommended for development):**
-    This puts your current shell into the Poetry-managed environment.
-
-    ```bash
-    poetry shell
-    ```
-
-5.  **Set up pre-commit hooks:** (NOT SUPPORTED AT THE MOMENT)
-
-    ```bash
-    pre-commit install
-    ```
-
-6.  **JAX Backend Dependencies:**
-    Test if JAX is properly using your GPU:
-
-    ```bash
-    python ./src/tests/jax_gpu.py
-    ```
-
-    *Expected output (example for GPU detected):*
-    ```
-    gpu
-    ```
-    *If the output is `cpu`, JAX is not using a GPU.*
-
-*Note: You can always run commands without activating the Poetry shell using `poetry run`, for example: `poetry run python src/train.py`.*
+To verify JAX sees your GPU:
+```bash
+uv run python -c "import jax; print(jax.default_backend())"
+# Expected: gpu
+```
 
 ### Training a Model
 
 ```bash
-# Train with JAX backend
-poetry run python src/train.py experiment=nrms_mind_small
+# JAX backend — NRMS on MIND-small
+uv run python src/train.py experiment=mind/nrms framework=jax
+
+# PyTorch backend — CROWN on MIND-small
+uv run python src/train.py experiment=mind/crown framework=pytorch
+
+# PyTorch — DIGAT (PyTorch-only model)
+uv run python src/train.py experiment=mind/digat framework=pytorch
+
+# Keras backend — NAML on MIND-small
+uv run python src/train.py experiment=mind/naml framework=keras
 ```
+
+Override any config value on the command line:
+
+```bash
+uv run python src/train.py experiment=mind/nrms framework=jax \
+    train.batch_size=256 train.num_epochs=5 train.learning_rate=0.0002
+```
+
+### Multi-Seed Training
+
+```bash
+uv run python src/train.py experiment=mind/nrms framework=jax \
+    multi_seed.enabled=true
+```
+
+Results (mean ± std across seeds) are saved to `outputs/{name}/{framework}/multi_seed/`.
+
+### Hyperparameter Search
+
+```bash
+uv run python src/search.py search.model=nrms search.framework=pytorch search.n_trials=20
+
+# Launch the Optuna dashboard
+uv run optuna-dashboard sqlite:///outputs/search/optuna.db
+```
+
+### Smoke Tests
+
+```bash
+# All models, all frameworks (uses synthetic in-memory data — no downloads)
+uv run python tests/smoke.py
+
+# DIGAT only
+uv run python tests/smoke_digat.py
+```
+
+### VewsX Visualization Platform
+
+```bash
+uv run streamlit run vewsx/app.py
+```
+
+Provides interactive dashboards for raw dataset exploration (news corpus, user behavior, temporal trends, user segments) and processed data analysis (tensor shapes, popularity/CTR distributions, sampling statistics).
+
+## Configuration System
+
+Configuration is composed from three layers via Hydra:
+
+1. **Base** (`configs/config.yaml`) — framework, device, training/eval defaults, W&B, multi-seed
+2. **Spec** (`configs/spec/{model}.yaml`) — model architecture, input lengths, feature flags, loss
+3. **Dataset** (`configs/dataset/{dataset}.yaml`) — data paths, embedding type, preprocessing params
+
+Experiment configs (`configs/experiment/{dataset}/{model}.yaml`) wire a spec to a dataset and can override any base setting.
+
+## Metrics
+
+All models are evaluated on:
+- **AUC** — Area Under the ROC Curve
+- **MRR** — Mean Reciprocal Rank
+- **NDCG@5** — Normalized Discounted Cumulative Gain at 5
+- **NDCG@10** — Normalized Discounted Cumulative Gain at 10
 
 ---
 
-# Authors & Affiliations
+## Authors & Affiliations
 
-* **Igor L.R. Azevedo** * **ORCiD:** 0000-0001-5144-825X
-    * **Affiliation:** The University of Tokyo, Tokyo, Japan
-    * **Email:** igorazevedo@acm.org
+- **Igor L.R. Azevedo** — The University of Tokyo · igorazevedo@acm.org · ORCID: 0000-0001-5144-825X
+- **Toyotaro Suzumura** — The University of Tokyo · suzumura@acm.org · ORCID: 0000-0001-6412-8386
+- **Yuichiro Yasui** — Nikkei Inc. · yuichiro.yasui@nex.nikkei.com · ORCID: 0000-0002-4175-9318
 
-* **Toyotaro Suzumura**
-    * **ORCiD:** 0000-0001-6412-8386
-    * **Affiliation:** The University of Tokyo, Tokyo, Japan
-    * **Email:** suzumura@acm.org
+## Citation
 
-* **Yuichiro Yasui**
-    * **ORCiD:** 0000-0002-4175-9318
-    * **Affiliation:** Nikkei Inc., Tokyo, Japan
-    * **Email:** yuichiro.yasui@nex.nikkei.com
-
-# Citation
-
-```
+```bibtex
 @misc{azevedo2025newsrexefficientapproachnews,
-      title={NewsReX: A More Efficient Approach to News Recommendation with Keras 3 and JAX}, 
+      title={NewsReX: A More Efficient Approach to News Recommendation with Keras 3 and JAX},
       author={Igor L. R. Azevedo and Toyotaro Suzumura and Yuichiro Yasui},
       year={2025},
       eprint={2508.21572},
       archivePrefix={arXiv},
       primaryClass={cs.IR},
-      url={https://arxiv.org/abs/2508.21572}, 
+      url={https://arxiv.org/abs/2508.21572},
 }
 ```
-

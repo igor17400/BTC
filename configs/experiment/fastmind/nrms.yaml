@@ -1,0 +1,11 @@
+# @package _global_
+#
+# NRMS on fastMIND (25% user subset of MIND-small for fast iteration)
+# Usage: python src/train.py experiment=fastmind/nrms framework=keras
+
+defaults:
+  - /experiment/mind/nrms
+  - override /dataset: fastmind
+  - _self_
+
+name: fastmind_nrms

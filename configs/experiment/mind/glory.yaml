@@ -1,0 +1,61 @@
+# @package _global_
+#
+# GLORY on MIND-small
+# Usage: python src/train.py experiment=mind/glory framework=pytorch
+
+defaults:
+  - /spec: glory
+  - /dataset: mind
+  - /sampling: base
+  - _self_
+
+name: mind_glory
+model_name: GLORY
+seed: 42
+
+# Dataset: bridge spec inputs → dataset processing flags
+dataset:
+  version: small
+  max_title_length: ${spec.inputs.title.max_length}
+  max_history_length: ${spec.inputs.history.max_length}
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  embedding_size: ${spec.model.embedding.size}
+  process_title: ${spec.inputs.process_title}
+  process_abstract: ${spec.inputs.process_abstract}
+  process_category: ${spec.inputs.process_category}
+  process_subcategory: ${spec.inputs.process_subcategory}
+  process_entities: ${spec.inputs.process_entities}
+  process_user_id: ${spec.inputs.process_user_id}
+
+train:
+  batch_size: ${spec.training.batch_size}
+  num_epochs: ${spec.training.num_epochs}
+  learning_rate: ${spec.training.learning_rate}
+  gradient_clip_val: ${spec.training.gradient_clip_val}
+  grad_accum_steps: ${spec.training.grad_accum_steps}
+  early_stopping:
+    patience: ${spec.training.early_stopping.patience}
+    min_improvement: ${spec.training.early_stopping.min_improvement}
+
+eval:
+  fast_evaluation: true
+  batch_size: ${spec.evaluation.batch_size}
+
+sampling:
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  strategy: ${spec.training.negative_sampling.strategy}
+  random:
+    replace: false
+
+device:
+  gpu_ids: [0]
+  # Mixed-precision dtype — read by ``pytorch/training.py``:
+  #   ``float32``  : no autocast, no GradScaler (slowest, most stable).
+  #   ``bfloat16`` : bf16 autocast, no GradScaler (mild slowdown vs fp32
+  #                  on RTX 3090 — bf16 has fp32-equivalent range).
+  #   ``float16``  : fp16 autocast + ``torch.amp.GradScaler('cuda')`` for
+  #                  loss scaling (matches the reference GLORY repo;
+  #                  ~1.7× faster than fp32 on Ampere/Ada GPUs).
+  # Set ``float16`` here by default since the entity-branch + GNN forward
+  # is matmul-heavy and benefits the most from Tensor-Core fp16 paths.
+  precision: float16
