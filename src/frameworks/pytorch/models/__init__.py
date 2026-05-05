@@ -1,5 +1,6 @@
 """PyTorch model implementations for NewsReX."""
 
+from .caum import CAUM
 from .lstur import LSTUR, LSTURConfig
 from .naml import NAML, NAMLConfig
 from .nrms import NRMS, NRMSConfig

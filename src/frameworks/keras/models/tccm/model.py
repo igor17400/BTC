@@ -26,12 +26,11 @@ from keras import layers, ops
 from src.core.models.configs import PPRecConfig, TCCMConfig
 from src.frameworks.keras.models.base import BaseModel
 from src.frameworks.keras.models.pprec import (
-    ActivityGater,
     PPRecNewsEncoder,
     PPRecUserEncoder,
 )
 
-from .layers import TCCMPopularityEncoder
+from .layers import TCCMActivityGater, TCCMPopularityEncoder
 
 
 def _tccm_to_pprec_config(cfg: TCCMConfig) -> PPRecConfig:
@@ -137,7 +136,7 @@ class TCCM(BaseModel):
         self.user_encoder = PPRecUserEncoder(self._pprec_config, self.news_encoder)
         self.popularity_encoder = TCCMPopularityEncoder(cfg)
         if cfg.use_activity_gate:
-            self.activity_gater = ActivityGater(self._pprec_config)
+            self.activity_gater = TCCMActivityGater(self.config)
 
         super().build(input_shape)
 

@@ -165,6 +165,33 @@ class JAXAdapter:
         return np.asarray(user_encoder.encode_interests(features, training=False))
 
     # ------------------------------------------------------------------
+    # TCCM-specific methods
+    # ------------------------------------------------------------------
+
+    def run_tccm_popularity_encoder(
+        self,
+        encoder: Any,
+        bucket_input: Any,
+        time_input: Any,
+        title_len: int,
+    ) -> np.ndarray:
+        """Run the TCCM popularity encoder on a candidate batch.
+
+        Args:
+            encoder: :class:`TCCMPopularityEncoder` instance.
+            bucket_input: ``(C, T+E)`` int — per-token CTR bucket indices.
+            time_input: ``(C,)`` int — clamped age in hours since publish.
+            title_len: Number of title-token positions ``T``.
+
+        Returns:
+            ``(C,)`` numpy array of popularity scores.
+        """
+        b = jnp.asarray(bucket_input, dtype=jnp.int32)
+        t = jnp.asarray(time_input, dtype=jnp.int32)
+        scores = encoder(b, t, title_len=title_len, training=False)
+        return np.asarray(scores)
+
+    # ------------------------------------------------------------------
     # CAUM-specific methods
     # ------------------------------------------------------------------
 

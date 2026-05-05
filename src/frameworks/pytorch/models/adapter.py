@@ -153,6 +153,57 @@ class PyTorchAdapter:
         return scores.detach().cpu().numpy()
 
     # ------------------------------------------------------------------
+    # CAUM-specific methods
+    # ------------------------------------------------------------------
+
+    def score_caum_impression(
+        self,
+        inter_model: Any,
+        cand_vectors: Any,
+        clicked_vecs: Any,
+        _chunk_size: int = 64,
+    ) -> np.ndarray:
+        """Score all candidates in fixed-size chunks.
+
+        Args:
+            inter_model: The candidate-aware interaction model.
+            cand_vectors: (C, D) numpy array of candidate news vectors.
+            clicked_vecs: (H, D) numpy array of clicked news vectors.
+            _chunk_size: Fixed batch size for each forward pass.
+
+        Returns:
+            (C,) numpy array of scores, one per candidate.
+        """
+        inter_model.eval()
+        device = next(inter_model.parameters()).device
+        C = cand_vectors.shape[0]
+        D = cand_vectors.shape[1]
+        H = clicked_vecs.shape[0]
+
+        all_scores = []
+        with torch.no_grad():
+            for start in range(0, C, _chunk_size):
+                end = min(start + _chunk_size, C)
+                actual = end - start
+
+                cand_chunk = np.zeros((_chunk_size, D), dtype=np.float32)
+                cand_chunk[:actual] = cand_vectors[start:end]
+
+                clicked_batch = np.broadcast_to(
+                    clicked_vecs[None], (_chunk_size, H, D)
+                ).copy()
+
+                cand_t = torch.as_tensor(cand_chunk, dtype=torch.float32).to(device)
+                clicked_t = torch.as_tensor(clicked_batch, dtype=torch.float32).to(
+                    device
+                )
+
+                chunk_scores = inter_model(cand_t, clicked_t, training=False)
+                all_scores.append(chunk_scores[:actual].detach().cpu().numpy())
+
+        return np.concatenate(all_scores, axis=0)
+
+    # ------------------------------------------------------------------
     # DIGAT-specific methods
     # ------------------------------------------------------------------
 

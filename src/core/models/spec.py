@@ -392,6 +392,7 @@ _MODEL_CLASS_PATHS = {
         "digat": "src.frameworks.jax.models.digat.DIGAT",
         "glory": "src.frameworks.jax.models.glory.GLORY",
         "miner": "src.frameworks.jax.models.miner.MINER",
+        "tccm": "src.frameworks.jax.models.tccm.TCCM",
     },
 }
 

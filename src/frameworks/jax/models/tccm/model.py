@@ -1,9 +1,8 @@
-"""TCCM main model class (PyTorch) — TCCM-faithful.
+"""TCCM main model class (JAX/Flax NNX).
 
-Now uses the TCCM-specific encoders (:class:`TCCMNewsEncoder`,
-:class:`TCCMPopularityEncoder`, :class:`TCCMActivityGater`) instead of
-PP-Rec's. The user encoder is reused from PP-Rec because it already
-matches the reference's ``popularity_user_modeling`` branch.
+Reuses PP-Rec's ``co1`` news encoder and popularity-aware user encoder
+from the JAX PP-Rec implementation. The popularity encoder and activity
+gater are TCCM-specific.
 
 Final fusion (paper reference)::
 
@@ -13,11 +12,11 @@ Final fusion (paper reference)::
 
 from __future__ import annotations
 
-from dataclasses import asdict
 from typing import Any
 
-import torch
-import torch.nn as nn
+import jax
+import jax.numpy as jnp
+from flax import nnx
 
 from src.core.models.configs import PPRecConfig, TCCMConfig
 
@@ -27,13 +26,7 @@ from .layers import TCCMActivityGater, TCCMPopularityEncoder
 
 
 def _tccm_to_pprec_config(cfg: TCCMConfig) -> PPRecConfig:
-    """Forward TCCM's news/user-encoder hyperparameters into a PPRecConfig.
-
-    TCCM reuses PP-Rec's ``co1`` news encoder (5×40 cross-attn, Concat +
-    Dense fusion) and popularity-aware user encoder (CPJA over [news ⨁
-    pop_emb]) — these consistently outperformed the literally-faithful
-    Add-residual / 20×20 cross-attn variant on MIND-small val/test.
-    """
+    """Forward TCCM's news/user-encoder hyperparameters into a PPRecConfig."""
     return PPRecConfig(
         embedding_size=cfg.embedding_size,
         news_dim=cfg.news_dim,
@@ -61,68 +54,85 @@ def _tccm_to_pprec_config(cfg: TCCMConfig) -> PPRecConfig:
 
 
 class TCCM(BaseModel):
-    """TCCM (CIKM 2023) — PyTorch implementation."""
+    """TCCM (CIKM 2023) — JAX/Flax NNX implementation."""
 
     def __init__(
         self,
         processed_news: dict[str, Any],
         config: TCCMConfig | None = None,
+        *,
+        rngs: nnx.Rngs,
         **config_overrides,
     ):
-        super().__init__()
         if config is None:
             config = TCCMConfig(**config_overrides)
         self.config = config
         self._pprec_config = _tccm_to_pprec_config(config)
-        self.processed_news = processed_news
         self.process_user_id = config.process_user_id
         self._max_title_length = config.max_title_length
         self._max_entities = config.max_entities
 
-        cfg = config
         pn = processed_news
 
-        word_emb = nn.Embedding(pn["vocab_size"], cfg.embedding_size)
-        word_emb.weight = nn.Parameter(
-            torch.tensor(pn["embeddings"], dtype=torch.float32)
+        word_emb = nnx.Embed(
+            num_embeddings=pn["vocab_size"],
+            features=config.embedding_size,
+            rngs=rngs,
         )
+        word_emb.embedding.value = jnp.asarray(pn["embeddings"])
 
-        if not (cfg.use_entity and "entity_embeddings" in pn):
+        if not (config.use_entity and "entity_embeddings" in pn):
             raise ValueError(
                 "TCCM requires entity embeddings (use_entity=True and "
                 "'entity_embeddings' in processed_news)."
             )
-        entity_emb = nn.Embedding(pn["entity_vocab_size"], cfg.entity_embedding_dim)
-        entity_emb.weight = nn.Parameter(
-            torch.tensor(pn["entity_embeddings"], dtype=torch.float32)
+        entity_emb = nnx.Embed(
+            num_embeddings=pn["entity_vocab_size"],
+            features=config.entity_embedding_dim,
+            rngs=rngs,
         )
+        entity_emb.embedding.value = jnp.asarray(pn["entity_embeddings"])
 
-        # PP-Rec ``co1`` news encoder (no category branch — TCCM
-        # follows the reference's ``attrs = ['title', 'entity']``).
+        # PP-Rec ``co1`` news encoder (no category branch)
         self.news_encoder = PPRecNewsEncoder(
-            self._pprec_config, word_emb, entity_emb, None
+            self._pprec_config,
+            word_emb,
+            entity_emb,
+            None,
+            rngs=rngs,
         )
-        self.user_encoder = PPRecUserEncoder(self._pprec_config, self.news_encoder)
-        self.popularity_encoder = TCCMPopularityEncoder(cfg)
-        self.activity_gater = TCCMActivityGater(cfg) if cfg.use_activity_gate else None
+        self.user_encoder = PPRecUserEncoder(
+            self._pprec_config,
+            self.news_encoder,
+            rngs=rngs,
+        )
+        self.popularity_encoder = TCCMPopularityEncoder(config, rngs=rngs)
+        self.activity_gater = (
+            TCCMActivityGater(config, rngs=rngs) if config.use_activity_gate else None
+        )
 
-    def forward(
+    def __call__(
         self,
-        inputs: dict[str, torch.Tensor],
-        training: bool = True,
-    ) -> torch.Tensor:
-        return self.score_training_batch(inputs)
+        inputs: dict[str, jax.Array],
+        *,
+        training: bool = False,
+    ) -> jax.Array:
+        return self.score_training_batch(inputs, training=training)
 
-    def score_training_batch(self, inputs: dict[str, torch.Tensor]) -> torch.Tensor:
+    def score_training_batch(
+        self,
+        inputs: dict[str, jax.Array],
+        *,
+        training: bool = True,
+    ) -> jax.Array:
         """Score a training batch.
 
         Required keys in ``inputs``:
-
         * ``hist_tokens`` ``(B, H, F)``
         * ``cand_tokens`` ``(B, C, F)``
-        * ``hist_ctr`` ``(B, H)`` long — discretised history-news CTR
-        * ``cand_pop_buckets`` ``(B, C, T+E)`` long — per-token CTR buckets
-        * ``cand_news_exist_time`` ``(B, C)`` long — clamped age in hours
+        * ``hist_ctr`` ``(B, H)`` int — discretised history-news CTR
+        * ``cand_pop_buckets`` ``(B, C, T+E)`` int — per-token CTR buckets
+        * ``cand_news_exist_time`` ``(B, C)`` int — clamped age in hours
         """
         hist_features = inputs["hist_tokens"]
         cand_features = inputs["cand_tokens"]
@@ -130,26 +140,30 @@ class TCCM(BaseModel):
         cand_pop_buckets = inputs["cand_pop_buckets"]
         cand_exist_time = inputs["cand_news_exist_time"]
 
-        user_vec = self.user_encoder(hist_features, hist_ctr, training=True)
+        user_vec = self.user_encoder(
+            hist_features,
+            hist_ctr,
+            training=training,
+        )
 
         B, C, F = cand_features.shape
         flat_cand = cand_features.reshape(B * C, F)
-        cand_vecs = self.news_encoder(flat_cand, training=True).reshape(B, C, -1)
-        rel_scores = torch.sum(cand_vecs * user_vec.unsqueeze(1), dim=-1)
+        cand_vecs = self.news_encoder(flat_cand, training=training).reshape(B, C, -1)
+        rel_scores = jnp.sum(cand_vecs * user_vec[:, None, :], axis=-1)
 
         T_plus_E = cand_pop_buckets.shape[2]
         flat_buckets = cand_pop_buckets.reshape(B * C, T_plus_E)
         flat_time = cand_exist_time.reshape(B * C)
         pop_scores = self.popularity_encoder(
-            flat_buckets, flat_time, title_len=self._max_title_length
+            flat_buckets,
+            flat_time,
+            title_len=self._max_title_length,
+            training=training,
         ).reshape(B, C)
 
         if self.config.use_activity_gate and self.activity_gater is not None:
-            eta = self.activity_gater(user_vec).unsqueeze(-1)
+            eta = self.activity_gater(user_vec)[:, None]
             scores = 2.0 * eta * rel_scores + 2.0 * (1.0 - eta) * pop_scores
         else:
             scores = rel_scores + pop_scores
         return scores
-
-    def get_config(self) -> dict:
-        return asdict(self.config)
