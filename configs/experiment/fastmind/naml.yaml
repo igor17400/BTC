@@ -1,0 +1,11 @@
+# @package _global_
+#
+# NAML on fastMIND (25% user subset of MIND-small for fast iteration)
+# Usage: python src/train.py experiment=fastmind/naml framework=keras
+
+defaults:
+  - /experiment/mind/naml
+  - override /dataset: fastmind
+  - _self_
+
+name: fastmind_naml

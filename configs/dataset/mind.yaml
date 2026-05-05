@@ -14,11 +14,6 @@ validation_split_strategy: "random" # Options: chronological, random
 validation_split_percentage: 0.05
 validation_split_seed: 42
 
-# Data sampling fractions
-data_fraction_train: 1.0
-data_fraction_val: 1.0
-data_fraction_test: 1.0
-
 # Dataset mode
 mode: "train"
 

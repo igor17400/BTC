@@ -126,9 +126,6 @@ def collect_basic_dataset_info(dataset_instance: Any, summary_data: dict) -> Non
             "use_knowledge_graph": dataset_instance.use_knowledge_graph,
             "validation_split_strategy": dataset_instance.validation_split_strategy,
             "validation_split_percentage": dataset_instance.validation_split_percentage,
-            "data_fraction_train": dataset_instance.data_fraction_train,
-            "data_fraction_val": dataset_instance.data_fraction_val,
-            "data_fraction_test": dataset_instance.data_fraction_test,
             "process_title": dataset_instance.process_title,
             "process_abstract": dataset_instance.process_abstract,
             "process_category": dataset_instance.process_category,
@@ -561,16 +558,6 @@ def log_key_statistics(summary_data: dict) -> None:
 # ============================================================================
 
 
-def apply_data_fraction(
-    data_dict: dict[str, np.ndarray], fraction: float
-) -> dict[str, np.ndarray]:
-    """Reduce the dataset size based on the fraction parameter."""
-    if fraction < 1.0:
-        logger.info(f"Using {fraction * 100:.0f}% of the dataset")
-        return {k: v[: int(len(v) * fraction)] for k, v in data_dict.items()}
-    return data_dict
-
-
 def string_is_number(s: str) -> bool:
     try:
         float(s)
@@ -675,9 +662,6 @@ def reorder_summary_columns(summary_df: pd.DataFrame) -> pd.DataFrame:
         "test_positive_ratio",
         # Data quality
         "data_sparsity",
-        "data_fraction_train",
-        "data_fraction_val",
-        "data_fraction_test",
         # Processing flags
         "process_title",
         "process_abstract",

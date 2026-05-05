@@ -1,0 +1,13 @@
+_target_: src.core.data.datasets.fastmind.FastMINDDataset
+
+# Inherit MIND defaults — fastmind only adds a user-level subset for train+val.
+# Test split is left at full size so eval AUC/MRR/NDCG remain comparable to
+# full-MIND runs. News and popularity features are computed on the full data.
+defaults:
+  - mind
+
+name: "fastMIND-${dataset.version}"
+
+# User-subset sampling
+user_subset_ratio: 0.25
+user_subset_seed: 42

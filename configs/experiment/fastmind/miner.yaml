@@ -1,0 +1,11 @@
+# @package _global_
+#
+# MINER on fastMIND (25% user subset of MIND-small for fast iteration)
+# Usage: python src/train.py experiment=fastmind/miner framework=keras
+
+defaults:
+  - /experiment/mind/miner
+  - override /dataset: fastmind
+  - _self_
+
+name: fastmind_miner

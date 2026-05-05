@@ -1,0 +1,11 @@
+# @package _global_
+#
+# LSTUR on fastMIND (25% user subset of MIND-small for fast iteration)
+# Usage: python src/train.py experiment=fastmind/lstur framework=keras
+
+defaults:
+  - /experiment/mind/lstur
+  - override /dataset: fastmind
+  - _self_
+
+name: fastmind_lstur

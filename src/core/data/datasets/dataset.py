@@ -38,7 +38,6 @@ from src.core.data.processing.text.news import process_news as _process_news_pip
 from src.core.data.processing.text.news import read_all_news
 from src.core.data.processing.text.vocabulary import segment_text_into_words
 from src.core.data.stats import (
-    apply_data_fraction,
     collect_basic_dataset_info,
     collect_behavior_statistics,
     collect_news_statistics,
@@ -83,9 +82,6 @@ class NewsDatasetBase(BaseNewsDataset):
         embedding_type: str = "glove",
         embedding_size: int = 300,
         sampling: DictConfig | None = None,
-        data_fraction_train: float = 1.0,
-        data_fraction_val: float = 1.0,
-        data_fraction_test: float = 1.0,
         mode: str = "train",
         use_knowledge_graph: bool = False,
         random_train_samples: bool = False,
@@ -139,9 +135,6 @@ class NewsDatasetBase(BaseNewsDataset):
         self.sampler = ImpressionSampler(
             sampling if sampling is not None else DictConfig({})
         )
-        self.data_fraction_train = data_fraction_train
-        self.data_fraction_val = data_fraction_val
-        self.data_fraction_test = data_fraction_test
         self.mode = mode
         self.random_train_samples = random_train_samples
         self.word_threshold = word_threshold
@@ -506,6 +499,18 @@ class NewsDatasetBase(BaseNewsDataset):
     # Data loading and processing (delegates to processing.behaviors)
     # ------------------------------------------------------------------
 
+    def _get_train_user_subset(self) -> set[str] | None:
+        """Return a subset of user IDs to keep for train+val, or None for all.
+
+        Subclasses (e.g. FastMINDDataset) override this to subsample users.
+        Test split is never subsampled.
+        """
+        return None
+
+    def _user_subset_cache_signature(self) -> dict[str, Any]:
+        """Cache-key contributions from user-subset sampling. Override in subclasses."""
+        return {}
+
     def _get_cache_key(self) -> str:
         """Compute a short hash representing the current data-processing config.
 
@@ -543,6 +548,7 @@ class NewsDatasetBase(BaseNewsDataset):
             "validation_split_seed": self.validation_split_seed,
             "sampling_strategy": sampling_dict.get("strategy", ""),
         }
+        key_data.update(self._user_subset_cache_signature())
         key_str = json.dumps(key_data, sort_keys=True, default=str)
         return hashlib.md5(key_str.encode()).hexdigest()[:10]
 
@@ -582,15 +588,6 @@ class NewsDatasetBase(BaseNewsDataset):
                 logger.info("Loading validation behaviors data...")
                 self.val_behaviors_data = pd.read_pickle(cache["val"])
 
-                if self.data_fraction_train < 1.0:
-                    self.train_behaviors_data = apply_data_fraction(
-                        self.train_behaviors_data, self.data_fraction_train
-                    )
-                if self.data_fraction_val < 1.0:
-                    self.val_behaviors_data = apply_data_fraction(
-                        self.val_behaviors_data, self.data_fraction_val
-                    )
-
                 self._display_statistics(
                     mode,
                     processed_news=self.processed_news,
@@ -602,11 +599,6 @@ class NewsDatasetBase(BaseNewsDataset):
             else:
                 logger.info("Loading test behaviors data...")
                 self.test_behaviors_data = pd.read_pickle(cache["test"])
-
-                if self.data_fraction_test < 1.0:
-                    self.test_behaviors_data = apply_data_fraction(
-                        self.test_behaviors_data, self.data_fraction_test
-                    )
 
                 self._display_statistics(
                     mode,
@@ -681,8 +673,17 @@ class NewsDatasetBase(BaseNewsDataset):
         processed_path.mkdir(parents=True, exist_ok=True)
         cache = self._cache_paths()
 
+        train_user_subset = self._get_train_user_subset()
+        if train_user_subset is not None:
+            logger.info(
+                f"Restricting train+val behaviors to "
+                f"{len(train_user_subset):,} sampled users"
+            )
+
         logger.info("Processing train data...")
-        train_behaviors_dict, val_behaviors_dict = self.get_train_val_data()
+        train_behaviors_dict, val_behaviors_dict = self.get_train_val_data(
+            sampled_user_set=train_user_subset
+        )
 
         logger.info("Saving training data...")
         with open(cache["train"], "wb") as f:

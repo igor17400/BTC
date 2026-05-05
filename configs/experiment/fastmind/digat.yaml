@@ -1,0 +1,11 @@
+# @package _global_
+#
+# DIGAT on fastMIND (25% user subset of MIND-small for fast iteration)
+# Usage: python src/train.py experiment=fastmind/digat framework=pytorch
+
+defaults:
+  - /experiment/mind/digat
+  - override /dataset: fastmind
+  - _self_
+
+name: fastmind_digat
