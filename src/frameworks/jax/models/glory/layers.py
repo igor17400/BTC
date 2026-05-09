@@ -131,7 +131,7 @@ class AttentionPooling(nnx.Module):
 
     def __init__(self, emb_size: int, hidden_size: int, *, rngs: nnx.Rngs):
         xavier_tanh = nnx.initializers.variance_scaling(
-            math.sqrt(5.0 / 3.0) ** 2,
+            (5.0 / 3.0) ** 2,
             "fan_avg",
             "uniform",
         )

@@ -19,11 +19,11 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import wandb
 from flax import nnx
 from rich.console import Console
 from safetensors.numpy import save_file as save_safetensors
 
-import wandb
 from src.core.io.logging import (
     log_early_stopping,
     log_epoch_end,
@@ -157,6 +157,7 @@ def training_loop(
     gradient_clip_norm: float = 0.0,
     early_stopping_patience: int = 5,
     early_stopping_min_improvement: float = 0.01,
+    warmup_ratio: float = 0.0,
     loss_fn=None,
     get_aux_loss=None,
     use_jit: bool = True,
@@ -204,10 +205,29 @@ def training_loop(
     components = []
     if gradient_clip_norm > 0:
         components.append(optax.clip_by_global_norm(gradient_clip_norm))
-    if weight_decay > 0:
-        components.append(optax.adamw(learning_rate, weight_decay=weight_decay))
+
+    # LR schedule: optional linear warmup then constant
+    if warmup_ratio > 0.0 and hasattr(train_dataloader, "__len__"):
+        total_steps = num_epochs * len(train_dataloader)
+        warmup_steps = int(total_steps * warmup_ratio)
+        schedule = optax.warmup_constant_schedule(
+            init_value=0.0,
+            peak_value=learning_rate,
+            warmup_steps=warmup_steps,
+        )
+        if weight_decay > 0:
+            components.append(optax.adamw(schedule, weight_decay=weight_decay))
+        else:
+            components.append(optax.adam(schedule))
+        logger.info(
+            f"LR warmup: {warmup_steps} steps ({warmup_ratio * 100:.0f}% of {total_steps})"
+        )
     else:
-        components.append(optax.adam(learning_rate))
+        if weight_decay > 0:
+            components.append(optax.adamw(learning_rate, weight_decay=weight_decay))
+        else:
+            components.append(optax.adam(learning_rate))
+
     tx = optax.chain(*components) if len(components) > 1 else components[0]
 
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)

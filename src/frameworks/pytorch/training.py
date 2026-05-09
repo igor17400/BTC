@@ -15,10 +15,10 @@ from typing import Any
 
 import torch
 import torch.nn as nn
+import wandb
 from safetensors.torch import save_file as save_safetensors
 from torch.utils.data import DataLoader
 
-import wandb
 from src.core.io.logging import log_early_stopping, log_epoch_end
 from src.core.io.progress import create_progress
 
@@ -127,6 +127,21 @@ def training_loop(
         model.parameters(), lr=learning_rate, weight_decay=weight_decay
     )
 
+    # ---- LR warmup schedule ----
+    warmup_ratio = 0.0
+    if cfg and hasattr(cfg, "train"):
+        warmup_ratio = getattr(cfg.train, "warmup_ratio", 0.0)
+    scheduler = None
+    if warmup_ratio > 0.0:
+        total_steps = num_epochs * len(train_dataloader)
+        warmup_steps = int(total_steps * warmup_ratio)
+        scheduler = torch.optim.lr_scheduler.LambdaLR(
+            optimizer,
+            lr_lambda=lambda step: (
+                min(1.0, step / warmup_steps) if warmup_steps > 0 else 1.0
+            ),
+        )
+
     # ---- WandB ----
     wandb_run = wandb.run if enable_wandb else None
 
@@ -217,9 +232,6 @@ def training_loop(
                         and hasattr(cfg, "train")
                         and hasattr(cfg.train, "gradient_clip_val")
                     ):
-                        # Gradient clipping must run on **unscaled** grads,
-                        # otherwise the clip threshold is wrong by the
-                        # current loss scale.
                         if scaler is not None:
                             scaler.unscale_(optimizer)
                         torch.nn.utils.clip_grad_norm_(
@@ -230,6 +242,8 @@ def training_loop(
                         scaler.update()
                     else:
                         optimizer.step()
+                    if scheduler is not None:
+                        scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
 
                 running_loss += display_loss.item()
@@ -269,10 +283,6 @@ def training_loop(
                     }
 
                     if save_dir:
-                        # Save as safetensors (HF-canonical, framework-
-                        # agnostic, safe). Matches the JAX runner's
-                        # ``model.safetensors`` filename so HF upload
-                        # picks both up uniformly.
                         ckpt_path = Path(save_dir) / "model.safetensors"
                         ckpt_path.parent.mkdir(parents=True, exist_ok=True)
                         flat = {
@@ -292,8 +302,7 @@ def training_loop(
                 is_best=is_best,
             )
 
-            # Early stopping — independent of best-checkpoint update,
-            # uses ``min_improvement`` to gate "real progress" (matches JAX).
+            # Early stopping
             if val_metrics is not None and stopper.step(avg_metric):
                 log_early_stopping(epoch, early_stopping_patience)
                 break

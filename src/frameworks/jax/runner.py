@@ -15,12 +15,12 @@ import hydra
 import jax
 import jax.numpy as jnp
 import numpy as np
+import wandb
 from flax import nnx
 from huggingface_hub import hf_hub_download
 from omegaconf import DictConfig, OmegaConf
 from safetensors.numpy import load_file
 
-import wandb
 from src.core.io.logging import (
     console,
     log_test_results,
@@ -299,6 +299,7 @@ def run(cfg: DictConfig):
         early_stopping_min_improvement=cfg.train.early_stopping.get(
             "min_improvement", 0.01
         ),
+        warmup_ratio=cfg.train.get("warmup_ratio", 0.0),
         loss_fn=loss_fn,
         get_aux_loss=get_aux_loss,
         use_jit=True,
