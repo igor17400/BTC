@@ -54,9 +54,9 @@ training:
   optimizer: adam
   learning_rate: 0.0001
   batch_size: 256
-  num_epochs: 20
+  num_epochs: 10
   early_stopping:
-    patience: 5
+    patience: 3
     min_improvement: 0.01
   negative_sampling:
     strategy: random

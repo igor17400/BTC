@@ -51,10 +51,10 @@ training:
   learning_rate: 0.0002  # paper default
   batch_size: 32         # paper default
   grad_accum_steps: 1
-  num_epochs: 20         # paper default (small)
+  num_epochs: 10         # paper default (small)
   gradient_clip_val: 1.0
   early_stopping:
-    patience: 5
+    patience: 3
     min_improvement: 0.01
   negative_sampling:
     strategy: random

@@ -37,7 +37,7 @@ train:
   gradient_clip_val: 1.0
   grad_accum_steps: 1
   early_stopping:
-    patience: 5
+    patience: 3
     min_improvement: 0.01
 
 # Default evaluation parameters (overridden by experiment → spec)

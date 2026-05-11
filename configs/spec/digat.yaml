@@ -39,10 +39,10 @@ training:
   learning_rate: 0.0001
   batch_size: 64 # paper default
   grad_accum_steps: 1
-  num_epochs: 20 # paper: 16 for MIND-small
+  num_epochs: 10 # paper: 16 for MIND-small
   gradient_clip_val: 1.0
   early_stopping:
-    patience: 5
+    patience: 3
     min_improvement: 0.01
   negative_sampling:
     strategy: random
