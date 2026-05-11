@@ -34,26 +34,27 @@ dependencies = [
 # Convention: bare name = CPU/portable default, "-cuda" suffix = NVIDIA GPU.
 # Compose with --extra dev for development tools.
 
-keras = ["keras>=3.10.0"]
-
 # JAX
 jax = [
-  "keras>=3.10.0",
-  "jax>=0.6.2",
-  "jaxlib>=0.6.2",
+  "jax==0.9.2",
+  "jaxlib==0.9.2",
   "flax>=0.10.0",
   "optax>=0.2.5",
 ]
-jax-cuda = ["newsrex[jax]", "jax-cuda12-plugin>=0.6.2"]
+jax-cuda = [
+  "newsrex[jax]",
+  "jax-cuda12-plugin==0.9.2",
+  "jax-cuda12-pjrt==0.9.2",
+]
 
 # PyTorch — pick ONE: pytorch (CPU/macOS), cu118, cu124, cu126, cu130
-pytorch = ["keras>=3.10.0", "torch>=2.6.0"]
-cu118 = ["keras>=3.10.0", "torch>=2.6.0"]
-cu124 = ["keras>=3.10.0", "torch>=2.6.0"]
-cu126 = ["keras>=3.10.0", "torch>=2.6.0"]
-cu130 = ["keras>=3.10.0", "torch>=2.6.0"]
+pytorch = ["torch>=2.6.0"]
+cu118 = ["torch>=2.6.0"]
+cu124 = ["torch>=2.6.0"]
+cu126 = ["torch>=2.6.0"]
+cu130 = ["torch>=2.6.0"]
 
-# All frameworks (Keras + JAX + PyTorch)
+# All frameworks (JAX + PyTorch)
 all = ["newsrex[jax]", "newsrex[pytorch]"]
 all-cu118 = ["newsrex[jax]", "newsrex[cu118]", "newsrex[jax-cuda]"]
 all-cu124 = ["newsrex[jax]", "newsrex[cu124]", "newsrex[jax-cuda]"]

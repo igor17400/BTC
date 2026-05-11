@@ -11,10 +11,10 @@ import time
 import hydra
 import numpy as np
 import torch
+import wandb
 from omegaconf import DictConfig
 from safetensors.torch import load_file as load_safetensors
 
-import wandb
 from src.core.io.logging import (
     console,
     log_test_results,
@@ -23,6 +23,12 @@ from src.core.io.logging import (
 )
 from src.core.io.progress import create_progress
 from src.core.io.saving import get_output_run_dir, save_run_summary_fn
+from src.core.io.timing import (
+    PhaseStats,
+    RunTiming,
+    count_params,
+    dump_run_timing,
+)
 from src.core.losses import get_loss
 from src.core.metrics.functions import NewsRecommenderMetrics
 from src.core.models.spec import build_model_from_spec
@@ -343,11 +349,72 @@ def run(cfg: DictConfig):
         if model_setup is not None and model_setup.rebuild_test_remap is not None:
             model_setup.rebuild_test_remap(dataset_provider, processed_news)
 
+        _test_start = time.time()
         test_metrics = eval_fn(model, mode="test")
+        if torch.cuda.is_available():
+            torch.cuda.synchronize()
+        _test_wall = time.time() - _test_start
         if test_metrics:
             log_test_results(test_metrics)
+        _n_test_imps = (
+            int(test_metrics.get("_num_impressions", 0)) if test_metrics else 0
+        )
+        _test_phase = PhaseStats(
+            wall_seconds=_test_wall,
+            n_samples=_n_test_imps or None,
+            throughput_samples_per_s=(
+                _n_test_imps / _test_wall if (_n_test_imps and _test_wall > 0) else None
+            ),
+        )
+        # Stash on best_metrics["timing"] alongside train/val phase stats.
+        if "timing" in best_metrics and isinstance(best_metrics["timing"], dict):
+            best_metrics["timing"]["test"] = _test_phase.to_dict()
 
     log_training_complete(cfg.model_name, "pytorch", time.time() - start_time)
+
+    # ---- Dump timing.json + push to W&B ----
+    _total_seconds = time.time() - start_time
+    _timing = best_metrics.get("timing", {}) if isinstance(best_metrics, dict) else {}
+    _dataset_name = (
+        cfg.dataset.name
+        if hasattr(cfg, "dataset") and hasattr(cfg.dataset, "name")
+        else "unknown"
+    )
+    _params = count_params(model, "pytorch")
+    _run_timing = RunTiming(
+        framework="pytorch",
+        model_name=cfg.model_name,
+        dataset_name=_dataset_name,
+        seed=int(cfg.get("seed", 0)),
+        n_params_total=int(_params.get("total", 0)),
+        n_params_trainable=int(_params.get("trainable", 0)),
+        time_to_first_step_seconds=_timing.get("time_to_first_step_seconds"),
+        total_seconds=_total_seconds,
+    )
+    for k in ("train_epochs", "val_epochs"):
+        for p in _timing.get(k, []):
+            getattr(_run_timing, k).append(PhaseStats(**p))
+    if _timing.get("test"):
+        _run_timing.test = PhaseStats(**_timing["test"])
+    try:
+        dump_run_timing(_run_timing, output_run_dir / "timing.json")
+        console.log(f"Saved timing to {output_run_dir / 'timing.json'}")
+    except Exception as _e:
+        console.log(f"[yellow]timing.json dump failed: {_e}[/yellow]")
+
+    if wandb.run is not None:
+        _wb: dict[str, float | int] = {
+            "timing/n_params_total": _run_timing.n_params_total,
+            "timing/n_params_trainable": _run_timing.n_params_trainable,
+            "timing/total_seconds": _total_seconds,
+        }
+        if _timing.get("time_to_first_step_seconds") is not None:
+            _wb["timing/time_to_first_step_seconds"] = _timing[
+                "time_to_first_step_seconds"
+            ]
+        if _run_timing.test is not None:
+            _wb["timing/test_wall_seconds"] = _run_timing.test.wall_seconds
+        wandb.log(_wb)
 
     # Save eval results.
     if test_metrics:

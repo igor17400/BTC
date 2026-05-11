@@ -131,7 +131,7 @@ def digat_evaluate(
             "mrr": 0.0,
             "ndcg@5": 0.0,
             "ndcg@10": 0.0,
-            "num_impressions": 0,
+            "_num_impressions": 0,
         }
 
     hist_ids_raw = np.asarray(behaviors["histories_news_ids"]).astype(np.int64)
@@ -223,12 +223,14 @@ def digat_evaluate(
         metrics = compute_metrics(
             group_labels, group_preds, metrics_calculator, progress
         )
-    metrics["num_impressions"] = len(group_labels)
+    metrics["_num_impressions"] = len(group_labels)
 
     if save_predictions_path:
         predictions = {}
         for i, (labels, preds) in enumerate(zip(group_labels, group_preds)):
             predictions[str(i)] = (labels.tolist(), preds.tolist())
-        save_predictions_to_file_fn(predictions, save_predictions_path, epoch, mode=mode)
+        save_predictions_to_file_fn(
+            predictions, save_predictions_path, epoch, mode=mode
+        )
 
     return metrics

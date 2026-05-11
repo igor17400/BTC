@@ -123,7 +123,7 @@ def miner_fast_evaluate(
     final_metrics = compute_metrics(
         group_labels, group_preds, metrics_calculator, progress
     )
-    final_metrics["num_impressions"] = len(group_labels)
+    final_metrics["_num_impressions"] = len(group_labels)
 
     if save_predictions_path:
         save_predictions_to_file_fn(
@@ -151,7 +151,7 @@ def _precompute_user_interests(
         visible=True,
     )
 
-    for impression_ids, user_ids, features in user_dataloader:
+    for impression_ids, _user_ids, features in user_dataloader:
         # encode_interests returns (B, K, E)
         vecs_np = adapter.encode_user_interests(user_encoder, features)
 

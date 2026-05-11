@@ -29,6 +29,7 @@ from src.core.io.logging import (
     log_epoch_end,
 )
 from src.core.io.progress import ProgressManager, create_progress
+from src.core.io.timing import PhaseStats
 
 logger = logging.getLogger(__name__)
 
@@ -262,8 +263,9 @@ def training_loop(
 
     # ---- Timing ----------------------------------------------------------
     timing: dict[str, Any] = {
-        "epoch_training_times": [],
-        "epoch_validation_times": [],
+        "train_epochs": [],
+        "val_epochs": [],
+        "time_to_first_step_seconds": None,
     }
     experiment_start = time.time()
 
@@ -277,6 +279,7 @@ def training_loop(
             epoch_start = time.time()
             epoch_loss = 0.0
             num_batches = 0
+            samples_seen = 0
 
             # Batch loop
             batch_task = progress.add_task(
@@ -289,8 +292,16 @@ def training_loop(
 
             for batch_features, batch_labels in train_dataloader:
                 loss = train_step(model, optimizer, batch_features, batch_labels)
+                # block on first step in the run so the JIT-compile cost
+                # is captured rather than buried in async dispatch.
+                if timing["time_to_first_step_seconds"] is None:
+                    jax.block_until_ready(loss)
+                    timing["time_to_first_step_seconds"] = (
+                        time.time() - experiment_start
+                    )
                 epoch_loss += float(loss)
                 num_batches += 1
+                samples_seen += int(getattr(batch_labels, "shape", [0])[0])
                 progress.update(
                     batch_task,
                     advance=1,
@@ -299,12 +310,26 @@ def training_loop(
                         f"(Loss: {epoch_loss / num_batches:.4f})"
                     ),
                 )
+            # Force completion of all dispatched work so wall_seconds is honest.
+            jax.block_until_ready(loss)
 
             progress.remove_task(batch_task)
 
             avg_loss = epoch_loss / max(num_batches, 1)
             epoch_train_time = time.time() - epoch_start
-            timing["epoch_training_times"].append(epoch_train_time)
+
+            train_stats = PhaseStats(
+                wall_seconds=epoch_train_time,
+                n_steps=num_batches,
+                n_samples=samples_seen,
+                throughput_samples_per_s=(
+                    samples_seen / epoch_train_time if epoch_train_time > 0 else None
+                ),
+                throughput_steps_per_s=(
+                    num_batches / epoch_train_time if epoch_train_time > 0 else None
+                ),
+            )
+            timing["train_epochs"].append(train_stats.to_dict())
 
             # ---- Evaluation ----------------------------------------------
             val_metrics: dict[str, float] | None = None
@@ -315,7 +340,20 @@ def training_loop(
                 eval_start = time.time()
                 val_metrics = eval_fn(model, epoch=epoch, **(eval_kwargs or {}))
                 eval_time = time.time() - eval_start
-                timing["epoch_validation_times"].append(eval_time)
+
+                n_imps = (
+                    int(val_metrics.get("_num_impressions", 0))
+                    if isinstance(val_metrics, dict)
+                    else 0
+                )
+                val_stats = PhaseStats(
+                    wall_seconds=eval_time,
+                    n_samples=n_imps or None,
+                    throughput_samples_per_s=(
+                        n_imps / eval_time if (n_imps and eval_time > 0) else None
+                    ),
+                )
+                timing["val_epochs"].append(val_stats.to_dict())
 
                 # Best tracking
                 main_metrics = ["auc", "mrr", "ndcg@5", "ndcg@10"]
@@ -391,7 +429,5 @@ def training_loop(
             save_safetensors(flat, str(ckpt_path))
             logger.info("Saved best model weights to %s", ckpt_path)
 
-    timing["total_training_time"] = time.time() - experiment_start
     best_metrics["timing"] = timing
-
     return best_metrics

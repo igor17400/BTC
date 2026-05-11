@@ -177,13 +177,15 @@ def pprec_fast_evaluate(
     final_metrics = compute_metrics(
         group_labels, group_preds, metrics_calculator, progress
     )
-    final_metrics["num_impressions"] = len(group_labels)
+    final_metrics["_num_impressions"] = len(group_labels)
 
     if save_predictions_path:
         predictions = {}
         for i, (labels, preds) in enumerate(zip(group_labels, group_preds)):
             predictions[str(i)] = (labels.tolist(), preds.tolist())
-        save_predictions_to_file_fn(predictions, save_predictions_path, epoch, mode=mode)
+        save_predictions_to_file_fn(
+            predictions, save_predictions_path, epoch, mode=mode
+        )
 
     return final_metrics
 

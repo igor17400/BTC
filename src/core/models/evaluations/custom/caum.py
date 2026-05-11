@@ -56,7 +56,10 @@ def caum_fast_evaluate(
 
     # 2. Precompute clicked-news matrices per impression
     user_clicked_vecs = _precompute_user_clicked_news(
-        user_hist_dataloader, news_vecs, adapter, progress,
+        user_hist_dataloader,
+        news_vecs,
+        adapter,
+        progress,
         news_encoder=news_encoder,
     )
 
@@ -120,7 +123,7 @@ def caum_fast_evaluate(
     final_metrics = compute_metrics(
         group_labels, group_preds, metrics_calculator, progress
     )
-    final_metrics["num_impressions"] = len(group_labels)
+    final_metrics["_num_impressions"] = len(group_labels)
 
     if save_predictions_path:
         save_predictions_to_file_fn(

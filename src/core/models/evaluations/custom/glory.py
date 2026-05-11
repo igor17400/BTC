@@ -87,7 +87,7 @@ def glory_evaluate(
     )  # (num_news, D)
 
     # Step 2b: pre-encode entity embeddings for ALL news (optional).
-    all_local_entity_emb = None   # (num_news, D)
+    all_local_entity_emb = None  # (num_news, D)
     all_neighbor_entity_emb = None  # (num_news, D)
     if use_entity and entity_embedding is not None and entity_encoder is not None:
         logger.info("Pre-encoding entity embeddings for all news...")
@@ -96,11 +96,14 @@ def glory_evaluate(
 
         # Local entity encoding: embed each news's entity IDs → encode.
         all_entity_ids = news_features[
-            :, title_size : title_size + E,
+            :,
+            title_size : title_size + E,
         ].astype(np.int32)  # (num_news, E)
         all_local_entity_emb = adapter.encode_glory_entity(
-            entity_embedding, entity_encoder,
-            all_entity_ids, batch_size=batch_size,
+            entity_embedding,
+            entity_encoder,
+            all_entity_ids,
+            batch_size=batch_size,
         )  # (num_news, D)
 
         # Neighbor entity encoding: look up neighbors → embed → encode.
@@ -119,8 +122,11 @@ def glory_evaluate(
                         all_neighbor_ids[nid, offset : offset + vlen] = nbrs[:vlen]
         all_neighbor_mask = (all_neighbor_ids > 0).astype(np.float32)
         all_neighbor_entity_emb = adapter.encode_glory_global_entity(
-            entity_embedding, global_entity_encoder,
-            all_neighbor_ids, all_neighbor_mask, batch_size=batch_size,
+            entity_embedding,
+            global_entity_encoder,
+            all_neighbor_ids,
+            all_neighbor_mask,
+            batch_size=batch_size,
         )  # (num_news, D)
 
     # Step 3: score each impression.
@@ -138,7 +144,7 @@ def glory_evaluate(
             "mrr": 0.0,
             "ndcg@5": 0.0,
             "ndcg@10": 0.0,
-            "num_impressions": 0,
+            "_num_impressions": 0,
         }
 
     hist_ids_raw = np.asarray(behaviors["histories_news_ids"]).astype(np.int64)
@@ -225,12 +231,14 @@ def glory_evaluate(
             metrics_calculator,
             progress,
         )
-    metrics["num_impressions"] = len(group_labels)
+    metrics["_num_impressions"] = len(group_labels)
 
     if save_predictions_path:
         predictions = {}
         for i, (labels, preds) in enumerate(zip(group_labels, group_preds)):
             predictions[str(i)] = (labels.tolist(), preds.tolist())
-        save_predictions_to_file_fn(predictions, save_predictions_path, epoch, mode=mode)
+        save_predictions_to_file_fn(
+            predictions, save_predictions_path, epoch, mode=mode
+        )
 
     return metrics

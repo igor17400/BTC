@@ -21,6 +21,7 @@ from torch.utils.data import DataLoader
 
 from src.core.io.logging import log_early_stopping, log_epoch_end
 from src.core.io.progress import create_progress
+from src.core.io.timing import PhaseStats
 
 from .device import setup_device
 
@@ -152,8 +153,9 @@ def training_loop(
         min_improvement=early_stopping_min_improvement,
     )
     timing: dict[str, Any] = {
-        "epoch_training_times": [],
-        "epoch_validation_times": [],
+        "train_epochs": [],
+        "val_epochs": [],
+        "time_to_first_step_seconds": None,
     }
     experiment_start = time.time()
 
@@ -185,6 +187,7 @@ def training_loop(
             model.train()
             running_loss = 0.0
             num_batches = 0
+            samples_seen = 0
 
             batch_task = progress.add_task(
                 f"Epoch {epoch}/{num_epochs} - training", total=len(train_dataloader)
@@ -246,16 +249,41 @@ def training_loop(
                         scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
 
+                # First completed gradient-update step in the whole
+                # run captures the "time-to-first-step" metric.
+                if is_step and timing["time_to_first_step_seconds"] is None:
+                    if torch.cuda.is_available():
+                        torch.cuda.synchronize()
+                    timing["time_to_first_step_seconds"] = (
+                        time.time() - experiment_start
+                    )
+
                 running_loss += display_loss.item()
                 num_batches += 1
+                samples_seen += int(batch_labels.shape[0])
 
                 progress.update(batch_task, advance=1)
+
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
 
             progress.remove_task(batch_task)
 
             avg_train_loss = running_loss / max(num_batches, 1)
             epoch_train_time = time.time() - epoch_start
-            timing["epoch_training_times"].append(epoch_train_time)
+
+            train_stats = PhaseStats(
+                wall_seconds=epoch_train_time,
+                n_steps=num_batches,
+                n_samples=samples_seen,
+                throughput_samples_per_s=(
+                    samples_seen / epoch_train_time if epoch_train_time > 0 else None
+                ),
+                throughput_steps_per_s=(
+                    num_batches / epoch_train_time if epoch_train_time > 0 else None
+                ),
+            )
+            timing["train_epochs"].append(train_stats.to_dict())
 
             # ---------- Validation ----------
             val_metrics: dict[str, float] | None = None
@@ -265,8 +293,23 @@ def training_loop(
             if eval_fn is not None:
                 eval_start = time.time()
                 val_metrics = eval_fn(model, epoch=epoch)
+                if torch.cuda.is_available():
+                    torch.cuda.synchronize()
                 val_time = time.time() - eval_start
-                timing["epoch_validation_times"].append(val_time)
+
+                n_imps = (
+                    int(val_metrics.get("_num_impressions", 0))
+                    if isinstance(val_metrics, dict)
+                    else 0
+                )
+                val_stats = PhaseStats(
+                    wall_seconds=val_time,
+                    n_samples=n_imps or None,
+                    throughput_samples_per_s=(
+                        n_imps / val_time if (n_imps and val_time > 0) else None
+                    ),
+                )
+                timing["val_epochs"].append(val_stats.to_dict())
 
                 # Best tracking
                 main_metrics = ["auc", "mrr", "ndcg@5", "ndcg@10"]
@@ -316,8 +359,5 @@ def training_loop(
 
             progress.update(epoch_task, advance=1)
 
-    # ---- Final ----
-    timing["total_training_time"] = time.time() - experiment_start
     best_metrics["timing"] = timing
-
     return best_metrics
