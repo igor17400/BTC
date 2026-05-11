@@ -197,7 +197,12 @@ class GRUCell(nnx.Module):
     def __init__(self, input_size: int, hidden_size: int, *, rngs: nnx.Rngs):
         self.hidden_size = hidden_size
         k = 1.0 / math.sqrt(hidden_size)
-        uniform_init = nnx.initializers.uniform(k)
+
+        # PyTorch's nn.GRUCell uses U(-k, k); `nnx.initializers.uniform(k)`
+        # returns U(0, k), which biases every gate toward "keep old state"
+        # and was responsible for ~0.3% AUC loss vs the PyTorch port.
+        def uniform_init(key, shape, dtype=jnp.float32):
+            return jax.random.uniform(key, shape, dtype, minval=-k, maxval=k)
 
         # Input-to-hidden weights for r, z, n gates (stacked).
         self.W_ih = nnx.Linear(
