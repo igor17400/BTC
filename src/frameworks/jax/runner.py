@@ -42,6 +42,9 @@ from src.core.setup import setup_model
 from src.frameworks.jax.dataloaders import (
     ImpressionIterator,
     NewsBatchDataloader,
+    PLMImpressionIterator,
+    PLMNewsBatchDataloader,
+    PLMUserHistoryBatchDataloader,
     UserHistoryBatchDataloader,
     create_glory_jax_dataloader,
     create_train_dataloader,
@@ -51,14 +54,31 @@ from src.frameworks.jax.models.adapter import JAXAdapter
 from src.frameworks.jax.training import training_loop
 
 
-def _build_train_features(dataset_provider) -> tuple:
-    """Extract raw numpy features and labels from the dataset provider."""
+def _build_train_features(dataset_provider, encoder_cfg=None) -> tuple:
+    """Extract raw numpy features and labels from the dataset provider.
+
+    When ``encoder_cfg.type != "glove"`` uses ``hist_features`` /
+    ``cand_features`` keys carrying parsed-int news ids for the PLM
+    lookup. GloVe mode also exposes those keys (aliased to the token
+    tensors) so models stay encoder-agnostic.
+    """
     data = dataset_provider.train_behaviors_data
     features = {}
+    encoder_type = (
+        encoder_cfg.get("type", "glove") if encoder_cfg is not None else "glove"
+    )
+
+    if encoder_type != "glove":
+        features["hist_features"] = np.asarray(data["histories_news_ids"])
+        features["cand_features"] = np.asarray(data["candidate_news_ids"])
+        labels = np.asarray(data["labels"])
+        return features, labels
 
     if dataset_provider.process_title:
         features["hist_tokens"] = np.asarray(data["history_news_tokens"])
         features["cand_tokens"] = np.asarray(data["candidate_news_tokens"])
+        features["hist_features"] = features["hist_tokens"]
+        features["cand_features"] = features["cand_tokens"]
     if dataset_provider.process_abstract:
         features["hist_abstract_tokens"] = np.asarray(
             data["history_news_abstract_tokens"]
@@ -114,13 +134,51 @@ def _build_train_features(dataset_provider) -> tuple:
 
 
 def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
-    """Build JAX-native dataloaders for evaluation."""
+    """Build JAX-native dataloaders for evaluation.
+
+    Picks GloVe-token or PLM-id variants based on ``cfg.encoder.type``.
+    Both variants implement the iteration contract used by the shared
+    evaluator.
+    """
     pn = dataset_provider.processed_news
     data = (
         dataset_provider.val_behaviors_data
         if mode == "val"
         else dataset_provider.test_behaviors_data
     )
+    encoder_type = (
+        cfg.encoder.get("type", "glove") if hasattr(cfg, "encoder") else "glove"
+    )
+
+    if encoder_type != "glove":
+        news_ids_str = np.array(pn["news_ids_original_strings"])
+        parsed_news_ids = np.array(
+            [
+                int(s[1:]) if isinstance(s, str) and s.startswith("N") else int(s)
+                for s in news_ids_str
+            ],
+            dtype=np.int32,
+        )
+        news_dl = PLMNewsBatchDataloader(
+            news_ids_str=news_ids_str,
+            parsed_news_ids=parsed_news_ids,
+            batch_size=cfg.eval.batch_size,
+        )
+        user_dl = PLMUserHistoryBatchDataloader(
+            history_news_ids=np.asarray(data["histories_news_ids"], dtype=np.int32),
+            impression_ids=data["impression_ids"],
+            user_ids=data.get("user_ids"),
+            batch_size=cfg.eval.batch_size,
+        )
+        # Ragged: each impression has a different candidate count. Pass
+        # through as-is; the iterator casts per-row.
+        imp_iter = PLMImpressionIterator(
+            candidate_news_ids=data["candidate_news_ids"],
+            labels=data["labels"],
+            impression_ids=data["impression_ids"],
+            candidate_ids=data["candidate_news_ids"],
+        )
+        return news_dl, user_dl, imp_iter
 
     news_dl = NewsBatchDataloader(
         news_ids=np.array(pn["news_ids_original_strings"]),
@@ -187,6 +245,28 @@ def run(cfg: DictConfig):
     dataset_provider = hydra.utils.instantiate(cfg.dataset, mode="train")
     processed_news = dataset_provider.processed_news
 
+    # Pre-compute and cache frozen PLM embeddings if requested.
+    encoder_cfg = getattr(cfg, "encoder", None)
+    if encoder_cfg is not None and encoder_cfg.get("type", "glove") != "glove":
+        from src.core.data.encoders.plm import attach_plm_embeddings
+
+        console.log(
+            f"Attaching frozen PLM embeddings "
+            f"(plm_name={encoder_cfg.plm_name}, pooling={encoder_cfg.pooling}, "
+            f"max_length={encoder_cfg.max_length}) ..."
+        )
+        attach_plm_embeddings(
+            processed_news,
+            plm_name=encoder_cfg.plm_name,
+            text_field=encoder_cfg.text_field,
+            max_length=encoder_cfg.max_length,
+            pooling=encoder_cfg.pooling,
+            batch_size=encoder_cfg.batch_size,
+            device="cuda",
+            id_prefix=getattr(dataset_provider, "id_prefix", "N"),
+            level=encoder_cfg.get("level", "sentence"),
+        )
+
     # Model
     spec = cfg.spec
     # LSTUR needs num_users for user ID embeddings (auto-computed by dataset)
@@ -194,7 +274,9 @@ def run(cfg: DictConfig):
     if spec.model.name.lower() == "lstur":
         extra_kwargs["num_users"] = processed_news["num_users"]
         console.log(f"Auto-detected num_users: {processed_news['num_users']}")
-    model = build_model_from_spec(spec, "jax", processed_news, **extra_kwargs)
+    model = build_model_from_spec(
+        spec, "jax", processed_news, encoder=encoder_cfg, **extra_kwargs
+    )
     console.log(f"Model {spec.model.name} instantiated for JAX.")
 
     # Load pre-trained weights if provided (eval-only mode).
@@ -243,7 +325,7 @@ def run(cfg: DictConfig):
         )
     else:
         # Standard pipeline (NRMS, NAML, LSTUR, MINER, PP-REC, CROWN)
-        features, labels = _build_train_features(dataset_provider)
+        features, labels = _build_train_features(dataset_provider, encoder_cfg)
         train_dataloader = create_train_dataloader(
             features=features,
             labels=labels,
@@ -294,6 +376,15 @@ def run(cfg: DictConfig):
         else None
     )
 
+    # When val == test (dev_as_val), early stopping on val would bias
+    # the reported test number — disable it and run the full schedule.
+    # The "best-val checkpoint" tracker still promotes the best epoch.
+    _es_patience = (
+        cfg.train.num_epochs + 1
+        if getattr(cfg.dataset, "validation_split_strategy", None) == "dev_as_val"
+        else cfg.train.early_stopping.patience
+    )
+
     # Train
     best_metrics = training_loop(
         model=model,
@@ -301,7 +392,7 @@ def run(cfg: DictConfig):
         num_epochs=cfg.train.num_epochs,
         learning_rate=cfg.train.learning_rate,
         gradient_clip_norm=cfg.train.get("gradient_clip_val", 0.0),
-        early_stopping_patience=cfg.train.early_stopping.patience,
+        early_stopping_patience=_es_patience,
         early_stopping_min_improvement=cfg.train.early_stopping.get(
             "min_improvement", 0.01
         ),
@@ -316,7 +407,26 @@ def run(cfg: DictConfig):
 
     # Test evaluation
     test_metrics = None
-    if cfg.eval.run_test_after_training:
+    _dev_as_val = (
+        getattr(cfg.dataset, "validation_split_strategy", None) == "dev_as_val"
+    )
+    if cfg.eval.run_test_after_training and _dev_as_val:
+        # With dev_as_val, the validation and test sets are the same
+        # MIND-dev impressions, so the best-val checkpoint's val metrics
+        # ARE the test metrics by construction. Promote them to skip a
+        # redundant evaluation pass.
+        console.log(
+            "[dim]dev_as_val: promoting best-val metrics to test metrics "
+            "(skipping redundant test eval)[/dim]"
+        )
+        test_metrics = {
+            k.replace("val_", "", 1): v
+            for k, v in best_metrics.items()
+            if k.startswith("val_")
+        }
+        log_test_results(test_metrics)
+        _test_wall = 0.0
+    elif cfg.eval.run_test_after_training:
         console.log("[bold]Running test evaluation...[/bold]")
         if not dataset_provider.test_behaviors_data:
             dataset_provider._load_data("test")

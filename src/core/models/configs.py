@@ -4,7 +4,44 @@ Each Config dataclass defines the hyperparameters for a specific model architect
 These are framework-agnostic and used by Keras, PyTorch, and JAX implementations.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+@dataclass
+class EncoderConfig:
+    """Encoder backbone selection.
+
+    ``type='glove'`` reproduces the existing behavior (pretrained GloVe
+    word vectors + per-model architecture-specific encoders).  Other
+    types pre-encode the news text with a frozen PLM at dataset-init
+    time and feed a single per-news vector into the model.
+    """
+
+    type: str = "glove"  # 'glove' | 'bert' | 'roberta' | 'sbert' | 'distilbert'
+
+    # GloVe-only
+    embedding_size: int = 300
+
+    # PLM-only (ignored when type=='glove')
+    plm_name: str = ""  # HF model id or alias from PLM_REGISTRY
+    plm_dim: int = 0  # pretrained hidden size (set at build time)
+    max_length: int = 32
+    pooling: str = "mean"  # 'mean' or 'cls' (sentence-level only)
+    text_field: str = "title"
+    batch_size: int = 64
+    # PLM caching granularity:
+    #   "sentence" (default) — one pooled vector per news; ``PLMNewsEncoder``
+    #     applies a trainable Linear projection on top. Cheapest, smallest cache.
+    #   "token" — full (max_length, plm_dim) sequence per news; the model uses
+    #     ``PLMTokenNewsEncoder`` (frozen tokens + trainable MHA/pool +
+    #     projection — IP2-style architecture).
+    level: str = "sentence"
+    # Pooler (used when ``level='token'``; ignored otherwise).
+    pooler_type: str = "attention"  # 'mean' | 'cls' | 'attention' | 'gate'
+    pooler_num_heads: int = 6
+    pooler_head_dim: int = 128
+    pooler_attention_query_dim: int = 200
+    pooler_dropout_rate: float = 0.0
 
 
 @dataclass
@@ -21,6 +58,7 @@ class NRMSConfig:
     max_history_length: int = 50
     max_impressions_length: int = 5
     process_user_id: bool = False
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass

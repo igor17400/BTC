@@ -47,15 +47,27 @@ def _run_multi_seed(cfg: DictConfig) -> None:
 
         # Override the seed and output dir for this run.
         # Hydra's runtime.output_dir is frozen at startup (seed 42),
-        # so we build a per-seed output path explicitly.
+        # so we build a per-seed output path explicitly. The split
+        # strategy is part of the path so dev_as_val and random/
+        # chronological runs don't collide.
         cfg_copy = OmegaConf.to_container(cfg, resolve=True)
         cfg_copy["seed"] = seed
+        split_strategy = cfg_copy.get("dataset", {}).get(
+            "validation_split_strategy", "random"
+        )
+        encoder_slug = (
+            cfg_copy.get("encoder", {}).get("slug", "glove")
+            if isinstance(cfg_copy.get("encoder"), dict)
+            else "glove"
+        )
         cfg_copy["_output_run_dir"] = str(
             Path(cfg_copy["output_base_dir"])
             / "train"
             / cfg_copy.get("dataset", {}).get("name", "unknown")
             / model_name
             / framework
+            / encoder_slug
+            / split_strategy
             / f"seed_{seed}"
         )
         cfg_run = OmegaConf.create(cfg_copy)

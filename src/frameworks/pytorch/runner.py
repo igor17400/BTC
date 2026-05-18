@@ -36,6 +36,9 @@ from src.core.setup import setup_model
 from src.frameworks.pytorch.dataloaders import (
     ImpressionIterator,
     NewsBatchDataloader,
+    PLMImpressionIterator,
+    PLMNewsBatchDataloader,
+    PLMUserHistoryBatchDataloader,
     UserHistoryBatchDataloader,
     create_glory_train_dataloader,
     create_train_dataloader,
@@ -45,14 +48,35 @@ from src.frameworks.pytorch.models.adapter import PyTorchAdapter
 from src.frameworks.pytorch.training import training_loop
 
 
-def _build_train_features(dataset_provider) -> tuple:
-    """Extract raw numpy features and labels from the dataset provider."""
+def _build_train_features(dataset_provider, encoder_cfg=None) -> tuple:
+    """Extract raw numpy features and labels from the dataset provider.
+
+    When ``encoder_cfg.type != "glove"`` (or ``encoder_cfg`` is None and we
+    fall back to GloVe), uses ``hist_features`` / ``cand_features`` keys
+    that carry either GloVe token tensors or PLM parsed-int news ids
+    depending on the encoder.
+    """
     data = dataset_provider.train_behaviors_data
     features = {}
+    encoder_type = (
+        encoder_cfg.get("type", "glove") if encoder_cfg is not None else "glove"
+    )
 
+    if encoder_type != "glove":
+        # PLM mode: feed parsed news ids directly into the encoder; it
+        # owns the lookup into the cached PLM embedding table.
+        features["hist_features"] = np.asarray(data["histories_news_ids"])
+        features["cand_features"] = np.asarray(data["candidate_news_ids"])
+        labels = np.asarray(data["labels"])
+        return features, labels
+
+    # GloVe mode (existing behaviour) — keys also exposed as
+    # ``hist_features`` / ``cand_features`` so models stay encoder-agnostic.
     if dataset_provider.process_title:
         features["hist_tokens"] = np.asarray(data["history_news_tokens"])
         features["cand_tokens"] = np.asarray(data["candidate_news_tokens"])
+        features["hist_features"] = features["hist_tokens"]
+        features["cand_features"] = features["cand_tokens"]
     if dataset_provider.process_abstract:
         features["hist_abstract_tokens"] = np.asarray(
             data["history_news_abstract_tokens"]
@@ -109,7 +133,12 @@ def _build_train_features(dataset_provider) -> tuple:
 
 
 def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
-    """Build a dict of PyTorch-native eval dataloaders."""
+    """Build a dict of PyTorch-native eval dataloaders.
+
+    Picks the GloVe-token or PLM-id dataloader variants based on
+    ``cfg.encoder.type``.  Both variants implement the same iteration
+    contract used by the shared evaluator.
+    """
     pn = dataset_provider.processed_news
     data = (
         dataset_provider.val_behaviors_data
@@ -117,6 +146,45 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
         else dataset_provider.test_behaviors_data
     )
     batch_size = cfg.eval.batch_size
+    encoder_type = (
+        cfg.encoder.get("type", "glove") if hasattr(cfg, "encoder") else "glove"
+    )
+
+    if encoder_type != "glove":
+        # PLM eval: feature for each news is just the parsed news id.
+        news_ids_str = np.array(pn["news_ids_original_strings"])
+        parsed_news_ids = np.array(
+            [
+                int(s[1:]) if isinstance(s, str) and s.startswith("N") else int(s)
+                for s in news_ids_str
+            ],
+            dtype=np.int64,
+        )
+        news_dl = PLMNewsBatchDataloader(
+            news_ids_str=news_ids_str,
+            parsed_news_ids=parsed_news_ids,
+            batch_size=batch_size,
+        )
+        user_dl = PLMUserHistoryBatchDataloader(
+            history_news_ids=np.asarray(data["histories_news_ids"], dtype=np.int64),
+            impression_ids=data["impression_ids"],
+            user_ids=data.get("user_ids"),
+            batch_size=batch_size,
+        )
+        # ``candidate_news_ids`` is a ragged sequence (different impressions
+        # have different candidate counts at eval), so pass it through as
+        # an object array — ``PLMImpressionIterator`` casts per-row.
+        imp_iter = PLMImpressionIterator(
+            candidate_news_ids=data["candidate_news_ids"],
+            labels=data["labels"],
+            impression_ids=data["impression_ids"],
+            candidate_ids=data["candidate_news_ids"],
+        )
+        return {
+            "user_hist_dataloader": user_dl,
+            "news_dataloader": news_dl,
+            "impression_iterator": imp_iter,
+        }
 
     news_dl = NewsBatchDataloader(
         news_ids=np.array(pn["news_ids_original_strings"]),
@@ -205,6 +273,30 @@ def run(cfg: DictConfig):
     dataset_provider = hydra.utils.instantiate(cfg.dataset, mode="train")
     processed_news = dataset_provider.processed_news
 
+    # Pre-compute and cache frozen PLM embeddings if requested.  The
+    # encoder config defaults to GloVe; any other type triggers a one-
+    # time pass over the news corpus with the matching HF model.
+    encoder_cfg = getattr(cfg, "encoder", None)
+    if encoder_cfg is not None and encoder_cfg.get("type", "glove") != "glove":
+        from src.core.data.encoders.plm import attach_plm_embeddings
+
+        console.log(
+            f"Attaching frozen PLM embeddings "
+            f"(plm_name={encoder_cfg.plm_name}, pooling={encoder_cfg.pooling}, "
+            f"max_length={encoder_cfg.max_length}) ..."
+        )
+        attach_plm_embeddings(
+            processed_news,
+            plm_name=encoder_cfg.plm_name,
+            text_field=encoder_cfg.text_field,
+            max_length=encoder_cfg.max_length,
+            pooling=encoder_cfg.pooling,
+            batch_size=encoder_cfg.batch_size,
+            device="cuda" if torch.cuda.is_available() else "cpu",
+            id_prefix=getattr(dataset_provider, "id_prefix", "N"),
+            level=encoder_cfg.get("level", "sentence"),
+        )
+
     # Model
     spec = cfg.spec
     # LSTUR needs num_users for user ID embeddings (auto-computed by dataset)
@@ -212,7 +304,9 @@ def run(cfg: DictConfig):
     if spec.model.name.lower() == "lstur":
         extra_kwargs["num_users"] = processed_news["num_users"]
         console.log(f"Auto-detected num_users: {processed_news['num_users']}")
-    model = build_model_from_spec(spec, "pytorch", processed_news, **extra_kwargs)
+    model = build_model_from_spec(
+        spec, "pytorch", processed_news, encoder=encoder_cfg, **extra_kwargs
+    )
     console.log(f"Model {spec.model.name} instantiated for PyTorch.")
 
     # Model-specific setup (DIGAT, GLORY) or standard pipeline
@@ -256,7 +350,7 @@ def run(cfg: DictConfig):
         )
     else:
         # Standard pipeline (NRMS, NAML, LSTUR, MINER, PP-REC, CROWN)
-        features, labels = _build_train_features(dataset_provider)
+        features, labels = _build_train_features(dataset_provider, encoder_cfg)
         train_dataloader = create_train_dataloader(
             features=features,
             labels=labels,
@@ -315,6 +409,14 @@ def run(cfg: DictConfig):
         else None
     )
 
+    # When val == test (dev_as_val), early stopping on val would bias
+    # the reported test number — disable it and run the full schedule.
+    # The "best-val checkpoint" tracker still promotes the best epoch.
+    _es_patience = (
+        cfg.train.num_epochs + 1
+        if getattr(cfg.dataset, "validation_split_strategy", None) == "dev_as_val"
+        else cfg.train.early_stopping.patience
+    )
     best_metrics = training_loop(
         model=model,
         train_dataloader=train_dataloader,
@@ -322,7 +424,7 @@ def run(cfg: DictConfig):
         cfg=cfg,
         num_epochs=cfg.train.num_epochs,
         learning_rate=cfg.train.learning_rate,
-        early_stopping_patience=cfg.train.early_stopping.patience,
+        early_stopping_patience=_es_patience,
         early_stopping_min_improvement=cfg.train.early_stopping.get(
             "min_improvement", 0.01
         ),
@@ -335,7 +437,26 @@ def run(cfg: DictConfig):
 
     # Test evaluation
     test_metrics = None
-    if cfg.eval.run_test_after_training:
+    _dev_as_val = (
+        getattr(cfg.dataset, "validation_split_strategy", None) == "dev_as_val"
+    )
+    if cfg.eval.run_test_after_training and _dev_as_val:
+        # With dev_as_val, the validation and test sets are the same
+        # MIND-dev impressions, so the best-val checkpoint's val metrics
+        # ARE the test metrics by construction. Promote them to skip a
+        # redundant evaluation pass (~50 s/seed).
+        console.log(
+            "[dim]dev_as_val: promoting best-val metrics to test metrics "
+            "(skipping redundant test eval)[/dim]"
+        )
+        test_metrics = {
+            k.replace("val_", "", 1): v
+            for k, v in best_metrics.items()
+            if k.startswith("val_")
+        }
+        log_test_results(test_metrics)
+        _test_wall = 0.0
+    elif cfg.eval.run_test_after_training:
         # Load best checkpoint (safetensors — HF canonical, matches JAX).
         ckpt_path = output_run_dir / "models" / "model.safetensors"
         if ckpt_path.exists():

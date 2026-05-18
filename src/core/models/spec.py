@@ -13,6 +13,7 @@ from .configs import (
     CAUMConfig,
     CROWNConfig,
     DIGATConfig,
+    EncoderConfig,
     GLORYConfig,
     LSTURConfig,
     MINERConfig,
@@ -27,7 +28,35 @@ from .configs import (
 # ---------------------------------------------------------------------------
 
 
-def spec_to_nrms_config(spec: DictConfig) -> NRMSConfig:
+def _encoder_from_cfg(encoder_cfg: DictConfig | None) -> EncoderConfig:
+    """Build an EncoderConfig from the top-level ``cfg.encoder`` dict.
+
+    Accepts ``None`` (defaults to GloVe) so the existing call-sites that
+    don't yet pass an encoder keep working.
+    """
+    if encoder_cfg is None:
+        return EncoderConfig()
+    return EncoderConfig(
+        type=encoder_cfg.get("type", "glove"),
+        embedding_size=encoder_cfg.get("embedding_size", 300),
+        plm_name=encoder_cfg.get("plm_name", ""),
+        plm_dim=encoder_cfg.get("plm_dim", 0),
+        max_length=encoder_cfg.get("max_length", 32),
+        pooling=encoder_cfg.get("pooling", "mean"),
+        text_field=encoder_cfg.get("text_field", "title"),
+        batch_size=encoder_cfg.get("batch_size", 64),
+        level=encoder_cfg.get("level", "sentence"),
+        pooler_type=encoder_cfg.get("pooler_type", "attention"),
+        pooler_num_heads=encoder_cfg.get("pooler_num_heads", 6),
+        pooler_head_dim=encoder_cfg.get("pooler_head_dim", 128),
+        pooler_attention_query_dim=encoder_cfg.get("pooler_attention_query_dim", 200),
+        pooler_dropout_rate=encoder_cfg.get("pooler_dropout_rate", 0.0),
+    )
+
+
+def spec_to_nrms_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> NRMSConfig:
     """Convert a parsed NRMS spec into NRMSConfig."""
     arch = spec.model.architecture
     return NRMSConfig(
@@ -41,6 +70,7 @@ def spec_to_nrms_config(spec: DictConfig) -> NRMSConfig:
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
@@ -334,11 +364,14 @@ _SPEC_CONVERTERS = {
 }
 
 
-def spec_to_config(spec: DictConfig):
+def spec_to_config(spec: DictConfig, encoder: DictConfig | None = None):
     """Convert a YAML spec to the appropriate Config dataclass.
 
     Args:
         spec: Parsed YAML spec (the `spec` key from the Hydra config).
+        encoder: Optional top-level encoder config (``cfg.encoder``). Only
+            consumed by converters that have been updated to accept it
+            (currently NRMS); silently ignored by others.
 
     Returns:
         The corresponding Config dataclass instance.
@@ -350,7 +383,11 @@ def spec_to_config(spec: DictConfig):
             f"Unknown model '{model_name}' in spec. "
             f"Supported: {list(_SPEC_CONVERTERS.keys())}"
         )
-    return converter(spec)
+    # Try the new (spec, encoder) signature first; fall back to legacy.
+    try:
+        return converter(spec, encoder=encoder)
+    except TypeError:
+        return converter(spec)
 
 
 # ---------------------------------------------------------------------------
@@ -437,6 +474,7 @@ def build_model_from_spec(
     spec: DictConfig,
     framework: str,
     processed_news: dict[str, Any],
+    encoder: DictConfig | None = None,
     **extra_kwargs,
 ):
     """Build a model from a YAML spec.
@@ -445,13 +483,16 @@ def build_model_from_spec(
         spec: Parsed YAML spec (the `spec` key from the Hydra config).
         framework: Target framework ("keras", "pytorch", "jax").
         processed_news: Processed news data dict (vocab_size, embeddings, etc.).
+        encoder: Optional top-level encoder config (``cfg.encoder``) — when
+            provided and the model supports it, swaps the GloVe news encoder
+            for a frozen PLM lookup.
         **extra_kwargs: Additional kwargs passed to the model constructor.
 
     Returns:
         An instantiated model.
     """
     model_name = spec.model.name.lower()
-    config = spec_to_config(spec)
+    config = spec_to_config(spec, encoder=encoder)
     model_class = get_model_class(model_name, framework)
 
     # Build kwargs from config fields + processed_news

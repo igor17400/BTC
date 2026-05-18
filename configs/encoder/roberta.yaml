@@ -1,0 +1,9 @@
+# RoBERTa-base frozen encoder.
+type: roberta
+slug: roberta      # output-path segment
+plm_name: roberta  # → "roberta-base"
+plm_dim: 768
+max_length: 32
+pooling: mean
+text_field: title
+batch_size: 64

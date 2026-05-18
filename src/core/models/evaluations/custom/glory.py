@@ -63,6 +63,22 @@ def glory_evaluate(
     title_size: int = 30,
     save_predictions_path: str | None = None,
     epoch: int | None = None,
+    # Per-impression eval (matches reference ValidGraphDataset). When
+    # "per_impression", the global GNN runs on a k-hop subgraph for each
+    # impression instead of once on the full ~65k-node graph — matches
+    # the training-time GNN graph size and avoids over-smoothing.
+    eval_mode: str = "precomputed",
+    k_hops: int = 2,
+    num_neighbors: int = 8,
+    csr_in_adjacency: tuple | None = None,
+    # Padded-subgraph mode (for JAX). When both are set, every
+    # per-impression subgraph is padded/truncated to a fixed
+    # ``(max_subgraph_nodes, max_subgraph_edges)`` shape so XLA compiles
+    # the GNN forward once and reuses it across all impressions. The
+    # last subgraph position is reserved as a padding sentinel; padded
+    # edges are self-loops there, leaving real-node embeddings intact.
+    max_subgraph_nodes: int | None = None,
+    max_subgraph_edges: int | None = None,
 ) -> dict[str, float]:
     """Evaluate GLORY on the dev or test set.
 
@@ -78,13 +94,28 @@ def glory_evaluate(
         batch_size=batch_size,
     )  # (num_news, D)
 
-    # Step 2: run global GNN once on the full news graph.
-    logger.info("Running global GNN on full news graph...")
-    all_news_graph_emb = adapter.encode_glory_global(
-        graph_encoder,
-        all_news_emb,
-        graph["edge_index"],
-    )  # (num_news, D)
+    # Step 2: run global GNN. In "precomputed" mode we do one pass over
+    # the full graph and look up history embeddings in the loop. In
+    # "per_impression" mode we defer this to a tiny per-impression GNN
+    # call on the user's k-hop subgraph (matches reference + training).
+    all_news_graph_emb = None
+    if eval_mode == "precomputed":
+        logger.info("Running global GNN on full news graph...")
+        all_news_graph_emb = adapter.encode_glory_global(
+            graph_encoder,
+            all_news_emb,
+            graph["edge_index"],
+        )  # (num_news, D)
+    elif eval_mode == "per_impression":
+        logger.info(
+            f"eval_mode=per_impression: GNN will run on k-hop subgraphs "
+            f"(k_hops={k_hops}, num_neighbors={num_neighbors})"
+        )
+    else:
+        raise ValueError(
+            f"Unknown eval_mode={eval_mode!r}; "
+            "expected 'precomputed' or 'per_impression'."
+        )
 
     # Step 2b: pre-encode entity embeddings for ALL news (optional).
     all_local_entity_emb = None  # (num_news, D)
@@ -193,7 +224,62 @@ def glory_evaluate(
 
         # Gather embeddings.
         clicked_title = all_news_emb[hist_valid]  # (H_valid, D)
-        clicked_graph = all_news_graph_emb[hist_valid]  # (H_valid, D)
+        if eval_mode == "precomputed":
+            clicked_graph = all_news_graph_emb[hist_valid]  # (H_valid, D)
+        else:
+            # Per-impression: build the user's k-hop subgraph, run the
+            # GNN on just those nodes, gather output at the history
+            # positions. Mirrors reference ValidGraphDataset.line_mapper.
+            from src.core.data.processing.models.glory import (
+                extract_edges_for_subgraph,
+                sample_subgraph,
+            )
+
+            sub_node_ids, sub_hist_mapping = sample_subgraph(
+                hist_valid,
+                neighbor_dict,
+                k_hops,
+                num_neighbors,
+                max_nodes=max_subgraph_nodes,
+            )
+            # When padding, the first ``n_real`` positions are real
+            # nodes; the rest are sentinels that must be excluded from
+            # edge extraction. Padded edges target the last position.
+            if max_subgraph_nodes is not None:
+                n_real = int((sub_node_ids != 0).sum()) if len(sub_node_ids) > 0 else 0
+                # ``hist_valid`` slots are guaranteed real (we always
+                # place them first); cap n_real at where the first 0
+                # sentinel appears after the history block.
+                # The simplest tight bound is: positions occupied before
+                # padding (= len(sub_node_ids) - num_trailing_zeros).
+                trailing_zeros = 0
+                for v in reversed(sub_node_ids):
+                    if int(v) == 0:
+                        trailing_zeros += 1
+                    else:
+                        break
+                n_real = max_subgraph_nodes - trailing_zeros
+                pad_node_idx = max_subgraph_nodes - 1
+            else:
+                n_real = None
+                pad_node_idx = None
+            sub_edge_index, _ = extract_edges_for_subgraph(
+                sub_node_ids,
+                np.asarray(graph["edge_index"]),
+                np.asarray(graph["edge_attr"]),
+                csr=csr_in_adjacency,
+                num_nodes=num_news,
+                max_edges=max_subgraph_edges,
+                n_real_nodes=n_real,
+                pad_node_idx=pad_node_idx,
+            )
+            sub_x = all_news_emb[sub_node_ids]  # (N_sub, D)
+            sub_graph_emb = adapter.encode_glory_global(
+                graph_encoder,
+                sub_x,
+                sub_edge_index,
+            )  # (N_sub, D)
+            clicked_graph = sub_graph_emb[sub_hist_mapping]  # (H_valid, D)
         cand_local = all_news_emb[cand_ids]  # (C, D)
 
         # Entity embeddings (optional) — gather from pre-computed caches.

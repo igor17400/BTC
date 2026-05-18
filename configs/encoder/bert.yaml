@@ -1,0 +1,12 @@
+# BERT-base-uncased frozen encoder.
+# Title text is tokenized with the HF tokenizer, run once through BERT
+# at dataset-init time, mean-pooled over tokens, and cached to
+# `.cache/plm_embeds/`.  Training reads only the cached vectors.
+type: bert
+slug: bert       # output-path segment; bert sentence-level path
+plm_name: bert  # alias; resolves to "bert-base-uncased" via PLM_REGISTRY
+plm_dim: 768
+max_length: 32
+pooling: mean
+text_field: title  # which raw text field to encode: "title" or "abstract"
+batch_size: 64

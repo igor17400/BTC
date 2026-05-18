@@ -1,0 +1,11 @@
+# DistilBERT-base-uncased frozen encoder.
+# ~40% smaller, ~60% faster than BERT-base, retains ~97% of GLUE
+# performance.  Pairs with the "efficient framework" story.
+type: distilbert
+slug: distilbert      # output-path segment
+plm_name: distilbert  # → "distilbert-base-uncased"
+plm_dim: 768
+max_length: 32
+pooling: mean
+text_field: title
+batch_size: 96

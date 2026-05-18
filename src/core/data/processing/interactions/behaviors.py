@@ -676,6 +676,34 @@ def get_train_val_data(
         last_day = behaviors_df["time"].max().date()
         train_behaviors = behaviors_df[behaviors_df["time"].dt.date < last_day]
         val_behaviors = behaviors_df[behaviors_df["time"].dt.date == last_day]
+    elif validation_split_strategy == "dev_as_val":
+        # IP2 / PLM-NR / UNBERT / DIGAT convention: train on 100% of the
+        # MIND train split, use MIND's official dev split as BOTH the
+        # validation and (later) test set.  Matches what most published
+        # MIND-small numbers actually report.
+        valid_behaviors_path = dataset_path / "valid" / "behaviors.tsv"
+        if not valid_behaviors_path.exists():
+            raise FileNotFoundError(
+                f"validation_split_strategy='dev_as_val' requires a "
+                f"valid/behaviors.tsv split at {valid_behaviors_path}."
+            )
+        val_df = pd.read_csv(
+            valid_behaviors_path,
+            sep="\t",
+            header=None,
+            names=["impression_id", "user_id", "time", "history", "impressions"],
+        )
+        if sampled_user_set is not None:
+            # Same user subset filter as we applied to train.
+            val_df = val_df[val_df["user_id"].isin(list(sampled_user_set))]
+        train_behaviors = behaviors_df
+        val_behaviors = val_df
+        logger.info(
+            "Using 'dev_as_val' split: train = 100%% of MIND-train "
+            "(%d behaviors), val = MIND-dev (%d behaviors).",
+            len(train_behaviors),
+            len(val_behaviors),
+        )
     else:
         raise ValueError(
             f"Unknown validation_split_strategy: {validation_split_strategy}"

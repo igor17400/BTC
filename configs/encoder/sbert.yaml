@@ -1,0 +1,11 @@
+# Sentence-BERT (all-MiniLM-L6-v2) frozen encoder.
+# Purpose-built for short-text sentence embeddings; mean pooling is
+# canonical for this model.
+type: sbert
+slug: sbert      # output-path segment
+plm_name: sbert  # → "sentence-transformers/all-MiniLM-L6-v2"
+plm_dim: 384
+max_length: 32
+pooling: mean
+text_field: title
+batch_size: 128

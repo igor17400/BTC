@@ -84,6 +84,20 @@ def _detect_seed(run_path: Path) -> str | None:
     return None
 
 
+def _detect_split_strategy(run_path: Path) -> str:
+    """Detect validation split strategy from the run path.
+
+    Expects the post-migration layout where the split is the parent of
+    ``seed_*``: ``.../{framework}/{split}/seed_*/``.
+    Falls back to ``"random"`` for legacy paths missing the split segment.
+    """
+    known_splits = {"random", "chronological", "dev_as_val"}
+    for parent in [run_path] + list(run_path.parents):
+        if parent.name in known_splits:
+            return parent.name
+    return "random"
+
+
 def _load_test_results(run_path: Path) -> dict:
     """Load test results if available."""
     p = run_path / "test_results.json"
@@ -283,7 +297,13 @@ def upload(
     model_name = _detect_model_name(ref_dir)
     framework = _detect_framework(ref_dir)
     dataset = _detect_dataset(ref_dir)
-    repo_id = f"{org}/{model_name}-{framework.upper()}-{dataset.replace(' ', '-')}"
+    split_strategy = _detect_split_strategy(ref_dir)
+    # Repo name includes the split strategy so dev_as_val and random
+    # weights don't collide in the same HF repo.
+    repo_id = (
+        f"{org}/{model_name}-{framework.upper()}-"
+        f"{dataset.replace(' ', '-')}-{split_strategy}"
+    )
 
     # Collect results per seed.
     seed_results = []

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from src.core.data.processing.models.digat import build_id_remap
 from src.core.data.processing.models.glory import (
+    build_csr_in_adjacency,
     build_entity_graph,
     build_entity_neighbor_dict,
     build_neighbor_dict,
@@ -44,12 +43,16 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
         dropout_rate=spec.model.dropout_rate,
         use_entity=use_entity,
         entity_emb_dim=spec.model.get("entity_emb_dim", 100),
-        entity_neighbors=spec.model.architecture.graph_encoder.get("entity_neighbors", 10),
+        entity_neighbors=spec.model.architecture.graph_encoder.get(
+            "entity_neighbors", 10
+        ),
     )
 
     # Build news feature matrix
     news_features = build_news_feature_matrix(
-        processed_news, g_cfg.title_size, g_cfg.entity_size,
+        processed_news,
+        g_cfg.title_size,
+        g_cfg.entity_size,
     )
     num_news = news_features.shape[0]
 
@@ -60,7 +63,9 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
         else None
     )
     glory_id_remap = build_id_remap(
-        dataset_provider, processed_news, glory_remap_path,
+        dataset_provider,
+        processed_news,
+        glory_remap_path,
     )
 
     def _apply_remap(ids):
@@ -68,7 +73,9 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
             return np.clip(ids, 0, num_news - 1)
         safe_ids = np.clip(ids, 0, len(glory_id_remap) - 1)
         return np.where(
-            ids < len(glory_id_remap), glory_id_remap[safe_ids], 0,
+            ids < len(glory_id_remap),
+            glory_id_remap[safe_ids],
+            0,
         ).astype(np.int64)
 
     # Remap train behaviors in-place
@@ -92,11 +99,14 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
     )
     graph_path = (
         graph_cache_dir / f"glory_news_graph_type{g_cfg.use_graph_type}.pkl"
-        if graph_cache_dir else None
+        if graph_cache_dir
+        else None
     )
     neighbor_path = (
-        graph_cache_dir / f"glory_neighbor_dict_type{g_cfg.use_graph_type}_dir{int(g_cfg.directed)}.pkl"
-        if graph_cache_dir else None
+        graph_cache_dir
+        / f"glory_neighbor_dict_type{g_cfg.use_graph_type}_dir{int(g_cfg.directed)}.pkl"
+        if graph_cache_dir
+        else None
     )
     glory_graph = build_news_graph(
         dataset_provider.train_behaviors_data,
@@ -105,28 +115,32 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
         cache_path=graph_path,
     )
     glory_neighbors = build_neighbor_dict(
-        glory_graph, directed=g_cfg.directed, cache_path=neighbor_path,
+        glory_graph,
+        directed=g_cfg.directed,
+        cache_path=neighbor_path,
     )
 
     # Entity graph + neighbors (optional)
     entity_neighbor_dict = None
     if use_entity:
         entity_graph_path = (
-            graph_cache_dir / "glory_entity_graph.pkl"
-            if graph_cache_dir else None
+            graph_cache_dir / "glory_entity_graph.pkl" if graph_cache_dir else None
         )
         entity_neighbor_path = (
             graph_cache_dir / "glory_entity_neighbor_dict.pkl"
-            if graph_cache_dir else None
+            if graph_cache_dir
+            else None
         )
         entity_graph = build_entity_graph(
-            glory_graph, news_features,
+            glory_graph,
+            news_features,
             title_size=g_cfg.title_size,
             entity_size=g_cfg.entity_size,
             cache_path=entity_graph_path,
         )
         entity_neighbor_dict = build_entity_neighbor_dict(
-            entity_graph, cache_path=entity_neighbor_path,
+            entity_graph,
+            cache_path=entity_neighbor_path,
         )
 
     # Build GLORYTrainDataset
@@ -165,6 +179,33 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
         title_size=g_cfg.title_size,
     )
 
+    # GLORY eval mode: "precomputed" (default; one global GNN pass on
+    # the full 65k-node graph) vs "per_impression" (k-hop subgraph per
+    # impression, matching the reference ValidGraphDataset).
+    eval_mode = str(
+        spec.model.architecture.graph_encoder.get("eval_mode", "precomputed")
+    ).lower()
+
+    # Padded-subgraph mode (for JAX). When set, every per-impression
+    # subgraph is padded/truncated to a fixed (N, E) shape so XLA
+    # compiles the GNN forward once. ``None`` (default) keeps the
+    # variable-size path that PyTorch uses.
+    max_subgraph_nodes = spec.model.architecture.graph_encoder.get(
+        "max_subgraph_nodes", None
+    )
+    max_subgraph_edges = spec.model.architecture.graph_encoder.get(
+        "max_subgraph_edges", None
+    )
+
+    # CSR adjacency is only needed when we sample subgraphs at eval time.
+    # Built lazily to skip the cost when eval_mode="precomputed".
+    csr_in_adjacency = None
+    if eval_mode == "per_impression":
+        csr_in_adjacency = build_csr_in_adjacency(
+            np.asarray(glory_graph["edge_index"]),
+            int(glory_graph["num_nodes"]),
+        )
+
     # Mutable context for eval_fn and remap rebuild
     ctx = {
         "cfg": g_cfg,
@@ -175,10 +216,22 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
         "id_remap": glory_id_remap,
         "remap_path": glory_remap_path,
         "use_entity": use_entity,
+        "eval_mode": eval_mode,
+        "csr_in_adjacency": csr_in_adjacency,
+        "max_subgraph_nodes": max_subgraph_nodes,
+        "max_subgraph_edges": max_subgraph_edges,
     }
 
-    def make_eval_fn(model, adapter, metrics_engine, dataset_provider,
-                     processed_news, eval_batch_size, output_run_dir, **_):
+    def make_eval_fn(
+        model,
+        adapter,
+        metrics_engine,
+        dataset_provider,
+        processed_news,
+        eval_batch_size,
+        output_run_dir,
+        **_,
+    ):
         def eval_fn(model, mode="val", epoch=None, **kwargs):
             return glory_evaluate(
                 news_encoder=model.local_news_encoder,
@@ -208,7 +261,14 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
                 title_size=ctx["cfg"].title_size,
                 save_predictions_path=str(output_run_dir / "predictions"),
                 epoch=epoch,
+                eval_mode=ctx["eval_mode"],
+                k_hops=ctx["cfg"].k_hops,
+                num_neighbors=ctx["cfg"].num_neighbors,
+                csr_in_adjacency=ctx["csr_in_adjacency"],
+                max_subgraph_nodes=ctx["max_subgraph_nodes"],
+                max_subgraph_edges=ctx["max_subgraph_edges"],
             )
+
         return eval_fn
 
     def rebuild_test_remap(dataset_provider, processed_news):
@@ -218,7 +278,9 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
         _saved_train = dataset_provider.train_behaviors_data
         dataset_provider.train_behaviors_data = {}
         ctx["id_remap"] = build_id_remap(
-            dataset_provider, processed_news, ctx["remap_path"],
+            dataset_provider,
+            processed_news,
+            ctx["remap_path"],
         )
         dataset_provider.train_behaviors_data = _saved_train
 

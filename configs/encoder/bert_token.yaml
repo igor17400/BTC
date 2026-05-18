@@ -1,0 +1,30 @@
+# BERT-base-uncased frozen encoder, TOKEN-LEVEL path.
+#
+# Caches the full (max_length, plm_dim) hidden-state sequence for each
+# news article (vs the sentence-level path which caches one pooled
+# vector). The model uses ``PLMTokenNewsEncoder`` to run a trainable
+# pooler (MHA + AdditiveAttention by default, IP2-style) over those
+# frozen per-token vectors before projecting to ``news_dim``.
+#
+# Storage cost: ~6 GB for MIND-small (65k news × 32 tokens × 768 dim
+# × 4 bytes). Compare to ~200 MB for the sentence-level cache.
+type: bert
+slug: bert_token          # output-path segment; distinguishes from sentence-level bert
+plm_name: bert            # → "bert-base-uncased"
+plm_dim: 768
+max_length: 32
+text_field: title
+batch_size: 64
+
+# Token-level path.
+level: token
+# IP2-style pooler defaults: 6 heads × 128 dim = 768 inner-dim MHA,
+# then AdditiveAttention pool over the residual+LN'd token sequence.
+pooler_type: attention
+pooler_num_heads: 6
+pooler_head_dim: 128
+pooler_attention_query_dim: 200
+pooler_dropout_rate: 0.0
+
+# Ignored when level=token but kept for schema completeness.
+pooling: mean

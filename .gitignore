@@ -40,6 +40,7 @@ ENV/
 .cache/
 .cache/cache_index.json
 outputs/
+outputs_fixed/
 multirun/
 wandb/
 checkpoints/

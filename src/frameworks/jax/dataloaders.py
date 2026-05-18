@@ -272,6 +272,100 @@ class UserHistoryBatchDataloader:
 # ---------------------------------------------------------------------------
 
 
+class PLMNewsBatchDataloader:
+    """Batch news IDs for PLM-mode evaluation (JAX).
+
+    Yields ``{"news_id": str_ids, "news_features": (B,) jnp int32}``.
+    """
+
+    def __init__(
+        self,
+        news_ids_str: np.ndarray,
+        parsed_news_ids: np.ndarray,
+        batch_size: int = 1024,
+    ):
+        self.news_ids_str = np.asarray(news_ids_str)
+        self.parsed_news_ids = np.asarray(parsed_news_ids, dtype=np.int32)
+        self.batch_size = batch_size
+        self.num_news = len(news_ids_str)
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        for i in range(0, self.num_news, self.batch_size):
+            end = min(i + self.batch_size, self.num_news)
+            yield {
+                "news_id": self.news_ids_str[i:end],
+                "news_features": jnp.asarray(self.parsed_news_ids[i:end]),
+            }
+
+    def __len__(self) -> int:
+        return self.num_news
+
+
+class PLMUserHistoryBatchDataloader:
+    """Batch user histories for PLM-mode evaluation (JAX).
+
+    Yields ``(impression_ids, user_ids_or_None, history_news_ids)``.
+    """
+
+    def __init__(
+        self,
+        history_news_ids: np.ndarray,
+        impression_ids: np.ndarray,
+        user_ids: np.ndarray | None = None,
+        batch_size: int = 32,
+    ):
+        self.history_news_ids = np.asarray(history_news_ids, dtype=np.int32)
+        self.impression_ids = np.asarray(impression_ids)
+        self.user_ids = np.asarray(user_ids) if user_ids is not None else None
+        self.batch_size = batch_size
+        self.num_users = len(impression_ids)
+
+    def __iter__(
+        self,
+    ) -> Iterator[tuple[np.ndarray, jnp.ndarray | None, jnp.ndarray]]:
+        for i in range(0, self.num_users, self.batch_size):
+            end = min(i + self.batch_size, self.num_users)
+            yield (
+                self.impression_ids[i:end],
+                jnp.asarray(self.user_ids[i:end])
+                if self.user_ids is not None
+                else None,
+                jnp.asarray(self.history_news_ids[i:end]),
+            )
+
+    def __len__(self) -> int:
+        return self.num_users
+
+
+class PLMImpressionIterator:
+    """Iterate impressions one-by-one yielding parsed-int news ids (JAX)."""
+
+    def __init__(
+        self,
+        candidate_news_ids: Any,
+        labels: Any,
+        impression_ids: Any,
+        candidate_ids: Any,
+    ):
+        self.candidate_news_ids = candidate_news_ids
+        self.labels = labels
+        self.impression_ids = impression_ids
+        self.candidate_ids = candidate_ids
+        self.num_impressions = len(labels)
+
+    def __iter__(self):
+        for idx in range(self.num_impressions):
+            cand_ids_np = np.asarray(self.candidate_news_ids[idx], dtype=np.int32)
+            features = jnp.asarray(cand_ids_np)
+            labels_arr = jnp.asarray(self.labels[idx], dtype=jnp.float32)
+            imp_id = self.impression_ids[idx]
+            cand_ids = self.candidate_ids[idx] if idx < len(self.candidate_ids) else []
+            yield features, labels_arr, imp_id, cand_ids
+
+    def __len__(self) -> int:
+        return self.num_impressions
+
+
 class ImpressionIterator:
     """Iterate over impressions one at a time for evaluation.
 

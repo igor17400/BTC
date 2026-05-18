@@ -15,7 +15,7 @@ from flax import nnx
 
 from src.core.models.configs import NRMSConfig
 
-from ..layers import AdditiveAttention
+from ..layers import AdditiveAttention, PLMNewsEncoder
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -24,10 +24,16 @@ from .base import BaseModel
 
 
 class NewsEncoder(nnx.Module):
-    """Encode a news article from its title token sequence.
+    """GloVe-token news encoder.
 
-    Pipeline: Embedding -> Dropout -> MultiHeadAttention -> Dropout
-    -> AdditiveAttention -> news vector.
+    Pipeline: Embedding → Dropout → MultiHeadAttention → Dropout → AdditiveAttention.
+
+    Honors the shared encoder contract:
+        - ``__call__(features, training=...) -> (*leading, news_dim)`` for any
+          leading shape ``(*leading, T)``.
+        - ``valid_mask(features) -> bool of shape (*leading,)``.
+
+    A GloVe news slot is "valid" if any token in its title is non-zero.
     """
 
     def __init__(
@@ -38,6 +44,7 @@ class NewsEncoder(nnx.Module):
         rngs: nnx.Rngs,
     ):
         self.config = config
+        self.news_dim = config.embedding_size
         self.embedding_layer = embedding_layer
 
         self.dropout1 = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
@@ -55,31 +62,36 @@ class NewsEncoder(nnx.Module):
             rngs=rngs,
         )
 
-    def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
+    @staticmethod
+    def valid_mask(features: jax.Array) -> jax.Array:
+        """A GloVe news slot is valid when any token is non-zero."""
+        return jnp.any(jnp.not_equal(features, 0), axis=-1)
+
+    def __call__(self, features: jax.Array, *, training: bool = False) -> jax.Array:
         """Forward pass.
 
         Args:
-            inputs: ``(batch, title_length)`` int32 token ids.
-            training: Whether to enable dropout.
+            features: ``(*leading, T)`` int32 token ids.
+            training: Enable dropout.
 
         Returns:
-            ``(batch, embedding_size)`` news representations.
+            ``(*leading, news_dim)`` news vectors.
         """
-        embedded = self.embedding_layer(inputs)  # (B, T, E)
+        leading_shape = features.shape[:-1]
+        T = features.shape[-1]
+        inputs = features.reshape(-1, T)  # (B*, T)
+
+        embedded = self.embedding_layer(inputs)
         y = self.dropout1(embedded, deterministic=not training)
 
-        # Padding mask for attention: True where tokens are non-zero
-        padding_mask = jnp.not_equal(inputs, 0)  # (B, T)
-
-        # Flax NNX MultiHeadAttention expects a mask of shape (B, 1, T_q, T_kv)
-        # where True means "attend to this position".
-        attn_mask = padding_mask[:, None, None, :]  # (B, 1, 1, T)
+        padding_mask = jnp.not_equal(inputs, 0)  # (B*, T)
+        attn_mask = padding_mask[:, None, None, :]  # (B*, 1, 1, T)
 
         y = self.multi_head_attention(y, y, mask=attn_mask, deterministic=not training)
         y = self.dropout2(y, deterministic=not training)
 
-        news_repr = self.additive_attention(y, mask=padding_mask)
-        return news_repr
+        news_repr = self.additive_attention(y, mask=padding_mask)  # (B*, news_dim)
+        return news_repr.reshape(*leading_shape, self.news_dim)
 
 
 # ---------------------------------------------------------------------------
@@ -117,26 +129,23 @@ class UserEncoder(nnx.Module):
             rngs=rngs,
         )
 
-    def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
+    def __call__(
+        self, history_features: jax.Array, *, training: bool = False
+    ) -> jax.Array:
         """Forward pass.
 
         Args:
-            inputs: ``(batch, history_length, title_length)`` int32 token ids.
+            history_features: Any shape the underlying ``news_encoder``
+                accepts, with the leading axes being ``(batch, history_length)``.
+                The encoder handles per-slot encoding; this method is
+                encoder-agnostic.
             training: Enable dropout.
 
         Returns:
             ``(batch, embedding_size)`` user representations.
         """
-        batch_size, hist_len, title_len = inputs.shape
-
-        # TimeDistributed: encode every news item in history
-        flat_inputs = inputs.reshape(batch_size * hist_len, title_len)
-        flat_vecs = self.news_encoder(flat_inputs, training=training)
-        click_title_presents = flat_vecs.reshape(batch_size, hist_len, -1)
-
-        # History mask: True where at least one token is non-zero
-        history_mask = jnp.any(jnp.not_equal(inputs, 0), axis=-1)  # (B, H)
-
+        click_title_presents = self.news_encoder(history_features, training=training)
+        history_mask = self.news_encoder.valid_mask(history_features)  # (B, H)
         attn_mask = history_mask[:, None, None, :]  # (B, 1, 1, H)
 
         y = self.browsed_news_attention(
@@ -175,57 +184,64 @@ class NRMS(BaseModel):
         self.config = config
         self.process_user_id = config.process_user_id
 
-        # Shared word embedding initialised from pre-trained weights
-        embeddings_matrix = np.asarray(processed_news["embeddings"])
-        vocab_size = int(processed_news["vocab_size"])
-        self.embedding_layer = nnx.Embed(
-            num_embeddings=vocab_size,
-            features=config.embedding_size,
-            rngs=rngs,
-        )
-        # Overwrite the randomly-initialised embedding table
-        self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
+        encoder_type = getattr(config.encoder, "type", "glove")
+        if encoder_type == "glove":
+            # Shared word embedding initialised from pre-trained weights.
+            embeddings_matrix = np.asarray(processed_news["embeddings"])
+            vocab_size = int(processed_news["vocab_size"])
+            self.embedding_layer = nnx.Embed(
+                num_embeddings=vocab_size,
+                features=config.embedding_size,
+                rngs=rngs,
+            )
+            self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
+            self.news_encoder = NewsEncoder(config, self.embedding_layer, rngs=rngs)
+        else:
+            # Frozen PLM lookup: a per-news vector cached by parsed-int id.
+            if "plm_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"NRMS with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_embeddings_by_id']. Call "
+                    "src.core.data.encoders.plm.attach_plm_embeddings(...) "
+                    "in the runner before building the model."
+                )
+            self.news_encoder = PLMNewsEncoder(
+                processed_news["plm_embeddings_by_id"],
+                news_dim=config.embedding_size,
+                rngs=rngs,
+            )
 
-        # Sub-modules
-        self.news_encoder = NewsEncoder(config, self.embedding_layer, rngs=rngs)
         self.user_encoder = UserEncoder(config, self.news_encoder, rngs=rngs)
 
-    # ---- Scoring helpers ------------------------------------------------
+    # ---- Scoring ---------------------------------------------------------
 
     def score_training_batch(
         self,
-        hist_tokens: jax.Array,
-        cand_tokens: jax.Array,
+        history_features: jax.Array,
+        candidate_features: jax.Array,
         *,
         training: bool = True,
     ) -> jax.Array:
         """Score a training batch (raw logits — loss handles softmax).
 
+        Encoder-agnostic: the encoder handles arbitrary leading shapes,
+        so we just call it with the natural (B, H, ...) and (B, C, ...)
+        leading axes and let it produce (B, H, D) / (B, C, D) directly.
+
         Args:
-            hist_tokens: ``(B, H, T)`` user history.
-            cand_tokens: ``(B, C, T)`` candidate news.
+            history_features: ``(B, H, *)`` history news features.
+            candidate_features: ``(B, C, *)`` candidate news features.
             training: Enable dropout.
 
         Returns:
             ``(B, C)`` raw logit scores.
         """
-        user_repr = self.user_encoder(hist_tokens, training=training)  # (B, E)
-
-        # TimeDistributed trick: the news encoder expects 2D input (batch, title_len),
-        # but we have 3D (batch, candidates, title_len). Flatten users x candidates
-        # into one big batch, encode all articles at once, then reshape back.
-        #   B = batch size (number of users)
-        #   C = candidates (number of candidate news per user)
-        #   T = title length (tokens per article)
-        B, C, T = cand_tokens.shape
-        flat_cands = cand_tokens.reshape(B * C, T)  # (B*C, T) — all articles flat
-        flat_vecs = self.news_encoder(flat_cands, training=training)  # (B*C, E)
-        cand_repr = flat_vecs.reshape(B, C, -1)  # (B, C, E) — grouped by user
-
+        user_repr = self.user_encoder(history_features, training=training)  # (B, E)
+        cand_repr = self.news_encoder(
+            candidate_features, training=training
+        )  # (B, C, E)
         scores = jnp.sum(cand_repr * user_repr[:, None, :], axis=-1)  # (B, C)
-        return scores  # raw logits; loss handles softmax
-
-    # ---- Unified call ---------------------------------------------------
+        return scores
 
     def __call__(
         self,
@@ -235,10 +251,11 @@ class NRMS(BaseModel):
     ) -> jax.Array:
         """Forward pass for training. Returns raw logits.
 
+        Uses uniform feature keys: ``hist_features`` and ``cand_features``.
         Inference uses ``self.news_encoder`` and ``self.user_encoder``
         directly via the shared evaluator (see
         :mod:`src.core.models.evaluation`), not this method.
         """
         return self.score_training_batch(
-            inputs["hist_tokens"], inputs["cand_tokens"], training=training
+            inputs["hist_features"], inputs["cand_features"], training=training
         )

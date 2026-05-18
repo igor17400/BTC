@@ -15,7 +15,12 @@ import torch.nn as nn
 
 from src.core.models.configs import PPRecConfig
 
-from ..layers import AdditiveAttention, AttentivePoolingQKY
+from ..layers import (
+    AdditiveAttention,
+    AttentivePoolingQKY,
+    CrossAttention,
+    MultiHeadSelfAttention,
+)
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -52,11 +57,14 @@ class PPRecNewsEncoder(nn.Module):
 
         # --- Word (title) branch ---
         self.word_dropout = nn.Dropout(config.dropout_rate)
-        self.word_mhsa = nn.MultiheadAttention(
-            embed_dim=config.embedding_size,
+        # Custom MHSA with explicit head_dim — see
+        # ``src.frameworks.pytorch.layers.attention_layers.MultiHeadSelfAttention``
+        # for why we don't use ``nn.MultiheadAttention``.
+        self.word_mhsa = MultiHeadSelfAttention(
+            in_features=config.embedding_size,
             num_heads=config.num_heads,
-            dropout=config.dropout_rate,
-            batch_first=True,
+            head_dim=config.head_dim,
+            dropout_rate=config.dropout_rate,
         )
         # Title MHSA produces (B,T,embed_dim). After concat with title_co
         # (B,T,co_num_heads*co_head_dim=200), project back to news_dim.
@@ -72,11 +80,11 @@ class PPRecNewsEncoder(nn.Module):
 
         # --- Entity branch + bidirectional MHCA ---
         if entity_embedding_layer is not None:
-            self.entity_mhsa = nn.MultiheadAttention(
-                embed_dim=config.entity_embedding_dim,
+            self.entity_mhsa = MultiHeadSelfAttention(
+                in_features=config.entity_embedding_dim,
                 num_heads=config.num_heads,
-                dropout=config.dropout_rate,
-                batch_first=True,
+                head_dim=config.head_dim,
+                dropout_rate=config.dropout_rate,
             )
             entity_concat_dim = config.entity_embedding_dim + (co_out_dim)
             self.entity_proj = nn.Linear(entity_concat_dim, config.news_dim)
@@ -85,29 +93,24 @@ class PPRecNewsEncoder(nn.Module):
                 input_dim=config.news_dim,
                 query_vec_dim=config.attention_hidden_dim,
             )
-            # Cross-attention: word query against entity key/value (and vice versa).
-            # nn.MultiheadAttention requires embed_dim == kdim == vdim, but here Q
-            # is in word space (300) and K/V is in entity space (100). Use kdim/vdim
-            # to allow different dims. embed_dim is the QUERY dim, kdim/vdim are
-            # the K/V dims. Output is num_heads * head_dim = 200d.
-            self.title_mhca = nn.MultiheadAttention(
-                embed_dim=co_out_dim,  # 200, output dim
+            # Bidirectional cross-attention (paper co1). CrossAttention
+            # handles different Q/KV dims natively by folding the query
+            # projection into W_q — no separate pre-projection layer
+            # needed, matching the JAX/Keras architecture exactly.
+            self.title_mhca = CrossAttention(
+                q_dim=config.embedding_size,
+                kv_dim=config.entity_embedding_dim,
                 num_heads=config.co_num_heads,
-                dropout=config.dropout_rate,
-                kdim=config.entity_embedding_dim,
-                vdim=config.entity_embedding_dim,
-                batch_first=True,
+                head_dim=config.co_head_dim,
+                dropout_rate=config.dropout_rate,
             )
-            self.title_query_proj = nn.Linear(config.embedding_size, co_out_dim)
-            self.entity_mhca = nn.MultiheadAttention(
-                embed_dim=co_out_dim,  # 200, output dim
+            self.entity_mhca = CrossAttention(
+                q_dim=config.entity_embedding_dim,
+                kv_dim=config.embedding_size,
                 num_heads=config.co_num_heads,
-                dropout=config.dropout_rate,
-                kdim=config.embedding_size,
-                vdim=config.embedding_size,
-                batch_first=True,
+                head_dim=config.co_head_dim,
+                dropout_rate=config.dropout_rate,
             )
-            self.entity_query_proj = nn.Linear(config.entity_embedding_dim, co_out_dim)
 
         # --- Category branch ---
         if category_embedding_layer is not None:
@@ -193,21 +196,19 @@ class PPRecNewsEncoder(nn.Module):
 
         # --- Bidirectional MHCA on RAW embeddings ---
         if has_entity:
-            # Word-conditioned-on-entity: Q from title, K/V from entities → 200d
-            title_q_proj = self.title_query_proj(title_emb)  # (B, T, 200)
-            title_co = self._safe_mha(
-                self.title_mhca, title_q_proj, entity_emb, entity_emb, entity_pad
-            )  # (B, T, 200)
-            # Entity-conditioned-on-word: Q from entities, K/V from title → 200d
-            entity_q_proj = self.entity_query_proj(entity_emb)  # (B, E, 200)
-            entity_co = self._safe_mha(
-                self.entity_mhca, entity_q_proj, title_emb, title_emb, title_pad
-            )  # (B, E, 200)
+            # Word-conditioned-on-entity: Q from title, K/V from entities → co_out_dim
+            title_co = self.title_mhca(
+                title_emb, entity_emb, key_padding_mask=entity_pad
+            )  # (B, T, co_out_dim)
+            # Entity-conditioned-on-word: Q from entities, K/V from title → co_out_dim
+            entity_co = self.entity_mhca(
+                entity_emb, title_emb, key_padding_mask=title_pad
+            )  # (B, E, co_out_dim)
 
         # --- Title self-attention + concat with co-attention ---
-        title_vecs = self._safe_mha(
-            self.word_mhsa, title_emb, title_emb, title_emb, title_pad
-        )  # (B, T, 300)
+        title_vecs = self.word_mhsa(
+            title_emb, key_padding_mask=title_pad
+        )  # (B, T, embedding_size)
         if has_entity:
             title_vecs = torch.cat([title_vecs, title_co], dim=-1)  # (B, T, 500)
         title_vecs = self.word_proj(title_vecs)  # (B, T, news_dim)
@@ -218,9 +219,9 @@ class PPRecNewsEncoder(nn.Module):
 
         # --- Entity self-attention + concat with co-attention ---
         if has_entity:
-            entity_vecs = self._safe_mha(
-                self.entity_mhsa, entity_emb, entity_emb, entity_emb, entity_pad
-            )  # (B, E, 100)
+            entity_vecs = self.entity_mhsa(
+                entity_emb, key_padding_mask=entity_pad
+            )  # (B, E, entity_embedding_dim)
             entity_vecs = torch.cat([entity_vecs, entity_co], dim=-1)  # (B, E, 300)
             entity_vecs = self.entity_proj(entity_vecs)  # (B, E, news_dim)
             entity_vecs = self.entity_dropout(entity_vecs)

@@ -45,15 +45,20 @@ def discover_timing_files(
     datasets: list[str] | None = None,
     models: list[str] | None = None,
     frameworks: list[str] | None = None,
+    split_strategies: list[str] | None = None,
 ) -> list[Path]:
-    """Find ``timing.json`` files matching the given filters."""
+    """Find ``timing.json`` files matching the given filters.
+
+    Expects the post-migration path layout:
+        ``<root>/<dataset>/<model>/<framework>/<split>/seed_*/timing.json``
+    """
     paths: list[Path] = []
-    for p in root.glob("*/*/*/seed_*/timing.json"):
-        # outputs/train/<dataset>/<model>/<framework>/seed_*/timing.json
+    for p in root.glob("*/*/*/*/seed_*/timing.json"):
         try:
-            dataset = p.parents[3].name
-            model = p.parents[2].name
-            framework = p.parents[1].name
+            dataset = p.parents[4].name
+            model = p.parents[3].name
+            framework = p.parents[2].name
+            split = p.parents[1].name
         except IndexError:
             continue
         if datasets and dataset not in datasets:
@@ -61,6 +66,8 @@ def discover_timing_files(
         if models and model not in models:
             continue
         if frameworks and framework not in frameworks:
+            continue
+        if split_strategies and split not in split_strategies:
             continue
         paths.append(p)
     return sorted(paths)
@@ -330,6 +337,11 @@ def main() -> None:
         help="Comma-separated framework names (jax, pytorch).",
     )
     ap.add_argument(
+        "--splits",
+        type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
+        help="Comma-separated split strategies (random, chronological, dev_as_val).",
+    )
+    ap.add_argument(
         "--json",
         type=Path,
         help="Write aggregated rows as JSON to this path (in addition to the table).",
@@ -347,6 +359,7 @@ def main() -> None:
         datasets=args.dataset,
         models=args.models,
         frameworks=args.frameworks,
+        split_strategies=args.splits,
     )
     if not paths:
         console.log("[yellow]No timing.json files found.[/yellow]")

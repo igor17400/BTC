@@ -12,11 +12,13 @@ from .attention_layers import (
     overwrite_mask,
 )
 from .layer_utils import apply_activation
+from .plm import PLMNewsEncoder
 
 __all__ = [
     "AdditiveAttention",
     "AttentivePoolingQKY",
     "CrossAttention",
+    "PLMNewsEncoder",
     "compute_mask",
     "overwrite_mask",
     "apply_activation",

@@ -240,6 +240,114 @@ class UserHistoryBatchDataloader:
         return self.num_users
 
 
+class PLMNewsBatchDataloader:
+    """Batch news IDs for PLM-mode evaluation.
+
+    Yields ``{"news_id": str_ids, "news_features": (B,) int64 parsed news ids}``.
+    The "features" tensor is just the parsed-int news id used to index
+    the cached PLM embedding table.
+    """
+
+    def __init__(
+        self,
+        news_ids_str: np.ndarray,
+        parsed_news_ids: np.ndarray,
+        batch_size: int = 1024,
+        device: torch.device | None = None,
+    ):
+        self.news_ids_str = np.asarray(news_ids_str)
+        self.parsed_news_ids = np.asarray(parsed_news_ids, dtype=np.int64)
+        self.batch_size = batch_size
+        self.device = device or torch.device("cpu")
+        self.num_news = len(news_ids_str)
+
+    def __iter__(self) -> Iterator[dict[str, Any]]:
+        for i in range(0, self.num_news, self.batch_size):
+            end = min(i + self.batch_size, self.num_news)
+            yield {
+                "news_id": self.news_ids_str[i:end],
+                "news_features": torch.from_numpy(self.parsed_news_ids[i:end]).to(
+                    self.device
+                ),
+            }
+
+    def __len__(self) -> int:
+        return self.num_news
+
+
+class PLMUserHistoryBatchDataloader:
+    """Batch user histories for PLM-mode evaluation.
+
+    Yields ``(impression_ids, user_ids_or_None, history_news_ids)`` where
+    ``history_news_ids`` is shape ``(B, H)`` int64 parsed news ids.
+    """
+
+    def __init__(
+        self,
+        history_news_ids: np.ndarray,
+        impression_ids: np.ndarray,
+        user_ids: np.ndarray | None = None,
+        batch_size: int = 32,
+        device: torch.device | None = None,
+    ):
+        self.history_news_ids = np.asarray(history_news_ids, dtype=np.int64)
+        self.impression_ids = np.asarray(impression_ids)
+        self.user_ids = np.asarray(user_ids) if user_ids is not None else None
+        self.batch_size = batch_size
+        self.device = device or torch.device("cpu")
+        self.num_users = len(impression_ids)
+
+    def __iter__(self) -> Iterator[tuple[Any, torch.Tensor | None, torch.Tensor]]:
+        for i in range(0, self.num_users, self.batch_size):
+            end = min(i + self.batch_size, self.num_users)
+            imp_ids = self.impression_ids[i:end]
+            user_ids = (
+                torch.from_numpy(self.user_ids[i:end]).long().to(self.device)
+                if self.user_ids is not None
+                else None
+            )
+            history = torch.from_numpy(self.history_news_ids[i:end]).to(self.device)
+            yield imp_ids, user_ids, history
+
+    def __len__(self) -> int:
+        return self.num_users
+
+
+class PLMImpressionIterator:
+    """Iterate impressions one-by-one, yielding torch tensors of parsed ids."""
+
+    def __init__(
+        self,
+        candidate_news_ids: Any,  # (N, C) parsed-int news ids (one row per impression)
+        labels: Any,
+        impression_ids: Any,
+        candidate_ids: Any,  # same as candidate_news_ids by row, kept for API compat
+        device: torch.device | None = None,
+    ):
+        self.candidate_news_ids = candidate_news_ids
+        self.labels = labels
+        self.impression_ids = impression_ids
+        self.candidate_ids = candidate_ids
+        self.device = device or torch.device("cpu")
+        self.num_impressions = len(labels)
+
+    def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor, int, Any]]:
+        for idx in range(self.num_impressions):
+            cand_ids_np = np.asarray(self.candidate_news_ids[idx], dtype=np.int64)
+            features = torch.from_numpy(cand_ids_np).to(self.device)
+            label = torch.tensor(
+                np.asarray(self.labels[idx]),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            impression_id = self.impression_ids[idx]
+            cand_ids = self.candidate_ids[idx] if idx < len(self.candidate_ids) else []
+            yield features, label, impression_id, cand_ids
+
+    def __len__(self) -> int:
+        return self.num_impressions
+
+
 class ImpressionIterator:
     """Iterate impressions one-by-one, yielding torch tensors."""
 
@@ -439,7 +547,8 @@ class GLORYTrainDataset(Dataset):
             # Look up neighbors for each entity.
             C = cand_features.shape[0]
             neighbor_entity = np.zeros(
-                (C * E, EN), dtype=np.int64,
+                (C * E, EN),
+                dtype=np.int64,
             )  # (C*E, EN)
             for cnt, eid in enumerate(origin_entity.flatten()):
                 if eid == 0:
@@ -452,7 +561,8 @@ class GLORYTrainDataset(Dataset):
             entity_mask = (neighbor_entity > 0).astype(np.float32)
             # Concat: [origin (C, E) | neighbors (C, E*EN)]
             result["candidate_entity"] = np.concatenate(
-                [origin_entity, neighbor_entity], axis=-1,
+                [origin_entity, neighbor_entity],
+                axis=-1,
             ).astype(np.int64)
             result["entity_mask"] = entity_mask
 
