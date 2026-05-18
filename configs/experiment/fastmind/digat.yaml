@@ -4,7 +4,7 @@
 # Usage: python src/train.py experiment=fastmind/digat framework=pytorch
 
 defaults:
-  - /experiment/mind/digat
+  - /experiment/mind/glove/digat
   - override /dataset: fastmind
   - _self_
 

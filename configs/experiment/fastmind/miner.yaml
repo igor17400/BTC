@@ -4,7 +4,7 @@
 # Usage: python src/train.py experiment=fastmind/miner framework=keras
 
 defaults:
-  - /experiment/mind/miner
+  - /experiment/mind/glove/miner
   - override /dataset: fastmind
   - _self_
 

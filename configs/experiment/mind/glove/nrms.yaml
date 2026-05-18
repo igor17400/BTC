@@ -1,19 +1,20 @@
 # @package _global_
 #
-# PP-Rec on MIND-small
-# Usage: python src/train.py experiment=mind/pprec framework=keras
+# NRMS on MIND-small (GloVe encoder)
+# Usage: python src/train.py experiment=mind/glove/nrms framework=pytorch
 
 defaults:
-  - /spec: pprec
+  - /spec: nrms
   - /dataset: mind
   - /sampling: base
+  - /encoder: glove
   - _self_
 
-name: mind_pprec
-model_name: PPRec
+name: mind_nrms
+model_name: NRMS
 seed: 42
 
-# Dataset: bridge spec inputs -> dataset processing flags
+# Dataset: bridge spec inputs → dataset processing flags
 dataset:
   version: small
   max_title_length: ${spec.inputs.title.max_length}
@@ -23,8 +24,6 @@ dataset:
   process_category: ${spec.inputs.process_category}
   process_subcategory: ${spec.inputs.process_subcategory}
   process_user_id: ${spec.inputs.process_user_id}
-  process_entities: true
-  max_entities: ${spec.inputs.max_entities}
 
 # Training: from spec
 train:

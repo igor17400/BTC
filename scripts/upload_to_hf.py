@@ -238,13 +238,13 @@ cd NewsReX && uv sync
 
 # Run evaluation with best seed weights
 uv run python src/eval.py \\
-    experiment=mind/{model_name.lower()} \\
+    experiment=mind/glove/{model_name.lower()} \\
     framework={framework} \\
     weights=hf://{repo_id}/model.safetensors
 
 # Run evaluation with a specific seed
 uv run python src/eval.py \\
-    experiment=mind/{model_name.lower()} \\
+    experiment=mind/glove/{model_name.lower()} \\
     framework={framework} \\
     weights=hf://{repo_id}/seed_42/model.safetensors
 ```

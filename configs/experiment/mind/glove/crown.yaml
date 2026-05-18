@@ -1,22 +1,24 @@
 # @package _global_
 #
-# MINER on MIND-small
-# Usage: python src/train.py experiment=mind/miner framework=jax
+# CROWN on MIND-small (GloVe encoder)
+# Usage: python src/train.py experiment=mind/glove/crown framework=pytorch
 
 defaults:
-  - /spec: miner
+  - /spec: crown
   - /dataset: mind
   - /sampling: base
+  - /encoder: glove
   - _self_
 
-name: mind_miner
-model_name: MINER
+name: mind_crown
+model_name: CROWN
 seed: 42
 
-# Dataset: bridge spec inputs -> dataset processing flags
+# Dataset: bridge spec inputs → dataset processing flags
 dataset:
   version: small
   max_title_length: ${spec.inputs.title.max_length}
+  max_abstract_length: ${spec.inputs.abstract.max_length}
   max_history_length: ${spec.inputs.history.max_length}
   max_impressions_length: ${spec.inputs.impressions.max_length}
   embedding_size: ${spec.model.embedding.size}
@@ -26,7 +28,7 @@ dataset:
   process_subcategory: ${spec.inputs.process_subcategory}
   process_user_id: ${spec.inputs.process_user_id}
 
-# Training: from spec
+# Training: from spec (paper defaults)
 train:
   batch_size: ${spec.training.batch_size}
   num_epochs: ${spec.training.num_epochs}
@@ -42,7 +44,7 @@ eval:
   fast_evaluation: true
   batch_size: ${spec.evaluation.batch_size}
 
-# Sampling: from spec
+# Sampling: from spec (4 negatives per positive)
 sampling:
   max_impressions_length: ${spec.inputs.impressions.max_length}
   strategy: ${spec.training.negative_sampling.strategy}
@@ -51,4 +53,4 @@ sampling:
 
 device:
   gpu_ids: [0]
-  precision: float32
+  precision: bfloat16

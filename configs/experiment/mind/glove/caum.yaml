@@ -1,19 +1,20 @@
 # @package _global_
 #
-# GLORY on MIND-small
-# Usage: python src/train.py experiment=mind/glory framework=pytorch
+# CAUM on MIND-small (GloVe encoder)
+# Usage: python src/train.py experiment=mind/glove/caum framework=pytorch
 
 defaults:
-  - /spec: glory
+  - /spec: caum
   - /dataset: mind
   - /sampling: base
+  - /encoder: glove
   - _self_
 
-name: mind_glory
-model_name: GLORY
+name: mind_caum
+model_name: CAUM
 seed: 42
 
-# Dataset: bridge spec inputs → dataset processing flags
+# Dataset: bridge spec inputs -> dataset processing flags
 dataset:
   version: small
   max_title_length: ${spec.inputs.title.max_length}
@@ -24,9 +25,11 @@ dataset:
   process_abstract: ${spec.inputs.process_abstract}
   process_category: ${spec.inputs.process_category}
   process_subcategory: ${spec.inputs.process_subcategory}
-  process_entities: ${spec.inputs.process_entities}
   process_user_id: ${spec.inputs.process_user_id}
+  process_entities: ${spec.inputs.process_entities}
+  max_entities: ${spec.inputs.max_entities}
 
+# Training: from spec
 train:
   batch_size: ${spec.training.batch_size}
   num_epochs: ${spec.training.num_epochs}
@@ -37,10 +40,12 @@ train:
     patience: ${spec.training.early_stopping.patience}
     min_improvement: ${spec.training.early_stopping.min_improvement}
 
+# Evaluation: from spec
 eval:
   fast_evaluation: true
   batch_size: ${spec.evaluation.batch_size}
 
+# Sampling: from spec
 sampling:
   max_impressions_length: ${spec.inputs.impressions.max_length}
   strategy: ${spec.training.negative_sampling.strategy}
@@ -49,13 +54,4 @@ sampling:
 
 device:
   gpu_ids: [0]
-  # Mixed-precision dtype — read by ``pytorch/training.py``:
-  #   ``float32``  : no autocast, no GradScaler (slowest, most stable).
-  #   ``bfloat16`` : bf16 autocast, no GradScaler (mild slowdown vs fp32
-  #                  on RTX 3090 — bf16 has fp32-equivalent range).
-  #   ``float16``  : fp16 autocast + ``torch.amp.GradScaler('cuda')`` for
-  #                  loss scaling (matches the reference GLORY repo;
-  #                  ~1.7× faster than fp32 on Ampere/Ada GPUs).
-  # Set ``float16`` here by default since the entity-branch + GNN forward
-  # is matmul-heavy and benefits the most from Tensor-Core fp16 paths.
-  precision: float16
+  precision: float32

@@ -1,23 +1,26 @@
 # @package _global_
 #
-# NRMS on MIND-small
-# Usage: python src/train.py experiment=mind/nrms framework=keras
+# MINER on MIND-small (GloVe encoder)
+# Usage: python src/train.py experiment=mind/glove/miner framework=jax
 
 defaults:
-  - /spec: nrms
+  - /spec: miner
   - /dataset: mind
   - /sampling: base
+  - /encoder: glove
   - _self_
 
-name: mind_nrms
-model_name: NRMS
+name: mind_miner
+model_name: MINER
 seed: 42
 
-# Dataset: bridge spec inputs → dataset processing flags
+# Dataset: bridge spec inputs -> dataset processing flags
 dataset:
   version: small
   max_title_length: ${spec.inputs.title.max_length}
   max_history_length: ${spec.inputs.history.max_length}
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  embedding_size: ${spec.model.embedding.size}
   process_title: ${spec.inputs.process_title}
   process_abstract: ${spec.inputs.process_abstract}
   process_category: ${spec.inputs.process_category}
@@ -29,6 +32,8 @@ train:
   batch_size: ${spec.training.batch_size}
   num_epochs: ${spec.training.num_epochs}
   learning_rate: ${spec.training.learning_rate}
+  gradient_clip_val: ${spec.training.gradient_clip_val}
+  grad_accum_steps: ${spec.training.grad_accum_steps}
   early_stopping:
     patience: ${spec.training.early_stopping.patience}
     min_improvement: ${spec.training.early_stopping.min_improvement}

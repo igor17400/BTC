@@ -4,11 +4,11 @@ Load pre-trained weights and run test evaluation without training.
 
 Usage:
     # Local weights
-    uv run python src/eval.py experiment=mind/nrms framework=jax \
+    uv run python src/eval.py experiment=mind/glove/nrms framework=jax \
         weights=outputs/MIND-small/NRMS/jax/seed_42/.../models/model.safetensors
 
     # HuggingFace Hub weights
-    uv run python src/eval.py experiment=mind/nrms framework=jax \
+    uv run python src/eval.py experiment=mind/glove/nrms framework=jax \
         weights=hf://newsrex/NRMS-JAX-MIND-small-seed42/model.safetensors
 """
 
@@ -16,7 +16,7 @@ import importlib
 import sys
 
 import hydra
-from omegaconf import DictConfig, OmegaConf, open_dict
+from omegaconf import DictConfig, open_dict
 
 from src.core.io.logging import console, setup_logging
 from src.core.io.progress import set_default_backend
@@ -47,7 +47,9 @@ def main(cfg: DictConfig) -> None:
     weights = getattr(cfg, "weights", None)
 
     if not weights:
-        raise ValueError("weights= is required. Pass a local path or hf://org/repo/file.")
+        raise ValueError(
+            "weights= is required. Pass a local path or hf://org/repo/file."
+        )
 
     if framework not in FRAMEWORK_MODULES:
         raise ValueError(f"Unknown framework: '{framework}'.")

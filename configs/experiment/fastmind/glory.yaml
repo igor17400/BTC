@@ -4,7 +4,7 @@
 # Usage: python src/train.py experiment=fastmind/glory framework=pytorch
 
 defaults:
-  - /experiment/mind/glory
+  - /experiment/mind/glove/glory
   - override /dataset: fastmind
   - _self_
 

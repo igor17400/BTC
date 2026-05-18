@@ -4,7 +4,7 @@
 # Usage: python src/train.py experiment=fastmind/crown framework=keras
 
 defaults:
-  - /experiment/mind/crown
+  - /experiment/mind/glove/crown
   - override /dataset: fastmind
   - _self_
 

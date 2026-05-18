@@ -11,6 +11,8 @@ Delegates heavy processing to standalone modules:
 from __future__ import annotations
 
 import collections
+import hashlib
+import json
 import logging
 import pickle
 import shutil
@@ -511,31 +513,29 @@ class NewsDatasetBase(BaseNewsDataset):
         """Cache-key contributions from user-subset sampling. Override in subclasses."""
         return {}
 
-    def _get_cache_key(self) -> str:
-        """Compute a short hash representing the current data-processing config.
+    def _cache_key_fields(self) -> dict[str, Any]:
+        """Fields that genuinely change the bytes written to the processed
+        train/val/test pkls.
 
-        Two runs with identical values for these fields can safely share cached
-        behaviors files; otherwise the cache is invalidated and reprocessed.
+        ``process_title``/``abstract``/``category``/``subcategory``/``user_id``
+        are deliberately excluded: ``process_behaviors`` writes those
+        feature arrays unconditionally — the flags are consumed by the
+        runners and models, not by the cache producer. Including them in
+        the hash multiplied the cache 2–4× without changing pkl contents.
         """
-        import hashlib
-        import json
-
         sampling_cfg = self.sampler.config if hasattr(self.sampler, "config") else {}
         try:
             sampling_dict = dict(sampling_cfg) if hasattr(sampling_cfg, "keys") else {}
         except Exception:
             sampling_dict = {}
 
-        key_data = {
+        key_data: dict[str, Any] = {
             "max_history_length": self.max_history_length,
             "max_impressions_length": self.max_impressions_length,
             "max_title_length": self.max_title_length,
             "max_abstract_length": self.max_abstract_length,
-            "process_title": self.process_title,
-            "process_abstract": self.process_abstract,
-            "process_category": self.process_category,
-            "process_subcategory": self.process_subcategory,
-            "process_user_id": self.process_user_id,
+            # process_entities gates whether history_news_entities and
+            # the CTR columns end up in the pkl, so it IS load-bearing.
             "process_entities": self.process_entities,
             "max_entities": self.max_entities,
             "popularity_ctr_method": self.popularity_ctr_method,
@@ -549,7 +549,15 @@ class NewsDatasetBase(BaseNewsDataset):
             "sampling_strategy": sampling_dict.get("strategy", ""),
         }
         key_data.update(self._user_subset_cache_signature())
-        key_str = json.dumps(key_data, sort_keys=True, default=str)
+        return key_data
+
+    def _get_cache_key(self) -> str:
+        """Compute a short hash representing the current data-processing config.
+
+        Two runs with identical values for these fields can safely share cached
+        behaviors files; otherwise the cache is invalidated and reprocessed.
+        """
+        key_str = json.dumps(self._cache_key_fields(), sort_keys=True, default=str)
         return hashlib.md5(key_str.encode()).hexdigest()[:10]
 
     def _cache_paths(self) -> dict[str, Path]:
@@ -562,6 +570,24 @@ class NewsDatasetBase(BaseNewsDataset):
             "test": processed_path / f"processed_test_{key}.pkl",
             "meta": processed_path / f"processed_meta_{key}.json",
         }
+
+    def _sweep_orphan_metas(self, processed_path: Path) -> None:
+        """Delete ``processed_meta_*.json`` files whose train pkl is missing.
+
+        Called after a successful ``_process_data`` so the cache dir
+        doesn't accumulate metas from configs that were tried once and
+        then evicted (e.g. legacy cache keys that no longer hash to
+        anything we'd recompute).
+        """
+        for meta_path in processed_path.glob("processed_meta_*.json"):
+            stem = meta_path.stem  # processed_meta_<key>
+            key = stem.removeprefix("processed_meta_")
+            if not (processed_path / f"processed_train_{key}.pkl").exists():
+                try:
+                    meta_path.unlink()
+                    logger.info(f"Removed orphan meta: {meta_path.name}")
+                except OSError as exc:
+                    logger.warning(f"Could not remove {meta_path}: {exc}")
 
     def _load_data(self, mode: str = "train") -> bool:
         """Try to load processed tensor data from disk."""
@@ -667,8 +693,6 @@ class NewsDatasetBase(BaseNewsDataset):
 
     def _process_data(self) -> None:
         """Process train/val/test data and save to disk."""
-        import json
-
         processed_path = self.dataset_path / "processed"
         processed_path.mkdir(parents=True, exist_ok=True)
         cache = self._cache_paths()
@@ -700,31 +724,28 @@ class NewsDatasetBase(BaseNewsDataset):
         with open(cache["test"], "wb") as f:
             pickle.dump(test_behaviors_dict, f)
 
-        # Write metadata for debugging/inspection
+        # Write metadata for debugging/inspection. The "keyed" block is
+        # the input to the cache hash; "informational" records flags that
+        # don't affect pkl contents (the runner/model consumes them
+        # later) but are useful when eyeballing what a cache was for.
         meta = {
             "cache_key": self._get_cache_key(),
-            "max_history_length": self.max_history_length,
-            "max_impressions_length": self.max_impressions_length,
-            "max_title_length": self.max_title_length,
-            "max_abstract_length": self.max_abstract_length,
-            "process_title": self.process_title,
-            "process_abstract": self.process_abstract,
-            "process_category": self.process_category,
-            "process_subcategory": self.process_subcategory,
-            "process_user_id": self.process_user_id,
-            "process_entities": self.process_entities,
-            "max_entities": self.max_entities,
-            "popularity_ctr_method": self.popularity_ctr_method,
-            "popularity_bucket_hours": self.popularity_bucket_hours,
-            "popularity_max_buckets": self.popularity_max_buckets,
-            "popularity_ctr_smoothing": self.popularity_ctr_smoothing,
-            "random_train_samples": self.random_train_samples,
-            "validation_split_strategy": self.validation_split_strategy,
-            "validation_split_percentage": self.validation_split_percentage,
-            "validation_split_seed": self.validation_split_seed,
+            "keyed": self._cache_key_fields(),
+            "informational": {
+                "process_title": self.process_title,
+                "process_abstract": self.process_abstract,
+                "process_category": self.process_category,
+                "process_subcategory": self.process_subcategory,
+                "process_user_id": self.process_user_id,
+            },
         }
         with open(cache["meta"], "w") as f:
             json.dump(meta, f, indent=2, default=str)
+
+        # Garbage-collect orphan metas left by previous configs whose
+        # train/val/test pkls were deleted. Keeps the processed/ dir
+        # tidy and prevents the orphan accumulation we saw historically.
+        self._sweep_orphan_metas(processed_path)
 
         self.train_behaviors_data = train_behaviors_dict
         self.val_behaviors_data = val_behaviors_dict
