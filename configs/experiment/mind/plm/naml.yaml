@@ -10,7 +10,6 @@
 #
 # GPU footprint: ~6.4 GB title cache + ~10 GB abstract cache.
 #
-# PyTorch only.
 # Usage: python src/train.py experiment=mind/plm/naml framework=pytorch
 
 defaults:

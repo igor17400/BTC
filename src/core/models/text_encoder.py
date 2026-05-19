@@ -26,15 +26,18 @@ from omegaconf import DictConfig
 _GLOVE_WORDS_KEY = {"title": "tokens", "abstract": "abstract_tokens"}
 
 # PLM cache keys written by
-# :func:`src.core.data.encoders.plm.attach_plm_embeddings`. The factory
-# accepts an empty prefix (title) or ``"abstract_"`` (abstract).
+# :func:`src.core.data.encoders.plm.attach_plm_embeddings`. The
+# ``output_prefix`` arg is inserted between ``plm_`` and the rest of
+# the key, so ``output_prefix="abstract_"`` produces
+# ``plm_abstract_token_embeddings_by_id`` (NOT
+# ``abstract_plm_token_embeddings_by_id``).
 _PLM_TOKENS_KEY = {
     "title": "plm_token_embeddings_by_id",
-    "abstract": "abstract_plm_token_embeddings_by_id",
+    "abstract": "plm_abstract_token_embeddings_by_id",
 }
 _PLM_MASK_KEY = {
     "title": "plm_attention_mask_by_id",
-    "abstract": "abstract_plm_attention_mask_by_id",
+    "abstract": "plm_abstract_attention_mask_by_id",
 }
 
 
