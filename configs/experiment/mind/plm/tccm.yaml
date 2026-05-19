@@ -1,0 +1,65 @@
+# @package _global_
+#
+# TCCM on MIND-small with frozen token-level PLM word embeddings.
+#
+# The PLM replaces only the GloVe word embedding inside the relevance
+# branch (PP-Rec ``co1`` news encoder + popularity-aware user encoder).
+# The popularity encoder stays on GloVe-token CTR — per-token CTR
+# tables are keyed on ``processed_news['tokens']`` and don't depend on
+# the relevance tokenization.
+#
+# Skips the abstract PLM cache (TCCM only consumes the title view).
+# Usage: python src/train.py experiment=mind/plm/tccm framework=pytorch
+
+defaults:
+  - /spec: tccm
+  - /dataset: mind
+  - /sampling: base
+  - /encoder: bert
+  - _self_
+
+name: mind_tccm_plm
+model_name: TCCM
+seed: 42
+
+encoder:
+  text_field_abstract: ""
+
+dataset:
+  version: small
+  max_title_length: ${spec.inputs.title.max_length}
+  max_history_length: ${spec.inputs.history.max_length}
+  process_title: ${spec.inputs.process_title}
+  process_abstract: ${spec.inputs.process_abstract}
+  process_category: ${spec.inputs.process_category}
+  process_subcategory: ${spec.inputs.process_subcategory}
+  process_user_id: ${spec.inputs.process_user_id}
+  process_entities: true
+  max_entities: ${spec.inputs.max_entities}
+  popularity:
+    ctr_method: wall_clock
+    bucket_hours: 1
+    max_buckets: 1500
+    ctr_smoothing: 0.01
+
+train:
+  batch_size: ${spec.training.batch_size}
+  num_epochs: ${spec.training.num_epochs}
+  learning_rate: ${spec.training.learning_rate}
+  early_stopping:
+    patience: ${spec.training.early_stopping.patience}
+    min_improvement: ${spec.training.early_stopping.min_improvement}
+
+eval:
+  fast_evaluation: true
+  batch_size: ${spec.evaluation.batch_size}
+
+sampling:
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  strategy: ${spec.training.negative_sampling.strategy}
+  random:
+    replace: false
+
+device:
+  gpu_ids: [0]
+  precision: float32

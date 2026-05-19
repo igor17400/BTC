@@ -143,143 +143,18 @@ def create_train_dataloader(
 
 
 class NewsBatchDataloader:
-    """Batch-iterate over news articles for precomputing embeddings.
+    """Batch news IDs for the news-vector precompute stage of eval (JAX).
 
-    Yields dictionaries with ``"news_id"`` and ``"news_features"``
-    (JAX array).
-    """
+    Single contract across encoders: yields parsed-int news ids; the
+    model's :class:`TextEncoder` owns the per-news text lookup.
 
-    def __init__(
-        self,
-        news_ids: np.ndarray,
-        news_tokens: np.ndarray,
-        news_abstract_tokens: np.ndarray | None = None,
-        news_category_indices: np.ndarray | None = None,
-        news_subcategory_indices: np.ndarray | None = None,
-        batch_size: int = 1024,
-        process_title: bool = True,
-        process_abstract: bool = True,
-        process_category: bool = True,
-        process_subcategory: bool = True,
-        news_entity_indices: np.ndarray | None = None,
-    ):
-        self.news_ids = news_ids
-        self.batch_size = batch_size
-        self.num_news = len(news_ids)
+    Default (single-view, e.g. NRMS):
+        ``news_features`` of shape ``(B,)`` int32.
 
-        # Build the list of arrays to concatenate along the last axis
-        parts: list[np.ndarray] = []
-        if process_title:
-            parts.append(np.asarray(news_tokens))
-        if process_abstract and news_abstract_tokens is not None:
-            parts.append(np.asarray(news_abstract_tokens))
-        if news_entity_indices is not None:
-            parts.append(np.asarray(news_entity_indices))
-        if process_category and news_category_indices is not None:
-            cat = np.asarray(news_category_indices)
-            if cat.ndim == 1:
-                cat = cat[:, None]
-            parts.append(cat)
-        if process_subcategory and news_subcategory_indices is not None:
-            subcat = np.asarray(news_subcategory_indices)
-            if subcat.ndim == 1:
-                subcat = subcat[:, None]
-            parts.append(subcat)
-
-        self.features = np.concatenate(parts, axis=1) if len(parts) > 1 else parts[0]
-
-    def __iter__(self) -> Iterator[dict[str, Any]]:
-        for i in range(0, self.num_news, self.batch_size):
-            end = min(i + self.batch_size, self.num_news)
-            yield {
-                "news_id": self.news_ids[i:end],
-                "news_features": jnp.asarray(self.features[i:end]),
-            }
-
-    def __len__(self) -> int:
-        return self.num_news
-
-
-# ---------------------------------------------------------------------------
-# User history batch dataloader (for precomputing user vectors)
-# ---------------------------------------------------------------------------
-
-
-class UserHistoryBatchDataloader:
-    """Batch-iterate over user histories for precomputing user vectors.
-
-    Yields ``(impression_ids, user_ids_or_None, features_jax_array)``.
-    """
-
-    def __init__(
-        self,
-        history_tokens: np.ndarray,
-        impression_ids: np.ndarray,
-        history_abstract_tokens: np.ndarray | None = None,
-        history_category: np.ndarray | None = None,
-        history_subcategory: np.ndarray | None = None,
-        user_ids: np.ndarray | None = None,
-        batch_size: int = 32,
-        process_title: bool = True,
-        process_abstract: bool = True,
-        process_category: bool = True,
-        process_subcategory: bool = True,
-        history_entity_indices: np.ndarray | None = None,
-    ):
-        self.impression_ids = np.asarray(impression_ids)
-        self.user_ids = np.asarray(user_ids) if user_ids is not None else None
-        self.batch_size = batch_size
-        self.num_users = len(impression_ids)
-
-        parts: list[np.ndarray] = []
-        if process_title:
-            parts.append(np.asarray(history_tokens))
-        if process_abstract and history_abstract_tokens is not None:
-            cat_arr = np.asarray(history_abstract_tokens)
-            parts.append(cat_arr)
-        if history_entity_indices is not None:
-            parts.append(np.asarray(history_entity_indices))
-        if process_category and history_category is not None:
-            cat_arr = np.asarray(history_category)
-            if cat_arr.ndim == 2:
-                cat_arr = cat_arr[:, :, None]
-            parts.append(cat_arr)
-        if process_subcategory and history_subcategory is not None:
-            subcat_arr = np.asarray(history_subcategory)
-            if subcat_arr.ndim == 2:
-                subcat_arr = subcat_arr[:, :, None]
-            parts.append(subcat_arr)
-
-        self.features = np.concatenate(parts, axis=-1) if len(parts) > 1 else parts[0]
-
-    def __iter__(
-        self,
-    ) -> Iterator[tuple[np.ndarray, jnp.ndarray | None, jnp.ndarray]]:
-        for i in range(0, self.num_users, self.batch_size):
-            end = min(i + self.batch_size, self.num_users)
-            batch_ids = self.impression_ids[i:end]
-            batch_user_ids = (
-                jnp.asarray(self.user_ids[i:end]) if self.user_ids is not None else None
-            )
-            batch_features = jnp.asarray(self.features[i:end])
-            yield batch_ids, batch_user_ids, batch_features
-
-    def __len__(self) -> int:
-        return self.num_users
-
-
-# ---------------------------------------------------------------------------
-# Impression iterator (for evaluation scoring)
-# ---------------------------------------------------------------------------
-
-
-class PLMNewsBatchDataloader:
-    """Batch news IDs for PLM-mode evaluation (JAX).
-
-    Default (single-view): yields ``news_features`` of shape ``(B,)`` int32.
-    Multi-view (NAML/LSTUR+PLM): pass ``category_indices`` and/or
-    ``subcategory_indices`` and ``news_features`` becomes ``(B, k)`` int32
-    with column order ``[news_idx, category, subcategory]``.
+    Multi-view (NAML, PP-Rec, CAUM, TCCM): pass any of
+    ``category_indices``, ``subcategory_indices``, ``entity_indices``
+    and ``news_features`` becomes ``(B, k)`` int32 with column order
+    ``[news_idx | entities | category | subcategory]``.
     """
 
     def __init__(
@@ -322,13 +197,17 @@ class PLMNewsBatchDataloader:
         return self.num_news
 
 
-class PLMUserHistoryBatchDataloader:
-    """Batch user histories for PLM-mode evaluation (JAX).
+class UserHistoryBatchDataloader:
+    """Batch user histories for the user-vector precompute stage (JAX).
+
+    Single contract across encoders: yields parsed-int news ids per
+    history slot; the model's TextEncoder owns the per-news text lookup.
 
     Default (single-view): history shape ``(B, H)`` int32.
-    Multi-view: pass ``history_category`` / ``history_subcategory`` and
-    history becomes ``(B, H, k)`` with the same column order as
-    :class:`PLMNewsBatchDataloader`.
+
+    Multi-view: pass any of ``history_category``, ``history_subcategory``,
+    ``history_entity`` and history becomes ``(B, H, k)`` with column
+    order ``[news_idx | entities | category | subcategory]``.
     """
 
     def __init__(
@@ -378,13 +257,21 @@ class PLMUserHistoryBatchDataloader:
         return self.num_users
 
 
-class PLMImpressionIterator:
-    """Iterate impressions one-by-one yielding parsed-int news ids (JAX).
+class ImpressionIterator:
+    """Iterate impressions one-by-one for evaluation (JAX).
 
-    Default (single-view): ``features`` shape ``(C,)`` int32.
-    Multi-view: pass ``candidate_category`` / ``candidate_subcategory``
-    (per-impression arrays of same shape as ``candidate_news_ids``) and
-    ``features`` becomes ``(C, k)``.
+    Single contract across encoders: yields parsed-int news ids for the
+    candidates of one impression; the model's TextEncoder handles the
+    per-news text lookup.
+
+    Default (single-view, e.g. NRMS):
+        ``features`` shape ``(C,)`` int32.
+
+    Multi-view: pass any of ``candidate_category``,
+    ``candidate_subcategory``, ``candidate_entity`` (per-impression
+    arrays aligned with ``candidate_news_ids``) and ``features``
+    becomes ``(C, k)`` with column order
+    ``[news_idx | entities | category | subcategory]``.
     """
 
     def __init__(
@@ -440,80 +327,6 @@ class PLMImpressionIterator:
             labels_arr = jnp.asarray(self.labels[idx], dtype=jnp.float32)
             imp_id = self.impression_ids[idx]
             cand_ids = self.candidate_ids[idx] if idx < len(self.candidate_ids) else []
-            yield features, labels_arr, imp_id, cand_ids
-
-    def __len__(self) -> int:
-        return self.num_impressions
-
-
-class ImpressionIterator:
-    """Iterate over impressions one at a time for evaluation.
-
-    Each impression may have a variable number of candidates, so they
-    cannot be easily batched.
-
-    Yields: ``(features, labels, impression_id, candidate_ids)``
-    where features and labels are JAX arrays.
-    """
-
-    def __init__(
-        self,
-        impression_tokens: Any,
-        labels: Any,
-        impression_ids: Any,
-        candidate_ids: Any,
-        impression_abstract_tokens: Any = None,
-        impression_category: Any = None,
-        impression_subcategory: Any = None,
-        process_title: bool = True,
-        process_abstract: bool = True,
-        process_category: bool = True,
-        process_subcategory: bool = True,
-    ):
-        self.impression_tokens = impression_tokens
-        self.impression_abstract_tokens = impression_abstract_tokens
-        self.impression_category = impression_category
-        self.impression_subcategory = impression_subcategory
-        self.labels = labels
-        self.impression_ids = impression_ids
-        self.candidate_ids = candidate_ids
-        self.num_impressions = len(labels)
-
-        self.process_title = process_title
-        self.process_abstract = process_abstract
-        self.process_category = process_category
-        self.process_subcategory = process_subcategory
-
-    def __iter__(self):
-        for idx in range(self.num_impressions):
-            parts = []
-
-            if self.process_title:
-                parts.append(jnp.asarray(self.impression_tokens[idx], dtype=jnp.int32))
-            if self.process_abstract and self.impression_abstract_tokens is not None:
-                parts.append(
-                    jnp.asarray(self.impression_abstract_tokens[idx], dtype=jnp.int32)
-                )
-            if self.process_category and self.impression_category is not None:
-                cat = jnp.asarray(self.impression_category[idx], dtype=jnp.int32)
-                if cat.ndim == 1:
-                    cat = jnp.expand_dims(cat, axis=1)
-                parts.append(cat)
-            if self.process_subcategory and self.impression_subcategory is not None:
-                subcat = jnp.asarray(self.impression_subcategory[idx], dtype=jnp.int32)
-                if subcat.ndim == 1:
-                    subcat = jnp.expand_dims(subcat, axis=1)
-                parts.append(subcat)
-
-            if len(parts) > 1:
-                features = jnp.concatenate(parts, axis=1)
-            else:
-                features = parts[0]
-
-            labels_arr = jnp.asarray(self.labels[idx], dtype=jnp.float32)
-            imp_id = self.impression_ids[idx]
-            cand_ids = self.candidate_ids[idx] if idx < len(self.candidate_ids) else []
-
             yield features, labels_arr, imp_id, cand_ids
 
     def __len__(self) -> int:

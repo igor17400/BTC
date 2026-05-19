@@ -79,7 +79,14 @@ def make_train_step(loss_fn, get_aux_loss=None, use_jit: bool = True):
                 total = total + get_aux_loss(model)
             return total
 
-        loss, grads = nnx.value_and_grad(_loss)(model)
+        # Differentiate only ``nnx.Param`` leaves. Without this, NNX
+        # differentiates ALL Variables in the model — including any
+        # FrozenCache subclass used to hold frozen PLM caches. A 10 GB
+        # abstract cache → 10 GB zero-gradient buffer → OOM at the
+        # epoch-2 train-step retrace boundary.
+        loss, grads = nnx.value_and_grad(_loss, argnums=nnx.DiffState(0, nnx.Param))(
+            model
+        )
         if _OPT_UPDATE_TAKES_MODEL:
             optimizer.update(model, grads)
         else:

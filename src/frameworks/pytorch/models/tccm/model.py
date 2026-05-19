@@ -21,6 +21,7 @@ import torch.nn as nn
 
 from src.core.models.configs import PPRecConfig, TCCMConfig
 
+from ...layers import PLMTokenLookup
 from ..base import BaseModel
 from ..pprec import PPRecNewsEncoder, PPRecUserEncoder
 from .layers import TCCMActivityGater, TCCMPopularityEncoder
@@ -81,11 +82,27 @@ class TCCM(BaseModel):
 
         cfg = config
         pn = processed_news
+        encoder_type = getattr(getattr(cfg, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        word_emb = nn.Embedding(pn["vocab_size"], cfg.embedding_size)
-        word_emb.weight = nn.Parameter(
-            torch.tensor(pn["embeddings"], dtype=torch.float32)
-        )
+        if encoder_type == "glove":
+            word_emb: nn.Module = nn.Embedding(pn["vocab_size"], cfg.embedding_size)
+            word_emb.weight = nn.Parameter(
+                torch.tensor(pn["embeddings"], dtype=torch.float32)
+            )
+        else:
+            if "plm_token_embeddings_by_id" not in pn:
+                raise KeyError(
+                    f"TCCM with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']."
+                )
+            plm_dim = int(pn["plm_dim"])
+            word_emb = PLMTokenLookup(
+                pn["plm_token_embeddings_by_id"],
+                pn["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=cfg.embedding_size,
+            )
 
         if not (cfg.use_entity and "entity_embeddings" in pn):
             raise ValueError(
@@ -99,8 +116,11 @@ class TCCM(BaseModel):
 
         # PP-Rec ``co1`` news encoder (no category branch — TCCM
         # follows the reference's ``attrs = ['title', 'entity']``).
+        # Popularity branch (below) stays keyed on GloVe-token-CTR
+        # regardless of encoder.type — the relevance encoder is the
+        # only branch that consumes PLM features.
         self.news_encoder = PPRecNewsEncoder(
-            self._pprec_config, word_emb, entity_emb, None
+            self._pprec_config, word_emb, entity_emb, None, encoder_type=encoder_type
         )
         self.user_encoder = PPRecUserEncoder(self._pprec_config, self.news_encoder)
         self.popularity_encoder = TCCMPopularityEncoder(cfg)

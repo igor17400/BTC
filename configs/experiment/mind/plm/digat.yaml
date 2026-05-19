@@ -1,41 +1,30 @@
 # @package _global_
 #
-# CAUM on MIND-small with frozen token-level PLM word embeddings.
+# DIGAT on MIND-small with frozen token-level PLM word embeddings.
 #
-# Replaces the GloVe word embedding with cached BERT-token features.
-# Title MHSA, entity branch, category branch, and the candidate-aware
-# user model (Candi-CNN / Candi-SelfAtt / Candi-Att) all unchanged.
-# Skips the abstract PLM cache (CAUM uses only the title view).
-# PyTorch only.
-# Usage: python src/train.py experiment=mind/plm/caum framework=pytorch
+# The PLM replaces only the GloVe word embedding inside the MSA news
+# encoder. SAG construction (run before any model exists) is unaffected
+# — it dedupes news content by GloVe-token sequence as always. The dual
+# graph interaction is unchanged.
+#
+# Storage win: ``cand_tokens`` collapses from ``(N, C, sag_size, T)``
+# int64 to ``(N, C, sag_size)`` int64 (~30x smaller).
+#
+# Usage: python src/train.py experiment=mind/plm/digat framework=pytorch
 
 defaults:
-  - /spec: caum
+  - /spec: digat
   - /dataset: mind
   - /sampling: base
   - /encoder: bert
   - _self_
 
-name: mind_caum_plm
-model_name: CAUM
+name: mind_digat_plm
+model_name: DIGAT
 seed: 42
 
 encoder:
   text_field_abstract: ""
-
-# In PLM mode the title MHSA operates on the full BERT-base hidden
-# dim (768) instead of the GloVe ``embedding_size`` (300). MHSA needs
-# ``embed_dim % num_heads == 0``, and CAUM's default ``num_heads=20``
-# does not divide 768. Override to BERT-base's native 12 heads
-# (12 × 64 = 768). Adjust to match other PLMs:
-#   - BERT-base / RoBERTa / DistilBERT (768): 12  (or 8 / 16 / 24)
-#   - SBERT MiniLM-L6 (384):                 12  (or 8 / 16 / 24)
-#   - BERT-large (1024):                     16
-spec:
-  model:
-    architecture:
-      news_encoder:
-        num_heads: 12
 
 dataset:
   version: small
@@ -48,8 +37,6 @@ dataset:
   process_category: ${spec.inputs.process_category}
   process_subcategory: ${spec.inputs.process_subcategory}
   process_user_id: ${spec.inputs.process_user_id}
-  process_entities: ${spec.inputs.process_entities}
-  max_entities: ${spec.inputs.max_entities}
 
 train:
   batch_size: ${spec.training.batch_size}

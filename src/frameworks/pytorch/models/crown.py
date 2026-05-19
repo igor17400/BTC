@@ -28,6 +28,7 @@ import torch.nn.functional as F
 
 from src.core.models.configs import CROWNConfig
 
+from ..layers import PLMTokenLookup
 from .base import BaseModel
 
 # ======================================================================
@@ -271,13 +272,22 @@ class CROWNNewsEncoder(nn.Module):
     def __init__(
         self,
         config: CROWNConfig,
-        word_embedding: nn.Embedding,
+        word_embedding: nn.Module,
         category_embedding: nn.Embedding,
         subcategory_embedding: nn.Embedding,
+        *,
+        encoder_type: str = "glove",
+        abstract_embedding: nn.Module | None = None,
     ):
         super().__init__()
         self.config = config
+        self.encoder_type = encoder_type
+        # GloVe: a single shared ``nn.Embedding`` used for both views.
+        # PLM:   ``word_embedding`` is a ``PLMTokenLookup`` over the title
+        #        cache, ``abstract_embedding`` is a second lookup over the
+        #        abstract cache. Both are indexed by parsed news_idx.
         self.word_embedding = word_embedding
+        self.abstract_embedding = abstract_embedding
         self.category_embedding = category_embedding
         self.subcategory_embedding = subcategory_embedding
 
@@ -360,31 +370,61 @@ class CROWNNewsEncoder(nn.Module):
     ) -> torch.Tensor:
         """Encode news articles.
 
-        Accepts either explicit arguments or a single concatenated tensor
-        ``[title | abstract | category | subcategory]`` (used by the shared
-        evaluation adapter).
+        GloVe mode accepts either explicit arguments
+        ``(title_tokens, abstract_tokens, category_ids, subcategory_ids)``
+        or a single concatenated tensor
+        ``[title | abstract | category | subcategory]`` (eval adapter).
+
+        PLM mode expects either explicit
+        ``(news_idx, None, category_ids, subcategory_ids)`` or a
+        concatenated ``[news_idx | category | subcategory]`` tensor —
+        both title and abstract are looked up from the same news_idx
+        via separate PLM caches.
 
         Returns:
             (N, news_embedding_dim) news representations.
         """
         cfg = self.config
-        if abstract_tokens is None:
-            # Concatenated input from evaluation adapter
-            concat = title_tokens_or_concat
-            title_tokens = concat[:, : cfg.max_title_length]
-            abstract_tokens = concat[
-                :, cfg.max_title_length : cfg.max_title_length + cfg.max_abstract_length
-            ]
-            category_ids = concat[:, cfg.max_title_length + cfg.max_abstract_length]
-            subcategory_ids = concat[
-                :, cfg.max_title_length + cfg.max_abstract_length + 1
-            ]
-        else:
-            title_tokens = title_tokens_or_concat
-        # 1. Word embedding + positional encoding
-        title_emb = self.dropout(self.word_embedding(title_tokens))
-        body_emb = self.dropout(self.word_embedding(abstract_tokens))
+        if self.encoder_type == "glove":
+            if abstract_tokens is None:
+                concat = title_tokens_or_concat
+                title_tokens = concat[:, : cfg.max_title_length]
+                abstract_tokens = concat[
+                    :,
+                    cfg.max_title_length : cfg.max_title_length
+                    + cfg.max_abstract_length,
+                ]
+                category_ids = concat[:, cfg.max_title_length + cfg.max_abstract_length]
+                subcategory_ids = concat[
+                    :, cfg.max_title_length + cfg.max_abstract_length + 1
+                ]
+            else:
+                title_tokens = title_tokens_or_concat
 
+            title_emb = self.dropout(self.word_embedding(title_tokens))
+            body_emb = self.dropout(self.word_embedding(abstract_tokens))
+            title_mask = title_tokens != 0
+            body_mask = abstract_tokens != 0
+        else:
+            # PLM: ``title_tokens_or_concat`` is either ``news_idx`` (B,)
+            # int tensor, or a packed ``[news_idx | category | subcategory]``
+            # (B, 3) tensor from the eval adapter. Either way we extract
+            # news_idx as the first / only column.
+            if abstract_tokens is None and title_tokens_or_concat.dim() == 2:
+                concat = title_tokens_or_concat
+                news_idx = concat[:, 0].long()
+                category_ids = concat[:, 1].long()
+                subcategory_ids = concat[:, 2].long()
+            else:
+                news_idx = title_tokens_or_concat.long()
+            title_feats, title_mask = self.word_embedding(news_idx)
+            body_feats, body_mask = self.abstract_embedding(news_idx)
+            title_emb = self.dropout(title_feats)
+            body_emb = self.dropout(body_feats)
+            title_mask = title_mask.bool()
+            body_mask = body_mask.bool()
+
+        # 1. Positional encoding
         title_emb = self.title_pos(title_emb)
         body_emb = self.body_pos(body_emb)
 
@@ -392,9 +432,15 @@ class CROWNNewsEncoder(nn.Module):
         title_enc = self.title_transformer(title_emb)  # (N, T, E)
         body_enc = self.body_transformer(body_emb)  # (N, A, E)
 
-        # 3. Mean pooling
-        title_pool = title_enc.mean(dim=1)  # (N, E)
-        body_pool = body_enc.mean(dim=1)  # (N, E)
+        # 3. Mask-weighted mean pooling (under GloVe, padding tokens
+        # embed to near-zero so masking is near-equivalent to mean; under
+        # PLM it matters since BERT padding embeddings are non-zero).
+        title_w = title_mask.to(title_enc.dtype).unsqueeze(-1)
+        body_w = body_mask.to(body_enc.dtype).unsqueeze(-1)
+        title_pool = (title_enc * title_w).sum(dim=1) / title_w.sum(dim=1).clamp(
+            min=1.0
+        )
+        body_pool = (body_enc * body_w).sum(dim=1) / body_w.sum(dim=1).clamp(min=1.0)
 
         # 4. Category-aware representation
         cat_emb = self.category_embedding(category_ids)  # (N, cat_dim)
@@ -510,12 +556,17 @@ class CROWNUserEncoder(nn.Module):
     def _encode_history_graph(
         self,
         history_title: torch.Tensor,
-        history_abstract: torch.Tensor,
+        history_abstract: torch.Tensor | None,
         history_category: torch.Tensor,
         history_subcategory: torch.Tensor,
         history_mask: torch.Tensor,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Encode history → bipartite GNN → (user_node, news_nodes).
+
+        Under PLM, ``history_title`` is the per-slot ``news_idx``
+        ``(B, H)`` int tensor and ``history_abstract`` is ``None`` — the
+        news encoder looks up both title and abstract features from the
+        same id via separate PLM caches.
 
         Returns:
             user_node: (B, D) GNN-updated user proxy.
@@ -523,8 +574,16 @@ class CROWNUserEncoder(nn.Module):
         """
         B, H = history_title.shape[:2]
 
-        flat_title = history_title.reshape(B * H, -1)
-        flat_abstract = history_abstract.reshape(B * H, -1)
+        flat_title = (
+            history_title.reshape(B * H, -1)
+            if history_title.dim() > 2
+            else history_title.reshape(B * H)
+        )
+        flat_abstract = (
+            history_abstract.reshape(B * H, -1)
+            if history_abstract is not None
+            else None
+        )
         flat_cat = history_category.reshape(B * H)
         flat_subcat = history_subcategory.reshape(B * H)
 
@@ -541,7 +600,7 @@ class CROWNUserEncoder(nn.Module):
     def forward_with_candidates(
         self,
         history_title: torch.Tensor,
-        history_abstract: torch.Tensor,
+        history_abstract: torch.Tensor | None,
         history_category: torch.Tensor,
         history_subcategory: torch.Tensor,
         history_mask: torch.Tensor,
@@ -567,18 +626,27 @@ class CROWNUserEncoder(nn.Module):
     def forward(self, inputs: torch.Tensor, **kwargs) -> torch.Tensor:
         """Evaluation: concatenated history → single user vector.
 
-        Called by the shared evaluation adapter with a concatenated tensor
+        GloVe: input is ``(B, H, T+A+2)`` packed
         ``[title | abstract | category | subcategory]`` per history slot.
-        Uses the same attention mechanism as the training path.
+        PLM:   input is ``(B, H, 3)`` packed
+        ``[news_idx | category | subcategory]`` per history slot — title
+        and abstract are looked up from ``news_idx``.
         """
         cfg = self.config
-        title_len = cfg.max_title_length
-        abstract_len = cfg.max_abstract_length
+        encoder_type = self.news_encoder.encoder_type
 
-        history_title = inputs[:, :, :title_len]
-        history_abstract = inputs[:, :, title_len : title_len + abstract_len]
-        history_category = inputs[:, :, title_len + abstract_len]
-        history_subcategory = inputs[:, :, title_len + abstract_len + 1]
+        if encoder_type == "glove":
+            title_len = cfg.max_title_length
+            abstract_len = cfg.max_abstract_length
+            history_title = inputs[:, :, :title_len]
+            history_abstract = inputs[:, :, title_len : title_len + abstract_len]
+            history_category = inputs[:, :, title_len + abstract_len]
+            history_subcategory = inputs[:, :, title_len + abstract_len + 1]
+        else:
+            history_title = inputs[:, :, 0].long()  # news_idx (B, H)
+            history_abstract = None
+            history_category = inputs[:, :, 1].long()
+            history_subcategory = inputs[:, :, 2].long()
         history_mask = inputs.any(dim=-1)  # (B, H)
 
         user_node, news = self._encode_history_graph(
@@ -624,14 +692,50 @@ class CROWN(BaseModel):
 
         num_categories = int(processed_news.get("num_categories", 18))
         num_subcategories = int(processed_news.get("num_subcategories", 100))
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        # Shared word embedding
-        vocab_size = processed_news["vocab_size"]
-        embeddings_matrix = processed_news["embeddings"]
-        self.word_embedding = nn.Embedding(vocab_size, config.embedding_size)
-        self.word_embedding.weight = nn.Parameter(
-            torch.tensor(embeddings_matrix, dtype=torch.float32)
-        )
+        # Word / token feature source
+        if encoder_type == "glove":
+            vocab_size = processed_news["vocab_size"]
+            embeddings_matrix = processed_news["embeddings"]
+            self.word_embedding: nn.Module = nn.Embedding(
+                vocab_size, config.embedding_size
+            )
+            self.word_embedding.weight = nn.Parameter(
+                torch.tensor(embeddings_matrix, dtype=torch.float32)
+            )
+            self.abstract_embedding: nn.Module | None = None
+        else:
+            # CROWN is two-view: it needs a separate PLM cache for
+            # title (max_title_length tokens) and abstract
+            # (max_abstract_length tokens). The runner attaches both
+            # under ``plm_token_embeddings_by_id`` (title) and
+            # ``plm_abstract_token_embeddings_by_id`` (abstract).
+            if "plm_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"CROWN with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id'] (title cache)."
+                )
+            if "plm_abstract_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"CROWN with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_abstract_token_embeddings_by_id'] "
+                    "(abstract cache). Set encoder.text_field_abstract=abstract."
+                )
+            plm_dim = int(processed_news["plm_dim"])
+            self.word_embedding = PLMTokenLookup(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=config.embedding_size,
+            )
+            self.abstract_embedding = PLMTokenLookup(
+                processed_news["plm_abstract_token_embeddings_by_id"],
+                processed_news["plm_abstract_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=config.embedding_size,
+            )
 
         # Category / subcategory embeddings (paper: uniform init, frozen in ref code)
         self.category_embedding = nn.Embedding(
@@ -649,6 +753,8 @@ class CROWN(BaseModel):
             self.word_embedding,
             self.category_embedding,
             self.subcategory_embedding,
+            encoder_type=encoder_type,
+            abstract_embedding=self.abstract_embedding,
         )
 
         # Set category predictor output dim now that we know num_categories
@@ -665,21 +771,32 @@ class CROWN(BaseModel):
     def _encode_candidates(
         self,
         cand_tokens: torch.Tensor,
-        cand_abstract: torch.Tensor,
+        cand_abstract: torch.Tensor | None,
         cand_category: torch.Tensor,
         cand_subcategory: torch.Tensor,
         training: bool = True,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Encode candidate news.
 
+        Under PLM, ``cand_tokens`` carries parsed ``news_idx`` ``(B, C)``
+        and ``cand_abstract`` is ``None`` (both views looked up by id).
+
         Returns:
             (full_repr, title_intent) — full (B, C, 900) for user encoder,
             title_intent (B, C, intent_dim) for click prediction (paper §4.3).
         """
         B, C = cand_tokens.shape[:2]
+        flat_title = (
+            cand_tokens.reshape(B * C, -1)
+            if cand_tokens.dim() > 2
+            else cand_tokens.reshape(B * C)
+        )
+        flat_abstract = (
+            cand_abstract.reshape(B * C, -1) if cand_abstract is not None else None
+        )
         flat_repr = self.news_encoder(
-            cand_tokens.reshape(B * C, -1),
-            cand_abstract.reshape(B * C, -1),
+            flat_title,
+            flat_abstract,
             cand_category.reshape(B * C),
             cand_subcategory.reshape(B * C),
             compute_aux_loss=training,
@@ -695,13 +812,33 @@ class CROWN(BaseModel):
     ) -> torch.Tensor:
         """Training forward pass. Returns raw logits (B, C).
 
+        GloVe keys: ``cand_tokens`` ``(B, C, T)``,
+        ``cand_abstract_tokens`` ``(B, C, A)``, ``cand_category`` ``(B, C)``,
+        ``cand_subcategory`` ``(B, C)`` (and ``hist_*`` analogues).
+
+        PLM keys: ``cand_features`` ``(B, C)`` parsed news_idx (title +
+        abstract looked up from the cache), ``cand_category``,
+        ``cand_subcategory``, ``hist_features``, ``hist_category``,
+        ``hist_subcategory``.
+
         The shared evaluator calls ``news_encoder`` and ``user_encoder``
         directly — this method is only for training.
         """
+        if self.encoder_type == "glove":
+            cand_tokens = inputs["cand_tokens"]
+            cand_abstract = inputs["cand_abstract_tokens"]
+            hist_title = inputs["hist_tokens"]
+            hist_abstract = inputs["hist_abstract_tokens"]
+        else:
+            cand_tokens = inputs["cand_features"]
+            cand_abstract = None
+            hist_title = inputs["hist_features"]
+            hist_abstract = None
+
         # Encode candidates (with auxiliary loss)
         cand_full, _ = self._encode_candidates(
-            inputs["cand_tokens"],
-            inputs["cand_abstract_tokens"],
+            cand_tokens,
+            cand_abstract,
             inputs["cand_category"],
             inputs["cand_subcategory"],
             training=training,
@@ -710,11 +847,16 @@ class CROWN(BaseModel):
         # compute_aux_loss=False, which overwrites self.auxiliary_loss.
         self._aux_loss_snapshot = self.news_encoder.auxiliary_loss
 
-        history_mask = inputs["hist_tokens"].any(dim=-1)  # (B, H)
+        # History validity mask: under GloVe a slot is valid iff any
+        # token is non-zero; under PLM iff the news_idx is non-zero.
+        if hist_title.dim() == 3:
+            history_mask = hist_title.any(dim=-1)
+        else:
+            history_mask = hist_title != 0
 
         user_repr = self.user_encoder.forward_with_candidates(
-            history_title=inputs["hist_tokens"],
-            history_abstract=inputs["hist_abstract_tokens"],
+            history_title=hist_title,
+            history_abstract=hist_abstract,
             history_category=inputs["hist_category"],
             history_subcategory=inputs["hist_subcategory"],
             history_mask=history_mask,

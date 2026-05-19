@@ -43,9 +43,6 @@ from src.core.setup import setup_model
 from src.frameworks.jax.dataloaders import (
     ImpressionIterator,
     NewsBatchDataloader,
-    PLMImpressionIterator,
-    PLMNewsBatchDataloader,
-    PLMUserHistoryBatchDataloader,
     UserHistoryBatchDataloader,
     create_glory_jax_dataloader,
     create_train_dataloader,
@@ -58,111 +55,56 @@ from src.frameworks.jax.training import training_loop
 def _build_train_features(dataset_provider, encoder_cfg=None) -> tuple:
     """Extract raw numpy features and labels from the dataset provider.
 
-    When ``encoder_cfg.type != "glove"`` uses ``hist_features`` /
-    ``cand_features`` keys carrying parsed-int news ids for the PLM
-    lookup. GloVe mode also exposes those keys (aliased to the token
-    tensors) so models stay encoder-agnostic.
+    Uniform layout regardless of encoder: models receive parsed news
+    ids and delegate the per-news text lookup to their injected
+    :class:`TextEncoder`.
+
+    Returns a dict with at least:
+      - ``hist_features`` (B, H) — history news ids
+      - ``cand_features`` (B, C) — candidate news ids
+
+    For models that consume structured packed features (PP-Rec, CAUM,
+    TCCM), also returns:
+      - ``hist_tokens`` (B, H, 1+E+1) — ``[news_idx | entities | category]``
+      - ``cand_tokens`` (B, C, 1+E+1)
+
+    Side-channels (CTR, recency, subcategory, user_ids) are populated
+    when exposed by the dataset provider.
     """
     data = dataset_provider.train_behaviors_data
-    features = {}
-    encoder_type = (
-        encoder_cfg.get("type", "glove") if encoder_cfg is not None else "glove"
-    )
+    features: dict[str, np.ndarray] = {}
 
-    if encoder_type != "glove":
-        hist_news_idx = np.asarray(data["histories_news_ids"])
-        cand_news_idx = np.asarray(data["candidate_news_ids"])
-        features["hist_features"] = hist_news_idx
-        features["cand_features"] = cand_news_idx
+    hist_news_idx = np.asarray(data["histories_news_ids"])
+    cand_news_idx = np.asarray(data["candidate_news_ids"])
+    features["hist_features"] = hist_news_idx
+    features["cand_features"] = cand_news_idx
 
-        # PP-Rec / CAUM-style models consume a packed
-        # ``[news_idx | entities | category]`` tensor under
-        # ``hist_tokens`` / ``cand_tokens``.
-        hist_parts: list[np.ndarray] = [hist_news_idx[..., None]]
-        cand_parts: list[np.ndarray] = [cand_news_idx[..., None]]
-        if getattr(dataset_provider, "process_entities", False) and (
-            "history_news_entities" in data
-        ):
-            hist_parts.append(np.asarray(data["history_news_entities"]))
-            cand_parts.append(np.asarray(data["candidate_news_entities"]))
-        if dataset_provider.process_category:
-            features["hist_category"] = np.asarray(data["history_news_categories"])
-            features["cand_category"] = np.asarray(data["candidate_news_categories"])
-            hist_parts.append(np.asarray(data["history_news_categories"])[..., None])
-            cand_parts.append(np.asarray(data["candidate_news_categories"])[..., None])
-        if dataset_provider.process_subcategory:
-            features["hist_subcategory"] = np.asarray(
-                data["history_news_subcategories"]
-            )
-            features["cand_subcategory"] = np.asarray(
-                data["candidate_news_subcategories"]
-            )
-        if len(hist_parts) > 1:
-            features["hist_tokens"] = np.concatenate(hist_parts, axis=-1)
-            features["cand_tokens"] = np.concatenate(cand_parts, axis=-1)
+    hist_parts: list[np.ndarray] = [hist_news_idx[..., None]]
+    cand_parts: list[np.ndarray] = [cand_news_idx[..., None]]
 
-        if dataset_provider.process_user_id:
-            features["user_ids"] = np.asarray(data["user_ids"])
+    if getattr(dataset_provider, "process_entities", False) and (
+        "history_news_entities" in data
+    ):
+        hist_parts.append(np.asarray(data["history_news_entities"]))
+        cand_parts.append(np.asarray(data["candidate_news_entities"]))
 
-        # PP-Rec CTR / recency features.
-        if "history_news_ctr" in data:
-            ctr = np.asarray(data["history_news_ctr"])
-            features["hist_ctr"] = np.minimum(np.ceil(ctr * 200).astype(np.int32), 199)
-            features["cand_ctr"] = np.asarray(data["candidate_news_ctr"])
-        if "candidate_news_recency" in data:
-            features["cand_recency"] = np.asarray(data["candidate_news_recency"])
-
-        labels = np.asarray(data["labels"])
-        return features, labels
-
-    if dataset_provider.process_title:
-        features["hist_tokens"] = np.asarray(data["history_news_tokens"])
-        features["cand_tokens"] = np.asarray(data["candidate_news_tokens"])
-        features["hist_features"] = features["hist_tokens"]
-        features["cand_features"] = features["cand_tokens"]
-    if dataset_provider.process_abstract:
-        features["hist_abstract_tokens"] = np.asarray(
-            data["history_news_abstract_tokens"]
-        )
-        features["cand_abstract_tokens"] = np.asarray(
-            data["candidate_news_abstract_tokens"]
-        )
     if dataset_provider.process_category:
         features["hist_category"] = np.asarray(data["history_news_categories"])
         features["cand_category"] = np.asarray(data["candidate_news_categories"])
+        hist_parts.append(np.asarray(data["history_news_categories"])[..., None])
+        cand_parts.append(np.asarray(data["candidate_news_categories"])[..., None])
+
     if dataset_provider.process_subcategory:
         features["hist_subcategory"] = np.asarray(data["history_news_subcategories"])
         features["cand_subcategory"] = np.asarray(data["candidate_news_subcategories"])
+
+    if len(hist_parts) > 1:
+        features["hist_tokens"] = np.concatenate(hist_parts, axis=-1)
+        features["cand_tokens"] = np.concatenate(cand_parts, axis=-1)
+
     if dataset_provider.process_user_id:
         features["user_ids"] = np.asarray(data["user_ids"])
 
-    # PP-Rec: concatenate entity and category into hist_tokens/cand_tokens
-    if "history_news_entities" in data and dataset_provider.process_entities:
-        hist_ent = np.asarray(data["history_news_entities"])
-        cand_ent = np.asarray(data["candidate_news_entities"])
-        if "hist_tokens" in features:
-            features["hist_tokens"] = np.concatenate(
-                [features["hist_tokens"], hist_ent], axis=-1
-            )
-            features["cand_tokens"] = np.concatenate(
-                [features["cand_tokens"], cand_ent], axis=-1
-            )
-    if dataset_provider.process_category and getattr(
-        dataset_provider, "process_entities", False
-    ):
-        hist_cat = np.asarray(data["history_news_categories"])
-        cand_cat = np.asarray(data["candidate_news_categories"])
-        if "hist_tokens" in features:
-            features["hist_tokens"] = np.concatenate(
-                [features["hist_tokens"], np.expand_dims(hist_cat, axis=-1)],
-                axis=-1,
-            )
-            features["cand_tokens"] = np.concatenate(
-                [features["cand_tokens"], np.expand_dims(cand_cat, axis=-1)],
-                axis=-1,
-            )
-
-    # PP-Rec CTR features
     if "history_news_ctr" in data:
         ctr = np.asarray(data["history_news_ctr"])
         features["hist_ctr"] = np.minimum(np.ceil(ctr * 200).astype(np.int32), 199)
@@ -175,11 +117,12 @@ def _build_train_features(dataset_provider, encoder_cfg=None) -> tuple:
 
 
 def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
-    """Build JAX-native dataloaders for evaluation.
+    """Build JAX-native eval dataloaders.
 
-    Picks GloVe-token or PLM-id variants based on ``cfg.encoder.type``.
-    Both variants implement the iteration contract used by the shared
-    evaluator.
+    Uniform across encoders: every news (history, candidate, news-table)
+    is identified by a parsed-int news id. The model's TextEncoder owns
+    the per-news text lookup, so the eval pipeline doesn't care whether
+    GloVe or PLM is in use.
     """
     pn = dataset_provider.processed_news
     data = (
@@ -187,148 +130,94 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
         if mode == "val"
         else dataset_provider.test_behaviors_data
     )
-    encoder_type = (
-        cfg.encoder.get("type", "glove") if hasattr(cfg, "encoder") else "glove"
+
+    news_ids_str = np.array(pn["news_ids_original_strings"])
+    parsed_news_ids = np.array(
+        [
+            int(s[1:]) if isinstance(s, str) and s.startswith("N") else int(s)
+            for s in news_ids_str
+        ],
+        dtype=np.int32,
     )
 
-    if encoder_type != "glove":
-        news_ids_str = np.array(pn["news_ids_original_strings"])
-        parsed_news_ids = np.array(
-            [
-                int(s[1:]) if isinstance(s, str) and s.startswith("N") else int(s)
-                for s in news_ids_str
-            ],
-            dtype=np.int32,
-        )
-        # Multi-view PLM (NAML, LSTUR): pack category/subcategory alongside
-        # the parsed news id. NRMS+PLM has process_category=False so no
-        # packing happens and the dataloaders keep their original shapes.
-        news_cat = (
-            np.asarray(pn["category_indices"])
-            if dataset_provider.process_category and "category_indices" in pn
-            else None
-        )
-        news_subcat = (
-            np.asarray(pn["subcategory_indices"])
-            if dataset_provider.process_subcategory and "subcategory_indices" in pn
-            else None
-        )
-        hist_cat = (
-            np.asarray(data["history_news_categories"])
-            if dataset_provider.process_category and "history_news_categories" in data
-            else None
-        )
-        hist_subcat = (
-            np.asarray(data["history_news_subcategories"])
-            if dataset_provider.process_subcategory
-            and "history_news_subcategories" in data
-            else None
-        )
-        cand_cat = (
-            data["candidate_news_categories"]
-            if dataset_provider.process_category and "candidate_news_categories" in data
-            else None
-        )
-        cand_subcat = (
-            data["candidate_news_subcategories"]
-            if dataset_provider.process_subcategory
-            and "candidate_news_subcategories" in data
-            else None
-        )
+    news_cat = (
+        np.asarray(pn["category_indices"])
+        if dataset_provider.process_category and "category_indices" in pn
+        else None
+    )
+    news_subcat = (
+        np.asarray(pn["subcategory_indices"])
+        if dataset_provider.process_subcategory and "subcategory_indices" in pn
+        else None
+    )
+    hist_cat = (
+        np.asarray(data["history_news_categories"])
+        if dataset_provider.process_category and "history_news_categories" in data
+        else None
+    )
+    hist_subcat = (
+        np.asarray(data["history_news_subcategories"])
+        if dataset_provider.process_subcategory and "history_news_subcategories" in data
+        else None
+    )
+    cand_cat = (
+        data["candidate_news_categories"]
+        if dataset_provider.process_category and "candidate_news_categories" in data
+        else None
+    )
+    cand_subcat = (
+        data["candidate_news_subcategories"]
+        if dataset_provider.process_subcategory
+        and "candidate_news_subcategories" in data
+        else None
+    )
 
-        # Entity features (PP-Rec, CAUM-style models).
-        news_entity = (
-            np.asarray(pn["entity_indices"])
-            if getattr(dataset_provider, "process_entities", False)
-            and "entity_indices" in pn
-            else None
-        )
-        hist_entity = (
-            np.asarray(data["history_news_entities"])
-            if getattr(dataset_provider, "process_entities", False)
-            and "history_news_entities" in data
-            else None
-        )
-        cand_entity = (
-            data["candidate_news_entities"]
-            if getattr(dataset_provider, "process_entities", False)
-            and "candidate_news_entities" in data
-            else None
-        )
-
-        news_dl = PLMNewsBatchDataloader(
-            news_ids_str=news_ids_str,
-            parsed_news_ids=parsed_news_ids,
-            batch_size=cfg.eval.batch_size,
-            category_indices=news_cat,
-            subcategory_indices=news_subcat,
-            entity_indices=news_entity,
-        )
-        user_dl = PLMUserHistoryBatchDataloader(
-            history_news_ids=np.asarray(data["histories_news_ids"], dtype=np.int32),
-            impression_ids=data["impression_ids"],
-            user_ids=data.get("user_ids"),
-            batch_size=cfg.eval.batch_size,
-            history_category=hist_cat,
-            history_subcategory=hist_subcat,
-            history_entity=hist_entity,
-        )
-        # Ragged: each impression has a different candidate count. Pass
-        # through as-is; the iterator casts per-row.
-        imp_iter = PLMImpressionIterator(
-            candidate_news_ids=data["candidate_news_ids"],
-            labels=data["labels"],
-            impression_ids=data["impression_ids"],
-            candidate_ids=data["candidate_news_ids"],
-            candidate_category=cand_cat,
-            candidate_subcategory=cand_subcat,
-            candidate_entity=cand_entity,
-        )
-        return news_dl, user_dl, imp_iter
+    news_entity = (
+        np.asarray(pn["entity_indices"])
+        if getattr(dataset_provider, "process_entities", False)
+        and "entity_indices" in pn
+        else None
+    )
+    hist_entity = (
+        np.asarray(data["history_news_entities"])
+        if getattr(dataset_provider, "process_entities", False)
+        and "history_news_entities" in data
+        else None
+    )
+    cand_entity = (
+        data["candidate_news_entities"]
+        if getattr(dataset_provider, "process_entities", False)
+        and "candidate_news_entities" in data
+        else None
+    )
 
     news_dl = NewsBatchDataloader(
-        news_ids=np.array(pn["news_ids_original_strings"]),
-        news_tokens=pn["tokens"],
-        news_abstract_tokens=pn.get("abstract_tokens"),
-        news_category_indices=pn.get("category_indices"),
-        news_subcategory_indices=pn.get("subcategory_indices"),
+        news_ids_str=news_ids_str,
+        parsed_news_ids=parsed_news_ids,
         batch_size=cfg.eval.batch_size,
-        process_title=dataset_provider.process_title,
-        process_abstract=dataset_provider.process_abstract,
-        process_category=dataset_provider.process_category,
-        process_subcategory=dataset_provider.process_subcategory,
-        news_entity_indices=pn.get("entity_indices"),
+        category_indices=news_cat,
+        subcategory_indices=news_subcat,
+        entity_indices=news_entity,
     )
-
     user_dl = UserHistoryBatchDataloader(
-        history_tokens=data["history_news_tokens"],
+        history_news_ids=np.asarray(data["histories_news_ids"], dtype=np.int32),
         impression_ids=data["impression_ids"],
-        history_abstract_tokens=data.get("history_news_abstract_tokens"),
-        history_category=data.get("history_news_categories"),
-        history_subcategory=data.get("history_news_subcategories"),
         user_ids=data.get("user_ids"),
         batch_size=cfg.eval.batch_size,
-        process_title=dataset_provider.process_title,
-        process_abstract=dataset_provider.process_abstract,
-        process_category=dataset_provider.process_category,
-        process_subcategory=dataset_provider.process_subcategory,
-        history_entity_indices=data.get("history_news_entities"),
+        history_category=hist_cat,
+        history_subcategory=hist_subcat,
+        history_entity=hist_entity,
     )
-
+    # Ragged: each impression has a variable number of candidates.
     imp_iter = ImpressionIterator(
-        impression_tokens=data["candidate_news_tokens"],
+        candidate_news_ids=data["candidate_news_ids"],
         labels=data["labels"],
         impression_ids=data["impression_ids"],
         candidate_ids=data["candidate_news_ids"],
-        impression_abstract_tokens=data.get("candidate_news_abstract_tokens"),
-        impression_category=data.get("candidate_news_categories"),
-        impression_subcategory=data.get("candidate_news_subcategories"),
-        process_title=dataset_provider.process_title,
-        process_abstract=dataset_provider.process_abstract,
-        process_category=dataset_provider.process_category,
-        process_subcategory=dataset_provider.process_subcategory,
+        candidate_category=cand_cat,
+        candidate_subcategory=cand_subcat,
+        candidate_entity=cand_entity,
     )
-
     return news_dl, user_dl, imp_iter
 
 
@@ -411,8 +300,10 @@ def run(cfg: DictConfig):
     if _weights_path:
         _load_safetensors(model, str(_weights_path))
 
-    # Model-specific setup (DIGAT, GLORY) or standard pipeline
-    model_setup = setup_model(spec, dataset_provider, processed_news)
+    # Model-specific setup (DIGAT, GLORY, TCCM) or standard pipeline.
+    # ``encoder_cfg`` is threaded so the hook can pack PLM news-idx
+    # features instead of GloVe tokens (TCCM, DIGAT).
+    model_setup = setup_model(spec, dataset_provider, processed_news, encoder_cfg)
 
     if model_setup is not None:
         features = model_setup.features

@@ -213,13 +213,22 @@ class PyTorchAdapter:
         tokens: Any,
         mask: Any,
     ) -> Any:
-        """Run the DIGAT MSA news encoder on a raw token batch."""
+        """Run the DIGAT MSA news encoder on a raw token / id batch.
+
+        GloVe: ``tokens`` is 2D ``(B, T)`` — adds a num_news axis to
+        match the encoder's expected ``(B, N, T)`` shape.
+        PLM:   ``tokens`` is 1D ``(B,)`` parsed news_idx — adds the
+        num_news axis to make it ``(B, 1)``. Mask is ignored.
+        """
         news_encoder.eval()
         device = next(news_encoder.parameters()).device
         tokens_t = torch.as_tensor(tokens, dtype=torch.long).to(device)
-        mask_t = torch.as_tensor(mask, dtype=torch.float32).to(device)
         with torch.no_grad():
-            emb = news_encoder(tokens_t.unsqueeze(1), mask_t.unsqueeze(1))
+            if tokens_t.dim() == 1:
+                emb = news_encoder(tokens_t.unsqueeze(1), None)
+            else:
+                mask_t = torch.as_tensor(mask, dtype=torch.float32).to(device)
+                emb = news_encoder(tokens_t.unsqueeze(1), mask_t.unsqueeze(1))
         return emb.squeeze(1).detach().cpu().numpy()
 
     def encode_digat_graph_context(

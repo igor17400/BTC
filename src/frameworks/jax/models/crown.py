@@ -25,6 +25,7 @@ from flax import nnx
 
 from src.core.models.configs import CROWNConfig
 
+from ..layers import PLMTokenLookup
 from .base import BaseModel
 
 # ======================================================================
@@ -228,14 +229,22 @@ class CROWNNewsEncoder(nnx.Module):
     def __init__(
         self,
         config: CROWNConfig,
-        word_embedding: nnx.Embed,
+        word_embedding: nnx.Module,
         category_embedding: nnx.Embed,
         subcategory_embedding: nnx.Embed,
         *,
         rngs: nnx.Rngs,
+        encoder_type: str = "glove",
+        abstract_embedding: nnx.Module | None = None,
     ):
         self.config = config
+        self.encoder_type = encoder_type
+        # GloVe: a single shared ``nnx.Embed`` used for both title and
+        # abstract token sequences. PLM: ``word_embedding`` is a
+        # ``PLMTokenLookup`` over the title cache and
+        # ``abstract_embedding`` a second lookup over the abstract cache.
         self.word_embedding = word_embedding
+        self.abstract_embedding = abstract_embedding
         self.category_embedding = category_embedding
         self.subcategory_embedding = subcategory_embedding
 
@@ -335,29 +344,60 @@ class CROWNNewsEncoder(nnx.Module):
         cfg = self.config
         det = not training
 
-        if abstract_tokens is None:
-            concat = title_tokens_or_concat
-            title_tokens = concat[:, : cfg.max_title_length]
-            abstract_tokens = concat[
-                :, cfg.max_title_length : cfg.max_title_length + cfg.max_abstract_length
-            ]
-            category_ids = concat[:, cfg.max_title_length + cfg.max_abstract_length]
-            subcategory_ids = concat[
-                :, cfg.max_title_length + cfg.max_abstract_length + 1
-            ]
-        else:
-            title_tokens = title_tokens_or_concat
+        if self.encoder_type == "glove":
+            if abstract_tokens is None:
+                concat = title_tokens_or_concat
+                title_tokens = concat[:, : cfg.max_title_length]
+                abstract_tokens = concat[
+                    :,
+                    cfg.max_title_length : cfg.max_title_length
+                    + cfg.max_abstract_length,
+                ]
+                category_ids = concat[:, cfg.max_title_length + cfg.max_abstract_length]
+                subcategory_ids = concat[
+                    :, cfg.max_title_length + cfg.max_abstract_length + 1
+                ]
+            else:
+                title_tokens = title_tokens_or_concat
 
-        title_emb = self.dropout(self.word_embedding(title_tokens), deterministic=det)
-        body_emb = self.dropout(self.word_embedding(abstract_tokens), deterministic=det)
+            title_emb_raw = self.word_embedding(title_tokens)
+            body_emb_raw = self.word_embedding(abstract_tokens)
+            title_mask = jnp.not_equal(title_tokens, 0)
+            body_mask = jnp.not_equal(abstract_tokens, 0)
+        else:
+            # PLM: ``title_tokens_or_concat`` is either ``news_idx`` (B,)
+            # int or a packed ``[news_idx | category | subcategory]``
+            # (B, 3) eval tensor.
+            if abstract_tokens is None and title_tokens_or_concat.ndim == 2:
+                concat = title_tokens_or_concat
+                news_idx = concat[:, 0].astype(jnp.int32)
+                category_ids = concat[:, 1].astype(jnp.int32)
+                subcategory_ids = concat[:, 2].astype(jnp.int32)
+            else:
+                news_idx = title_tokens_or_concat.astype(jnp.int32)
+            title_emb_raw, title_mask = self.word_embedding(news_idx)
+            body_emb_raw, body_mask = self.abstract_embedding(news_idx)
+            title_mask = title_mask.astype(jnp.bool_)
+            body_mask = body_mask.astype(jnp.bool_)
+
+        title_emb = self.dropout(title_emb_raw, deterministic=det)
+        body_emb = self.dropout(body_emb_raw, deterministic=det)
         title_emb = self.title_pos(title_emb, deterministic=det)
         body_emb = self.body_pos(body_emb, deterministic=det)
 
         title_enc = self.title_transformer(title_emb, deterministic=det)
         body_enc = self.body_transformer(body_emb, deterministic=det)
 
-        title_pool = jnp.mean(title_enc, axis=1)
-        body_pool = jnp.mean(body_enc, axis=1)
+        # Mask-weighted mean pool (matches PyTorch parity; matters under
+        # PLM where padding token embeddings are non-zero).
+        title_w = title_mask.astype(title_enc.dtype)[:, :, None]
+        body_w = body_mask.astype(body_enc.dtype)[:, :, None]
+        title_pool = jnp.sum(title_enc * title_w, axis=1) / jnp.maximum(
+            jnp.sum(title_w, axis=1), 1.0
+        )
+        body_pool = jnp.sum(body_enc * body_w, axis=1) / jnp.maximum(
+            jnp.sum(body_w, axis=1), 1.0
+        )
 
         cat_emb = self.category_embedding(category_ids)
         subcat_emb = self.subcategory_embedding(subcategory_ids)
@@ -454,7 +494,7 @@ class CROWNUserEncoder(nnx.Module):
     def _encode_history_graph(
         self,
         history_title: jax.Array,
-        history_abstract: jax.Array,
+        history_abstract: jax.Array | None,
         history_category: jax.Array,
         history_subcategory: jax.Array,
         history_mask: jax.Array,
@@ -464,9 +504,19 @@ class CROWNUserEncoder(nnx.Module):
         B, H = history_title.shape[:2]
         det = not training
 
+        flat_title = (
+            history_title.reshape(B * H, -1)
+            if history_title.ndim > 2
+            else history_title.reshape(B * H)
+        )
+        flat_abstract = (
+            history_abstract.reshape(B * H, -1)
+            if history_abstract is not None
+            else None
+        )
         flat_news = self.news_encoder(
-            history_title.reshape(B * H, -1),
-            history_abstract.reshape(B * H, -1),
+            flat_title,
+            flat_abstract,
             history_category.reshape(B * H),
             history_subcategory.reshape(B * H),
             compute_aux_loss=False,
@@ -484,7 +534,7 @@ class CROWNUserEncoder(nnx.Module):
     def forward_with_candidates(
         self,
         history_title: jax.Array,
-        history_abstract: jax.Array,
+        history_abstract: jax.Array | None,
         history_category: jax.Array,
         history_subcategory: jax.Array,
         history_mask: jax.Array,
@@ -504,13 +554,19 @@ class CROWNUserEncoder(nnx.Module):
 
     def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
         cfg = self.config
-        tl = cfg.max_title_length
-        al = cfg.max_abstract_length
-
-        history_title = inputs[:, :, :tl]
-        history_abstract = inputs[:, :, tl : tl + al]
-        history_category = inputs[:, :, tl + al]
-        history_subcategory = inputs[:, :, tl + al + 1]
+        if self.news_encoder.encoder_type == "glove":
+            tl = cfg.max_title_length
+            al = cfg.max_abstract_length
+            history_title = inputs[:, :, :tl]
+            history_abstract = inputs[:, :, tl : tl + al]
+            history_category = inputs[:, :, tl + al]
+            history_subcategory = inputs[:, :, tl + al + 1]
+        else:
+            # Packed [news_idx | category | subcategory]
+            history_title = inputs[:, :, 0].astype(jnp.int32)
+            history_abstract = None
+            history_category = inputs[:, :, 1].astype(jnp.int32)
+            history_subcategory = inputs[:, :, 2].astype(jnp.int32)
         history_mask = jnp.any(inputs != 0, axis=-1)
 
         user_node, news = self._encode_history_graph(
@@ -547,13 +603,44 @@ class CROWN(BaseModel):
 
         num_categories = int(processed_news.get("num_categories", 18))
         num_subcategories = int(processed_news.get("num_subcategories", 100))
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        vocab_size = int(processed_news["vocab_size"])
-        embeddings_matrix = np.asarray(processed_news["embeddings"])
-        self.word_embedding = nnx.Embed(
-            num_embeddings=vocab_size, features=config.embedding_size, rngs=rngs
-        )
-        self.word_embedding.embedding.value = jnp.asarray(embeddings_matrix)
+        if encoder_type == "glove":
+            vocab_size = int(processed_news["vocab_size"])
+            embeddings_matrix = np.asarray(processed_news["embeddings"])
+            self.word_embedding: nnx.Module = nnx.Embed(
+                num_embeddings=vocab_size, features=config.embedding_size, rngs=rngs
+            )
+            self.word_embedding.embedding.value = jnp.asarray(embeddings_matrix)
+            self.abstract_embedding: nnx.Module | None = None
+        else:
+            if "plm_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"CROWN with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id'] (title cache)."
+                )
+            if "plm_abstract_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"CROWN with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_abstract_token_embeddings_by_id'] "
+                    "(abstract cache). Set encoder.text_field_abstract=abstract."
+                )
+            plm_dim = int(processed_news["plm_dim"])
+            self.word_embedding = PLMTokenLookup(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=config.embedding_size,
+                rngs=rngs,
+            )
+            self.abstract_embedding = PLMTokenLookup(
+                processed_news["plm_abstract_token_embeddings_by_id"],
+                processed_news["plm_abstract_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=config.embedding_size,
+                rngs=rngs,
+            )
 
         self.category_embedding = nnx.Embed(
             num_embeddings=num_categories + 1,
@@ -584,6 +671,8 @@ class CROWN(BaseModel):
             self.category_embedding,
             self.subcategory_embedding,
             rngs=rngs,
+            encoder_type=encoder_type,
+            abstract_embedding=self.abstract_embedding,
         )
         self.news_encoder.category_predictor = nnx.Linear(
             config.intent_embedding_dim,
@@ -600,22 +689,43 @@ class CROWN(BaseModel):
         *,
         training: bool = False,
     ) -> jax.Array:
-        B, C = inputs["cand_tokens"].shape[:2]
+        if self.encoder_type == "glove":
+            cand_tokens = inputs["cand_tokens"]
+            cand_abstract = inputs["cand_abstract_tokens"]
+            hist_title = inputs["hist_tokens"]
+            hist_abstract = inputs["hist_abstract_tokens"]
+        else:
+            cand_tokens = inputs["cand_features"]
+            cand_abstract = None
+            hist_title = inputs["hist_features"]
+            hist_abstract = None
 
+        B, C = cand_tokens.shape[:2]
+        flat_cand_title = (
+            cand_tokens.reshape(B * C, -1)
+            if cand_tokens.ndim > 2
+            else cand_tokens.reshape(B * C)
+        )
+        flat_cand_abstract = (
+            cand_abstract.reshape(B * C, -1) if cand_abstract is not None else None
+        )
         cand_full = self.news_encoder(
-            inputs["cand_tokens"].reshape(B * C, -1),
-            inputs["cand_abstract_tokens"].reshape(B * C, -1),
+            flat_cand_title,
+            flat_cand_abstract,
             inputs["cand_category"].reshape(B * C),
             inputs["cand_subcategory"].reshape(B * C),
             compute_aux_loss=training,
             training=training,
         ).reshape(B, C, -1)
 
-        history_mask = jnp.any(inputs["hist_tokens"] != 0, axis=-1)
+        if hist_title.ndim == 3:
+            history_mask = jnp.any(hist_title != 0, axis=-1)
+        else:
+            history_mask = jnp.not_equal(hist_title, 0)
 
         user_repr = self.user_encoder.forward_with_candidates(
-            history_title=inputs["hist_tokens"],
-            history_abstract=inputs["hist_abstract_tokens"],
+            history_title=hist_title,
+            history_abstract=hist_abstract,
             history_category=inputs["hist_category"],
             history_subcategory=inputs["hist_subcategory"],
             history_mask=history_mask,

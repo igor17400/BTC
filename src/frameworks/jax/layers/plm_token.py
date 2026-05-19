@@ -6,10 +6,13 @@ Mirror of :mod:`src.frameworks.pytorch.layers.plm_token`. Provides:
   :class:`Pooler` + Linear projection (NRMS-style).
 - :class:`PLMTokenCNNEncoder` — frozen token lookup + Conv1d +
   AdditiveAttention (NAML / LSTUR title view).
+- :class:`PLMTokenLookup` — drop-in nn.Embedding replacement that
+  returns ``(B, T, D)`` features + ``(B, T)`` mask (PP-Rec, CAUM, ...).
 
-Both layers store the frozen cache as a plain ``jax.Array`` attribute
-so it doesn't appear in the NNX trainable state (no optimizer touches
-it). Reload on next run rebuilds it from disk.
+The frozen caches are wrapped in :class:`FrozenCache` (a non-``Param``
+:class:`nnx.Variable` subclass) so ``nnx.value_and_grad`` and the
+optimizer skip them — no multi-GB zero-gradient buffer is allocated
+for the cache during backward.
 """
 
 from __future__ import annotations
@@ -22,6 +25,20 @@ from flax import nnx
 from .attention_layers import AdditiveAttention
 from .layer_utils import apply_activation
 from .plm_pooler import Pooler
+
+
+class FrozenCache(nnx.Variable):
+    """A non-trainable ``nnx.Variable`` for frozen PLM caches.
+
+    The default Flax NNX gradient/optimizer filter is ``nnx.Param``;
+    anything that's an ``nnx.Variable`` but NOT a Param is skipped. We
+    use this to keep the 6–10 GB PLM token / abstract caches alive on
+    the device while making ``value_and_grad`` ignore them — otherwise
+    XLA allocates a same-size zero-gradient buffer on backward and the
+    abstract cache alone OOMs the 40 GB GPU.
+    """
+
+    pass
 
 
 class PLMTokenNewsEncoder(nnx.Module):
@@ -54,10 +71,15 @@ class PLMTokenNewsEncoder(nnx.Module):
         self.news_dim = int(news_dim)
         self.max_length = int(T)
 
-        # Frozen lookup tables as plain jax arrays (not nnx.Variable),
-        # so they live with the module but are invisible to the optimizer.
-        self.token_embeddings = jnp.asarray(plm_token_embeddings_by_id)
-        self.attention_mask = jnp.asarray(plm_attention_mask_by_id, dtype=jnp.int8)
+        # Frozen lookup tables in bfloat16 — halves cache footprint
+        # on the GPU. Cast back to fp32 at lookup so the pooler /
+        # projection stay in fp32.
+        self.token_embeddings = FrozenCache(
+            jnp.asarray(plm_token_embeddings_by_id, dtype=jnp.bfloat16)
+        )
+        self.attention_mask = FrozenCache(
+            jnp.asarray(plm_attention_mask_by_id, dtype=jnp.int8)
+        )
 
         self.pooler = Pooler(
             plm_dim=plm_dim,
@@ -91,8 +113,10 @@ class PLMTokenNewsEncoder(nnx.Module):
         """
         leading_shape = features.shape
         ids = features.astype(jnp.int32).reshape(-1)
-        tokens = self.token_embeddings[ids]  # (N*, T, plm_dim)
-        mask = self.attention_mask[ids]  # (N*, T)
+        tokens = jax.lax.stop_gradient(
+            self.token_embeddings.value[ids].astype(jnp.float32)
+        )
+        mask = jax.lax.stop_gradient(self.attention_mask.value[ids])
         pooled = self.pooler(tokens, mask, training=training)
         out = self.projection(pooled)
         return out.reshape(*leading_shape, self.news_dim)
@@ -125,9 +149,16 @@ class PLMTokenLookup(nnx.Module):
         self.output_dim = int(output_dim) if output_dim is not None else int(plm_dim)
         self.max_length = int(T)
 
-        # Frozen cache stored as plain jax arrays (invisible to optimizer).
-        self.token_embeddings = jnp.asarray(plm_token_embeddings_by_id)
-        self.attention_mask = jnp.asarray(plm_attention_mask_by_id, dtype=jnp.int8)
+        # Caches stored as bfloat16 to halve GPU footprint vs fp32.
+        # We up-cast to fp32 at the lookup site so downstream compute
+        # (Linear / Conv1d / MHA) stays in fp32. The cache itself is
+        # 3.2 GB (title) or 5 GB (abstract) instead of 6.4/10 GB.
+        self.token_embeddings = FrozenCache(
+            jnp.asarray(plm_token_embeddings_by_id, dtype=jnp.bfloat16)
+        )
+        self.attention_mask = FrozenCache(
+            jnp.asarray(plm_attention_mask_by_id, dtype=jnp.int8)
+        )
 
         if output_dim is not None and output_dim != plm_dim:
             self.projection: nnx.Module = nnx.Linear(plm_dim, output_dim, rngs=rngs)
@@ -140,8 +171,10 @@ class PLMTokenLookup(nnx.Module):
     ) -> tuple[jax.Array, jax.Array]:
         leading_shape = news_idx.shape
         ids = news_idx.astype(jnp.int32).reshape(-1)
-        tokens = self.token_embeddings[ids]
-        mask = self.attention_mask[ids]
+        tokens = jax.lax.stop_gradient(
+            self.token_embeddings.value[ids].astype(jnp.float32)
+        )
+        mask = jax.lax.stop_gradient(self.attention_mask.value[ids])
         out = self.projection(tokens)
         return (
             out.reshape(*leading_shape, self.max_length, self.output_dim),
@@ -187,8 +220,13 @@ class PLMTokenCNNEncoder(nnx.Module):
         self.max_length = int(T)
         self.activation = activation
 
-        self.token_embeddings = jnp.asarray(plm_token_embeddings_by_id)
-        self.attention_mask = jnp.asarray(plm_attention_mask_by_id, dtype=jnp.int8)
+        # bfloat16 cache — halves the abstract-view 10 GB → 5 GB.
+        self.token_embeddings = FrozenCache(
+            jnp.asarray(plm_token_embeddings_by_id, dtype=jnp.bfloat16)
+        )
+        self.attention_mask = FrozenCache(
+            jnp.asarray(plm_attention_mask_by_id, dtype=jnp.int8)
+        )
 
         self.dropout1 = nnx.Dropout(rate=dropout_rate, rngs=rngs)
         # NNX Conv expects (B, T, in_features) → (B, T, out_features).
@@ -227,8 +265,10 @@ class PLMTokenCNNEncoder(nnx.Module):
         """
         leading_shape = features.shape
         ids = features.astype(jnp.int32).reshape(-1)
-        tokens = self.token_embeddings[ids]  # (N*, T, plm_dim)
-        mask = self.attention_mask[ids].astype(jnp.bool_)  # (N*, T)
+        tokens = jax.lax.stop_gradient(
+            self.token_embeddings.value[ids].astype(jnp.float32)
+        )
+        mask = jax.lax.stop_gradient(self.attention_mask.value[ids]).astype(jnp.bool_)
 
         y = self.dropout1(tokens, deterministic=not training)
         y = apply_activation(self.cnn(y), self.activation)

@@ -48,17 +48,36 @@ class NewsEncoder(nn.Module):
         self.entity_embedding = entity_embedding
         self.category_embedding = category_embedding
 
-        # Title branch
+        # Title branch — in PLM mode the token features are full PLM dim
+        # (e.g. 768 for BERT-base) instead of GloVe ``embedding_size``.
+        # ``num_heads`` comes straight from the (spec-level) config and
+        # MUST divide the PLM dim. The PLM-CAUM experiment yaml
+        # overrides ``news_encoder.num_heads`` to a value that divides
+        # the chosen PLM (12 for BERT-base, 768/12=64).
+        if encoder_type == "glove":
+            title_in_dim = config.embedding_size
+        else:
+            title_in_dim = embedding_layer.plm_dim  # PLMTokenLookup.plm_dim
+        title_num_heads = config.news_num_heads
+        if title_in_dim % title_num_heads != 0:
+            raise ValueError(
+                f"CAUM title MHSA: embed_dim={title_in_dim} is not divisible "
+                f"by num_heads={title_num_heads}. Set "
+                "spec.model.architecture.news_encoder.num_heads to a divisor "
+                f"of {title_in_dim} in the experiment yaml (e.g. 12 for "
+                "BERT-base with 768d → 64 head_dim)."
+            )
+        self.title_in_dim = title_in_dim
         self.title_dropout = nn.Dropout(config.dropout_rate)
         self.title_mhsa = nn.MultiheadAttention(
-            embed_dim=config.embedding_size,
-            num_heads=config.news_num_heads,
+            embed_dim=title_in_dim,
+            num_heads=title_num_heads,
             dropout=config.dropout_rate,
             batch_first=True,
         )
         self.title_dropout2 = nn.Dropout(config.dropout_rate)
         self.title_attention = AdditiveAttention(
-            input_dim=config.embedding_size,
+            input_dim=title_in_dim,
             query_vec_dim=config.news_attention_hidden_dim,
         )
 
@@ -84,8 +103,9 @@ class NewsEncoder(nn.Module):
                 config.category_embedding_dim, config.category_embedding_dim
             )
 
-        # Fusion
-        fusion_in = config.embedding_size
+        # Fusion — title view contributes `title_in_dim` (=768 in PLM mode)
+        # to match the wider title pipeline; entity/category dims unchanged.
+        fusion_in = title_in_dim
         if entity_embedding is not None:
             fusion_in += config.entity_embedding_dim
         if category_embedding is not None:
@@ -348,11 +368,13 @@ class CAUM(BaseModel):
                     "processed_news['plm_token_embeddings_by_id']."
                 )
             plm_dim = int(processed_news["plm_dim"])
+            # No projection — CAUM's title MHSA runs at full PLM dim
+            # (e.g. 768 for BERT-base) to preserve BERT context.
             self.embedding_layer = PLMTokenLookup(
                 processed_news["plm_token_embeddings_by_id"],
                 processed_news["plm_attention_mask_by_id"],
                 plm_dim=plm_dim,
-                output_dim=config.embedding_size,
+                output_dim=None,
             )
 
         # Entity embedding (frozen)

@@ -68,18 +68,37 @@ class NewsEncoder(nnx.Module):
         self.entity_embedding = entity_embedding_layer
         self.category_embedding = category_embedding_layer
 
+        # PLM mode: title MHSA runs at full PLM dim (e.g. 768 for
+        # BERT-base). ``num_heads`` comes from the spec; the PLM-CAUM
+        # experiment yaml overrides it to a divisor of plm_dim
+        # (12 for BERT-base → 64 head_dim).
+        if encoder_type == "glove":
+            title_in_dim = config.embedding_size
+        else:
+            title_in_dim = embedding_layer.plm_dim  # PLMTokenLookup.plm_dim
+        title_num_heads = config.news_num_heads
+        if title_in_dim % title_num_heads != 0:
+            raise ValueError(
+                f"CAUM title MHSA: in_features={title_in_dim} is not divisible "
+                f"by num_heads={title_num_heads}. Set "
+                "spec.model.architecture.news_encoder.num_heads to a divisor "
+                f"of {title_in_dim} in the experiment yaml (e.g. 12 for "
+                "BERT-base with 768d → 64 head_dim)."
+            )
+        self.title_in_dim = title_in_dim
+
         # --- Title branch ---
         self.title_dropout = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
         self.title_mhsa = nnx.MultiHeadAttention(
-            num_heads=config.news_num_heads,
-            in_features=config.embedding_size,
-            qkv_features=config.news_num_heads * config.news_head_dim,
+            num_heads=title_num_heads,
+            in_features=title_in_dim,
+            qkv_features=title_in_dim,
             decode=False,
             rngs=rngs,
         )
         self.title_dropout2 = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
         self.title_attention = AdditiveAttention(
-            input_dim=config.embedding_size,
+            input_dim=title_in_dim,
             query_vec_dim=config.news_attention_hidden_dim,
             rngs=rngs,
         )
@@ -112,8 +131,8 @@ class NewsEncoder(nnx.Module):
             )
 
         # --- Fusion -> news_dim ---
-        # Compute input dim for fusion: title_mhsa_out + entity_mhsa_out + category_dim
-        fusion_in = config.embedding_size  # title
+        # title view contributes `title_in_dim` (=768 in PLM mode).
+        fusion_in = title_in_dim
         if entity_embedding_layer is not None:
             fusion_in += config.entity_embedding_dim
         if category_embedding_layer is not None:
@@ -413,11 +432,12 @@ class CAUM(BaseModel):
                     "processed_news['plm_token_embeddings_by_id']."
                 )
             plm_dim = int(processed_news["plm_dim"])
+            # No projection — CAUM's title MHSA runs at full PLM dim.
             self.embedding_layer = PLMTokenLookup(
                 processed_news["plm_token_embeddings_by_id"],
                 processed_news["plm_attention_mask_by_id"],
                 plm_dim=plm_dim,
-                output_dim=config.embedding_size,
+                output_dim=None,
                 rngs=rngs,
             )
 

@@ -252,11 +252,19 @@ class JAXAdapter:
         tokens: Any,
         mask: Any,
     ) -> np.ndarray:
-        """Run the DIGAT MSA news encoder on a raw token batch."""
+        """Run the DIGAT MSA news encoder on a raw token / id batch.
+
+        GloVe: ``tokens`` is 2D ``(B, T)`` — adds a num_news axis to
+        match the encoder's expected ``(B, N, T)`` shape.
+        PLM:   ``tokens`` is 1D ``(B,)`` parsed news_idx — adds the
+        num_news axis to make it ``(B, 1)``. Mask is ignored.
+        """
         tokens_j = jnp.asarray(tokens).astype(jnp.int32)
         mask_j = jnp.asarray(mask).astype(jnp.float32)
-        # News encoder expects (B, N, T) — treat each news as a single-item batch.
-        emb = news_encoder(tokens_j[:, None, :], mask_j[:, None, :], training=False)
+        if tokens_j.ndim == 1:
+            emb = news_encoder(tokens_j[:, None], None, training=False)
+        else:
+            emb = news_encoder(tokens_j[:, None, :], mask_j[:, None, :], training=False)
         return np.asarray(jnp.squeeze(emb, axis=1))
 
     def encode_digat_graph_context(

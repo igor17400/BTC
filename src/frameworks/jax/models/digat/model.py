@@ -27,6 +27,7 @@ from flax import nnx
 
 from src.core.models.configs import DIGATConfig
 
+from ...layers import PLMTokenLookup
 from ..base import BaseModel
 from .layers import (
     AdditiveAttention,
@@ -49,15 +50,22 @@ _LEAKY_RELU_GAIN_02 = math.sqrt(2.0 / (1.0 + 0.2**2))
 
 
 class DIGATNewsEncoder(nnx.Module):
-    """MSA-based news encoder: embedding → MHA → additive attention."""
+    """MSA-based news encoder: embedding → MHA → additive attention.
+
+    GloVe mode reads token ids ``(B, num_news, T)`` and embeds them.
+    PLM mode reads parsed news_idx ``(B, num_news)`` and looks up the
+    cached PLM token features + attention mask via :class:`PLMTokenLookup`.
+    """
 
     def __init__(
         self,
         config: DIGATConfig,
-        word_embedding: nnx.Embed,
+        word_embedding: nnx.Module,
         *,
         rngs: nnx.Rngs,
+        encoder_type: str = "glove",
     ):
+        self.encoder_type = encoder_type
         self.word_embedding = word_embedding
         self.dropout = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
         self.msa = MultiHeadSelfAttention(
@@ -83,23 +91,31 @@ class DIGATNewsEncoder(nnx.Module):
         """Encode a batch of news with SAG neighbor structure.
 
         Args:
-            title_text: ``(batch_size, num_news, title_len)`` token ids.
-            title_mask: ``(batch_size, num_news, title_len)`` float mask
-                (1 = valid token).
+            title_text: GloVe — ``(batch_size, num_news, title_len)`` ids.
+                PLM — ``(batch_size, num_news)`` parsed news_idx.
+            title_mask: GloVe — optional ``(B, num_news, title_len)`` mask
+                (1 = valid). Ignored under PLM.
 
         Returns:
             ``(batch_size, num_news, news_embedding_dim)`` news reprs.
         """
         det = not training
-        batch_size, num_news, title_len = title_text.shape
-        flat_text = title_text.reshape(batch_size * num_news, title_len)
-        flat_mask = (
-            title_mask.reshape(batch_size * num_news, title_len)
-            if title_mask is not None
-            else None
-        )
+        if self.encoder_type == "glove":
+            batch_size, num_news, title_len = title_text.shape
+            flat_text = title_text.reshape(batch_size * num_news, title_len)
+            flat_mask = (
+                title_mask.reshape(batch_size * num_news, title_len)
+                if title_mask is not None
+                else None
+            )
+            w = self.dropout(self.word_embedding(flat_text), deterministic=det)
+        else:
+            batch_size, num_news = title_text.shape
+            flat_idx = title_text.reshape(batch_size * num_news).astype(jnp.int32)
+            tokens, mask = self.word_embedding(flat_idx)
+            w = self.dropout(tokens, deterministic=det)
+            flat_mask = mask.astype(jnp.float32)
 
-        w = self.dropout(self.word_embedding(flat_text), deterministic=det)
         h = jax.nn.relu(self.msa(w))
         news_repr = self.attention(h, mask=flat_mask)
         return news_repr.reshape(batch_size, num_news, self.news_embedding_dim)
@@ -486,17 +502,36 @@ class DIGAT(BaseModel):
 
         num_categories = int(processed_news.get("num_categories", 18))
         self.num_categories = num_categories + 1  # +1 for padding category
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        vocab_size = int(processed_news["vocab_size"])
-        embeddings_matrix = np.asarray(processed_news["embeddings"])
-        self.word_embedding = nnx.Embed(
-            num_embeddings=vocab_size,
-            features=config.embedding_size,
-            rngs=rngs,
+        if encoder_type == "glove":
+            vocab_size = int(processed_news["vocab_size"])
+            embeddings_matrix = np.asarray(processed_news["embeddings"])
+            self.word_embedding: nnx.Module = nnx.Embed(
+                num_embeddings=vocab_size,
+                features=config.embedding_size,
+                rngs=rngs,
+            )
+            self.word_embedding.embedding.value = jnp.asarray(embeddings_matrix)
+        else:
+            if "plm_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"DIGAT with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']."
+                )
+            plm_dim = int(processed_news["plm_dim"])
+            self.word_embedding = PLMTokenLookup(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=config.embedding_size,
+                rngs=rngs,
+            )
+
+        self.news_encoder = DIGATNewsEncoder(
+            config, self.word_embedding, rngs=rngs, encoder_type=encoder_type
         )
-        self.word_embedding.embedding.value = jnp.asarray(embeddings_matrix)
-
-        self.news_encoder = DIGATNewsEncoder(config, self.word_embedding, rngs=rngs)
 
         self.graph_encoder = DIGATGraphEncoder(
             config,
@@ -541,13 +576,19 @@ class DIGAT(BaseModel):
         user_graph_size = self.max_history + self.num_categories
         batch_cands = batch_size * num_cands
 
-        # Flatten candidates: (batch_size, num_cands, sag_size, title_len) → (batch_cands, sag_size, title_len)
-        cand_tokens = inputs["cand_tokens"].reshape(batch_cands, sag_size, -1)
-        cand_mask = (
-            inputs["cand_mask"].reshape(batch_cands, sag_size, -1)
-            if "cand_mask" in inputs
-            else None
-        )
+        # Flatten candidates: shape depends on encoder.
+        # GloVe: ``(B, C, sag_size, T)`` ids → ``(B*C, sag_size, T)``.
+        # PLM:   ``(B, C, sag_size)`` parsed news_idx → ``(B*C, sag_size)``.
+        if self.encoder_type == "glove":
+            cand_tokens = inputs["cand_tokens"].reshape(batch_cands, sag_size, -1)
+            cand_mask = (
+                inputs["cand_mask"].reshape(batch_cands, sag_size, -1)
+                if "cand_mask" in inputs
+                else None
+            )
+        else:
+            cand_tokens = inputs["cand_tokens"].reshape(batch_cands, sag_size)
+            cand_mask = None
         cand_graph = inputs["cand_graph"].reshape(batch_cands, sag_size, sag_size)
         cand_graph_mask = inputs["cand_graph_mask"].reshape(batch_cands, sag_size)
 

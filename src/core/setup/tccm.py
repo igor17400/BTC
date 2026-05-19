@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from src.core.data.processing.models.digat import build_id_remap
@@ -87,15 +85,52 @@ def _build_tccm_cache(dataset_provider, processed_news, spec) -> dict:
     }
 
 
-def _build_features(dataset_provider) -> tuple[dict, np.ndarray]:
+def _build_features(dataset_provider, encoder_cfg=None) -> tuple[dict, np.ndarray]:
     """Replicate the standard PyTorch feature builder used by the runner.
 
     Kept inline here so the setup hook can return a complete
     ``features`` dict (the runner's ``_build_train_features`` is private
     and not part of the framework-agnostic surface).
+
+    In PLM mode (``encoder_cfg.type != 'glove'``) ``hist_tokens`` and
+    ``cand_tokens`` carry packed ``[news_idx | entities]`` (no title
+    tokens) — the news encoder reads ``news_idx`` and looks up cached
+    PLM features. The popularity branch stays keyed on GloVe-token CTR
+    via ``cand_pop_buckets`` built downstream.
     """
     data = dataset_provider.train_behaviors_data
     features: dict = {}
+    encoder_type = (
+        encoder_cfg.get("type", "glove") if encoder_cfg is not None else "glove"
+    )
+
+    if encoder_type != "glove":
+        hist_news_idx = np.asarray(data["histories_news_ids"])
+        cand_news_idx = np.asarray(data["candidate_news_ids"])
+        features["hist_features"] = hist_news_idx
+        features["cand_features"] = cand_news_idx
+
+        hist_parts: list[np.ndarray] = [hist_news_idx[..., None]]
+        cand_parts: list[np.ndarray] = [cand_news_idx[..., None]]
+        if getattr(dataset_provider, "process_entities", False) and (
+            "history_news_entities" in data
+        ):
+            hist_parts.append(np.asarray(data["history_news_entities"]))
+            cand_parts.append(np.asarray(data["candidate_news_entities"]))
+        features["hist_tokens"] = np.concatenate(hist_parts, axis=-1)
+        features["cand_tokens"] = np.concatenate(cand_parts, axis=-1)
+
+        if dataset_provider.process_user_id:
+            features["user_ids"] = np.asarray(data["user_ids"])
+        if "history_news_ctr" in data:
+            ctr = np.asarray(data["history_news_ctr"])
+            features["hist_ctr"] = np.minimum(np.ceil(ctr * 200).astype(np.int32), 199)
+            features["cand_ctr"] = np.asarray(data["candidate_news_ctr"])
+        if "candidate_news_recency" in data:
+            features["cand_recency"] = np.asarray(data["candidate_news_recency"])
+
+        labels = np.asarray(data["labels"])
+        return features, labels
 
     if dataset_provider.process_title:
         features["hist_tokens"] = np.asarray(data["history_news_tokens"])
@@ -155,9 +190,17 @@ def _build_features(dataset_provider) -> tuple[dict, np.ndarray]:
     return features, labels
 
 
-def setup_tccm(spec, dataset_provider, processed_news) -> ModelSetupResult:
+def setup_tccm(
+    spec, dataset_provider, processed_news, encoder_cfg=None
+) -> ModelSetupResult:
     """Prepare TCCM training: token-CTR tables, ID remap, per-impression
-    bucket lookups, and the popularity-encoder eval closure factory."""
+    bucket lookups, and the popularity-encoder eval closure factory.
+
+    ``encoder_cfg`` selects between GloVe-token packing
+    (``[title_tokens | entities]``) and PLM-news-idx packing
+    (``[news_idx | entities]``) for ``hist_tokens`` / ``cand_tokens``.
+    The popularity branch stays on GloVe-token CTR regardless.
+    """
     tccm_cache = _build_tccm_cache(dataset_provider, processed_news, spec)
 
     remap_path = (
@@ -174,7 +217,7 @@ def setup_tccm(spec, dataset_provider, processed_news) -> ModelSetupResult:
             return ids
         return np.where(ids < len(id_remap), id_remap[ids], 0).astype(np.int64)
 
-    features, labels = _build_features(dataset_provider)
+    features, labels = _build_features(dataset_provider, encoder_cfg)
     cand_pop_buckets, cand_news_exist_time = build_per_token_buckets(
         candidate_news_ids=_remap_ids(
             dataset_provider.train_behaviors_data["candidate_news_ids"]
@@ -201,9 +244,17 @@ def setup_tccm(spec, dataset_provider, processed_news) -> ModelSetupResult:
         "remap_path": remap_path,
     }
 
-    def make_eval_fn(model, adapter, metrics_engine, dataset_provider,
-                     processed_news, eval_batch_size, output_run_dir,
-                     build_eval_dataloaders=None, **_):
+    def make_eval_fn(
+        model,
+        adapter,
+        metrics_engine,
+        dataset_provider,
+        processed_news,
+        eval_batch_size,
+        output_run_dir,
+        build_eval_dataloaders=None,
+        **_,
+    ):
         """Build the TCCM eval closure.
 
         ``build_eval_dataloaders`` is provided by the framework runner
@@ -219,6 +270,7 @@ def setup_tccm(spec, dataset_provider, processed_news) -> ModelSetupResult:
             )
 
         from omegaconf import OmegaConf
+
         _eval_cfg = OmegaConf.create({"eval": {"batch_size": int(eval_batch_size)}})
 
         int_to_news_id_map = (

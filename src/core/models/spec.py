@@ -77,7 +77,8 @@ def spec_to_nrms_config(
     arch = spec.model.architecture
     return NRMSConfig(
         embedding_size=spec.model.embedding.size,
-        multiheads=arch.news_encoder.num_heads,
+        news_num_heads=arch.news_encoder.num_heads,
+        user_num_heads=arch.user_encoder.num_heads,
         head_dim=arch.news_encoder.head_dim,
         attention_hidden_dim=arch.news_encoder.attention_hidden_dim,
         dropout_rate=spec.model.dropout_rate,
@@ -87,7 +88,6 @@ def spec_to_nrms_config(
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
         encoder=_encoder_from_cfg(encoder),
-        text_pooler=_text_pooler_from_arch(arch),
     )
 
 
@@ -447,7 +447,7 @@ _MODEL_CLASS_PATHS = {
     },
     "pytorch": {
         "caum": "src.frameworks.pytorch.models.caum.CAUM",
-        "nrms": "src.frameworks.pytorch.models.nrms.NRMS",
+        "nrms": "src.frameworks.pytorch.models.nrms.model.NRMS",
         "naml": "src.frameworks.pytorch.models.naml.NAML",
         "lstur": "src.frameworks.pytorch.models.lstur.LSTUR",
         "crown": "src.frameworks.pytorch.models.crown.CROWN",
@@ -459,7 +459,7 @@ _MODEL_CLASS_PATHS = {
     },
     "jax": {
         "caum": "src.frameworks.jax.models.caum.CAUM",
-        "nrms": "src.frameworks.jax.models.nrms.NRMS",
+        "nrms": "src.frameworks.jax.models.nrms.model.NRMS",
         "naml": "src.frameworks.jax.models.naml.NAML",
         "lstur": "src.frameworks.jax.models.lstur.LSTUR",
         "crown": "src.frameworks.jax.models.crown.CROWN",

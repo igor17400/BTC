@@ -65,10 +65,23 @@ class TextPoolerConfig:
 
 @dataclass
 class NRMSConfig:
-    """Configuration class for NRMS model parameters."""
+    """Configuration class for NRMS model parameters.
+
+    The model runs MHSA at two different dims:
+      - News-side: ``text_encoder.output_dim`` (300 for GloVe, 768 for
+        BERT-base, 1024 for BERT-large, ...). Driven by ``news_num_heads``.
+        Must satisfy ``text_dim % news_num_heads == 0``.
+      - User-side: ``embedding_size`` (the model's news_dim — the dim
+        the user vector lives in). Driven by ``user_num_heads``. Must
+        satisfy ``embedding_size % user_num_heads == 0``.
+
+    News-side MHSA output is projected to ``embedding_size`` after the
+    additive pool when ``text_dim != embedding_size``.
+    """
 
     embedding_size: int = 300
-    multiheads: int = 16
+    news_num_heads: int = 16
+    user_num_heads: int = 16
     head_dim: int = 16
     attention_hidden_dim: int = 200
     dropout_rate: float = 0.2
@@ -78,9 +91,6 @@ class NRMSConfig:
     max_impressions_length: int = 5
     process_user_id: bool = False
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
-    # PLM-only: how to collapse the (T, plm_dim) token sequence into a
-    # per-news vector. Ignored when encoder.type == 'glove'.
-    text_pooler: TextPoolerConfig = field(default_factory=TextPoolerConfig)
 
 
 @dataclass

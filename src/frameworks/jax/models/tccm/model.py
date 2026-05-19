@@ -20,6 +20,7 @@ from flax import nnx
 
 from src.core.models.configs import PPRecConfig, TCCMConfig
 
+from ...layers import PLMTokenLookup
 from ..base import BaseModel
 from ..pprec import PPRecNewsEncoder, PPRecUserEncoder
 from .layers import TCCMActivityGater, TCCMPopularityEncoder
@@ -73,13 +74,30 @@ class TCCM(BaseModel):
         self._max_entities = config.max_entities
 
         pn = processed_news
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        word_emb = nnx.Embed(
-            num_embeddings=pn["vocab_size"],
-            features=config.embedding_size,
-            rngs=rngs,
-        )
-        word_emb.embedding.value = jnp.asarray(pn["embeddings"])
+        if encoder_type == "glove":
+            word_emb: nnx.Module = nnx.Embed(
+                num_embeddings=pn["vocab_size"],
+                features=config.embedding_size,
+                rngs=rngs,
+            )
+            word_emb.embedding.value = jnp.asarray(pn["embeddings"])
+        else:
+            if "plm_token_embeddings_by_id" not in pn:
+                raise KeyError(
+                    f"TCCM with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']."
+                )
+            plm_dim = int(pn["plm_dim"])
+            word_emb = PLMTokenLookup(
+                pn["plm_token_embeddings_by_id"],
+                pn["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=config.embedding_size,
+                rngs=rngs,
+            )
 
         if not (config.use_entity and "entity_embeddings" in pn):
             raise ValueError(
@@ -93,12 +111,15 @@ class TCCM(BaseModel):
         )
         entity_emb.embedding.value = jnp.asarray(pn["entity_embeddings"])
 
-        # PP-Rec ``co1`` news encoder (no category branch)
+        # PP-Rec ``co1`` news encoder (no category branch). Popularity
+        # branch (below) stays keyed on GloVe-token CTR regardless of
+        # encoder.type.
         self.news_encoder = PPRecNewsEncoder(
             self._pprec_config,
             word_emb,
             entity_emb,
             None,
+            encoder_type=encoder_type,
             rngs=rngs,
         )
         self.user_encoder = PPRecUserEncoder(
