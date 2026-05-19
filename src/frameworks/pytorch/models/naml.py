@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from src.core.models.configs import NAMLConfig
 
-from ..layers import AdditiveAttention, get_activation
+from ..layers import AdditiveAttention, PLMTokenCNNEncoder, get_activation
 from .base import BaseModel
 
 # ------------------------------------------------------------------
@@ -140,18 +140,27 @@ class SubcategoryEncoder(nn.Module):
 
 
 class NewsEncoder(nn.Module):
-    """Multi-view news encoder combining title, abstract, category, subcategory."""
+    """Multi-view news encoder combining title, abstract, category, subcategory.
+
+    Encoder-aware unpacking: in GloVe mode the input is the original
+    packed token layout; in PLM mode the input is a 3-column tensor
+    ``[news_idx, category_id, subcategory_id]`` and the text encoders
+    are :class:`PLMNewsEncoder` lookups (title + abstract caches).
+    """
 
     def __init__(
         self,
         config: NAMLConfig,
-        title_encoder: TitleEncoder,
-        abstract_encoder: AbstractEncoder,
+        title_encoder: nn.Module,
+        abstract_encoder: nn.Module,
         category_encoder: CategoryEncoder,
         subcategory_encoder: SubcategoryEncoder,
+        *,
+        encoder_type: str = "glove",
     ):
         super().__init__()
         self.config = config
+        self.encoder_type = encoder_type
         self.title_encoder = title_encoder
         self.abstract_encoder = abstract_encoder
         self.category_encoder = category_encoder
@@ -167,27 +176,40 @@ class NewsEncoder(nn.Module):
         """Encode a news article from its concatenated features.
 
         Args:
-            inputs: (batch, title_len + abstract_len + 2) where the last two
-                    positions are category_id and subcategory_id.
+            inputs: GloVe mode → ``(batch, title_len + abstract_len + 2)``
+                where the last two positions are category_id and subcategory_id.
+                PLM mode → ``(batch, 3)`` = ``[news_idx, category, subcategory]``.
 
         Returns:
             (batch, cnn_filter_num) news representation.
         """
         cfg = self.config
-        title_tokens = inputs[:, : cfg.max_title_length]
-        abstract_tokens = inputs[
-            :, cfg.max_title_length : cfg.max_title_length + cfg.max_abstract_length
-        ]
-        category_id = inputs[
-            :,
-            cfg.max_title_length + cfg.max_abstract_length : cfg.max_title_length
-            + cfg.max_abstract_length
-            + 1,
-        ]
-        subcategory_id = inputs[:, cfg.max_title_length + cfg.max_abstract_length + 1 :]
+        if self.encoder_type == "glove":
+            title_tokens = inputs[:, : cfg.max_title_length]
+            abstract_tokens = inputs[
+                :, cfg.max_title_length : cfg.max_title_length + cfg.max_abstract_length
+            ]
+            category_id = inputs[
+                :,
+                cfg.max_title_length + cfg.max_abstract_length : cfg.max_title_length
+                + cfg.max_abstract_length
+                + 1,
+            ]
+            subcategory_id = inputs[
+                :, cfg.max_title_length + cfg.max_abstract_length + 1 :
+            ]
+            title_vec = self.title_encoder(title_tokens, training=training)
+            abstract_vec = self.abstract_encoder(abstract_tokens, training=training)
+        else:
+            # PLM mode: column 0 = parsed news id, used by BOTH title and
+            # abstract PLM lookups (each has its own cache). Columns 1, 2
+            # are category / subcategory.
+            news_idx = inputs[:, 0]
+            category_id = inputs[:, 1:2]
+            subcategory_id = inputs[:, 2:3]
+            title_vec = self.title_encoder(news_idx, training=training)
+            abstract_vec = self.abstract_encoder(news_idx, training=training)
 
-        title_vec = self.title_encoder(title_tokens, training=training)
-        abstract_vec = self.abstract_encoder(abstract_tokens, training=training)
         category_vec = self.category_encoder(category_id, training=training)
         subcategory_vec = self.subcategory_encoder(subcategory_id, training=training)
 
@@ -214,7 +236,9 @@ class UserEncoder(nn.Module):
         """Encode user history.
 
         Args:
-            inputs: (batch, history_len, feature_size) concatenated features.
+            inputs: ``(batch, history_len, feature_size)`` packed features.
+                GloVe mode: feature_size = title_len + abstract_len + 2.
+                PLM mode: feature_size = 3 = [news_idx, category, subcategory].
 
         Returns:
             (batch, cnn_filter_num) user representation.
@@ -226,9 +250,14 @@ class UserEncoder(nn.Module):
         news_vecs = self.news_encoder(flat, training=training)
         news_vecs = news_vecs.reshape(batch_size, hist_len, -1)
 
-        # Mask: valid if title portion has any nonzero token
-        title_tokens = inputs[:, :, : self.config.max_title_length]
-        history_mask = title_tokens.any(dim=-1)  # (B, H)
+        # Validity mask: encoder-dependent.
+        if self.news_encoder.encoder_type == "glove":
+            # Title tokens contain at least one non-zero word.
+            title_tokens = inputs[:, :, : self.config.max_title_length]
+            history_mask = title_tokens.any(dim=-1)  # (B, H)
+        else:
+            # PLM mode: news_idx (column 0) is non-zero for real history slots.
+            history_mask = inputs[:, :, 0] != 0
 
         return self.user_attention(news_vecs, mask=history_mask)
 
@@ -254,17 +283,59 @@ class NAML(BaseModel):
         self.processed_news = processed_news
         self.process_user_id = config.process_user_id
 
-        # Shared word embedding
-        vocab_size = processed_news["vocab_size"]
-        embeddings_matrix = processed_news["embeddings"]
-        self.embedding_layer = nn.Embedding(vocab_size, config.embedding_size)
-        self.embedding_layer.weight = nn.Parameter(
-            torch.tensor(embeddings_matrix, dtype=torch.float32)
-        )
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        # View encoders
-        self.title_encoder = TitleEncoder(config, self.embedding_layer)
-        self.abstract_encoder = AbstractEncoder(config, self.embedding_layer)
+        if encoder_type == "glove":
+            # Shared word embedding (initialised from pretrained GloVe).
+            vocab_size = processed_news["vocab_size"]
+            embeddings_matrix = processed_news["embeddings"]
+            self.embedding_layer = nn.Embedding(vocab_size, config.embedding_size)
+            self.embedding_layer.weight = nn.Parameter(
+                torch.tensor(embeddings_matrix, dtype=torch.float32)
+            )
+            self.title_encoder = TitleEncoder(config, self.embedding_layer)
+            self.abstract_encoder = AbstractEncoder(config, self.embedding_layer)
+        else:
+            # PLM mode — token-level lookups + NAML's own Conv1d/AddAttn
+            # pipeline. Each view (title, abstract) has its own cache;
+            # the runner builds both via attach_plm_embeddings(..., level='token').
+            for required in (
+                "plm_token_embeddings_by_id",
+                "plm_attention_mask_by_id",
+                "plm_abstract_token_embeddings_by_id",
+                "plm_abstract_attention_mask_by_id",
+            ):
+                if required not in processed_news:
+                    raise KeyError(
+                        f"NAML with encoder.type='{encoder_type}' requires "
+                        f"processed_news['{required}']. Make sure the encoder "
+                        "yaml sets text_field='title' and "
+                        "text_field_abstract='abstract' and the runner has "
+                        "called attach_plm_embeddings for both."
+                    )
+            plm_dim = int(processed_news["plm_dim"])
+            self.title_encoder = PLMTokenCNNEncoder(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                news_dim=config.cnn_filter_num,
+                plm_dim=plm_dim,
+                cnn_kernel_size=config.cnn_kernel_size,
+                dropout_rate=config.dropout_rate,
+                word_attention_query_dim=config.word_attention_query_dim,
+                activation=config.activation,
+            )
+            self.abstract_encoder = PLMTokenCNNEncoder(
+                processed_news["plm_abstract_token_embeddings_by_id"],
+                processed_news["plm_abstract_attention_mask_by_id"],
+                news_dim=config.cnn_filter_num,
+                plm_dim=plm_dim,
+                cnn_kernel_size=config.cnn_kernel_size,
+                dropout_rate=config.dropout_rate,
+                word_attention_query_dim=config.word_attention_query_dim,
+                activation=config.activation,
+            )
+
         self.category_encoder = CategoryEncoder(
             config, processed_news["num_categories"]
         )
@@ -279,6 +350,7 @@ class NAML(BaseModel):
             self.abstract_encoder,
             self.category_encoder,
             self.subcategory_encoder,
+            encoder_type=encoder_type,
         )
         self.user_encoder = UserEncoder(config, self.news_encoder)
 
@@ -300,18 +372,42 @@ class NAML(BaseModel):
     def _concat_features(
         self, inputs: dict[str, torch.Tensor], prefix: str
     ) -> torch.Tensor:
-        """Concatenate title, abstract, category, subcategory along last dim."""
-        parts = [inputs[f"{prefix}_tokens"]]
+        """Concatenate the per-view inputs into a single packed tensor.
 
+        GloVe mode: [title_tokens | abstract_tokens | category | subcategory]
+            along the last dim, producing
+            ``(*, title_len + abstract_len + 2)``.
+
+        PLM mode: [news_idx | category | subcategory] along the last dim,
+            producing ``(*, 3)`` where ``news_idx`` is the parsed-int news
+            id that both PLM caches index off.
+        """
+        if self.encoder_type != "glove":
+            # PLM path: news_idx is the parsed news id (`hist_features` /
+            # `cand_features` from the runner). Promote to (*, 1) and
+            # concat with category / subcategory (also promoted to (*, 1)).
+            news_idx = inputs[f"{prefix}_features"]
+            parts = [news_idx.unsqueeze(-1)]
+            if f"{prefix}_category" in inputs:
+                cat = inputs[f"{prefix}_category"]
+                if cat.dim() == news_idx.dim():
+                    cat = cat.unsqueeze(-1)
+                parts.append(cat)
+            if f"{prefix}_subcategory" in inputs:
+                subcat = inputs[f"{prefix}_subcategory"]
+                if subcat.dim() == news_idx.dim():
+                    subcat = subcat.unsqueeze(-1)
+                parts.append(subcat)
+            return torch.cat(parts, dim=-1)
+
+        parts = [inputs[f"{prefix}_tokens"]]
         if f"{prefix}_abstract_tokens" in inputs:
             parts.append(inputs[f"{prefix}_abstract_tokens"])
-
         if f"{prefix}_category" in inputs:
             cat = inputs[f"{prefix}_category"]
             if cat.dim() == len(parts[0].shape) - 1:
                 cat = cat.unsqueeze(-1)
             parts.append(cat)
-
         if f"{prefix}_subcategory" in inputs:
             subcat = inputs[f"{prefix}_subcategory"]
             if subcat.dim() == len(parts[0].shape) - 1:

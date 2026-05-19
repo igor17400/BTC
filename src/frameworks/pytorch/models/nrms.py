@@ -7,7 +7,7 @@ import torch.nn as nn
 
 from src.core.models.configs import NRMSConfig
 
-from ..layers import AdditiveAttention, PLMNewsEncoder, PLMTokenNewsEncoder
+from ..layers import AdditiveAttention, PLMTokenNewsEncoder
 from .base import BaseModel
 
 
@@ -191,44 +191,27 @@ class NRMS(BaseModel):
             )
             self.news_encoder = NewsEncoder(config, self.embedding_layer)
         else:
-            # PLM mode — two sub-paths controlled by encoder.level:
-            #   - "sentence" (default): cached one vector per news, project
-            #     with a Linear to news_dim. Fastest, fewest trainable params.
-            #   - "token": cached (max_length, plm_dim) per news, run a
-            #     trainable pooler over the tokens then project. IP2-style
-            #     architecture, similar trainable capacity to the GloVe
-            #     path but with frozen contextual per-token vectors.
-            level = getattr(config.encoder, "level", "sentence")
-            if level == "token":
-                if "plm_token_embeddings_by_id" not in processed_news:
-                    raise KeyError(
-                        f"NRMS with encoder.type='{encoder_type}' and "
-                        "level='token' requires processed_news["
-                        "'plm_token_embeddings_by_id']. Call "
-                        "attach_plm_embeddings(..., level='token') in the runner."
-                    )
-                self.news_encoder = PLMTokenNewsEncoder(
-                    processed_news["plm_token_embeddings_by_id"],
-                    processed_news["plm_attention_mask_by_id"],
-                    news_dim=config.embedding_size,
-                    pooler_type=config.encoder.pooler_type,
-                    attention_query_dim=config.encoder.pooler_attention_query_dim,
-                    num_heads=config.encoder.pooler_num_heads,
-                    head_dim=config.encoder.pooler_head_dim,
-                    dropout_rate=config.encoder.pooler_dropout_rate,
+            # PLM mode — token-level cache + model-side pooler.
+            # Pooler hyperparameters come from the NRMS spec
+            # (``config.text_pooler``) so the encoder yaml stays
+            # model-agnostic.
+            if "plm_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"NRMS with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']. Call "
+                    "attach_plm_embeddings(..., level='token') in the runner."
                 )
-            else:
-                if "plm_embeddings_by_id" not in processed_news:
-                    raise KeyError(
-                        f"NRMS with encoder.type='{encoder_type}' requires "
-                        "processed_news['plm_embeddings_by_id']. Call "
-                        "src.core.data.encoders.plm.attach_plm_embeddings(...) "
-                        "in the runner before building the model."
-                    )
-                self.news_encoder = PLMNewsEncoder(
-                    processed_news["plm_embeddings_by_id"],
-                    news_dim=config.embedding_size,
-                )
+            pooler = config.text_pooler
+            self.news_encoder = PLMTokenNewsEncoder(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                news_dim=config.embedding_size,
+                pooler_type=pooler.type,
+                attention_query_dim=pooler.attention_query_dim,
+                num_heads=pooler.num_heads,
+                head_dim=pooler.head_dim,
+                dropout_rate=pooler.dropout_rate,
+            )
 
         self.user_encoder = UserEncoder(config, self.news_encoder)
 

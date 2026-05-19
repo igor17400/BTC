@@ -11,6 +11,12 @@ import numpy as np
 import torch
 from torch.utils.data import DataLoader, Dataset
 
+from src.core.data.processing.models.glory import (
+    build_csr_in_adjacency,
+    extract_edges_for_subgraph,
+    sample_subgraph,
+)
+
 # ------------------------------------------------------------------
 # Training dataset / dataloader
 # ------------------------------------------------------------------
@@ -243,9 +249,13 @@ class UserHistoryBatchDataloader:
 class PLMNewsBatchDataloader:
     """Batch news IDs for PLM-mode evaluation.
 
-    Yields ``{"news_id": str_ids, "news_features": (B,) int64 parsed news ids}``.
-    The "features" tensor is just the parsed-int news id used to index
-    the cached PLM embedding table.
+    Default (single-view, e.g. NRMS):
+        Yields ``news_features`` of shape ``(B,)`` int64 (parsed news ids).
+
+    Multi-view (NAML+PLM): pass ``category_indices`` and/or
+    ``subcategory_indices`` and the yielded ``news_features`` becomes
+    a packed ``(B, k)`` int64 tensor with column order
+    ``[news_idx, category, subcategory]``.
     """
 
     def __init__(
@@ -254,6 +264,9 @@ class PLMNewsBatchDataloader:
         parsed_news_ids: np.ndarray,
         batch_size: int = 1024,
         device: torch.device | None = None,
+        category_indices: np.ndarray | None = None,
+        subcategory_indices: np.ndarray | None = None,
+        entity_indices: np.ndarray | None = None,
     ):
         self.news_ids_str = np.asarray(news_ids_str)
         self.parsed_news_ids = np.asarray(parsed_news_ids, dtype=np.int64)
@@ -261,14 +274,28 @@ class PLMNewsBatchDataloader:
         self.device = device or torch.device("cpu")
         self.num_news = len(news_ids_str)
 
+        # Pack column order: [news_idx | entities | category | subcategory].
+        # Matches the training-time _build_train_features layout.
+        packed = [self.parsed_news_ids[:, None]]
+        if entity_indices is not None:
+            packed.append(np.asarray(entity_indices, dtype=np.int64))
+        if category_indices is not None:
+            packed.append(np.asarray(category_indices, dtype=np.int64).reshape(-1, 1))
+        if subcategory_indices is not None:
+            packed.append(
+                np.asarray(subcategory_indices, dtype=np.int64).reshape(-1, 1)
+            )
+        # Squeeze the trailing dim when single-view (NRMS contract).
+        self._packed = (
+            np.concatenate(packed, axis=1) if len(packed) > 1 else self.parsed_news_ids
+        )
+
     def __iter__(self) -> Iterator[dict[str, Any]]:
         for i in range(0, self.num_news, self.batch_size):
             end = min(i + self.batch_size, self.num_news)
             yield {
                 "news_id": self.news_ids_str[i:end],
-                "news_features": torch.from_numpy(self.parsed_news_ids[i:end]).to(
-                    self.device
-                ),
+                "news_features": torch.from_numpy(self._packed[i:end]).to(self.device),
             }
 
     def __len__(self) -> int:
@@ -278,8 +305,12 @@ class PLMNewsBatchDataloader:
 class PLMUserHistoryBatchDataloader:
     """Batch user histories for PLM-mode evaluation.
 
-    Yields ``(impression_ids, user_ids_or_None, history_news_ids)`` where
-    ``history_news_ids`` is shape ``(B, H)`` int64 parsed news ids.
+    Default (single-view, e.g. NRMS):
+        Yields ``history`` of shape ``(B, H)`` int64 (parsed news ids).
+
+    Multi-view (NAML+PLM): pass ``history_category`` and/or
+    ``history_subcategory`` and the yielded history tensor becomes
+    ``(B, H, k)`` with column order ``[news_idx, category, subcategory]``.
     """
 
     def __init__(
@@ -289,6 +320,9 @@ class PLMUserHistoryBatchDataloader:
         user_ids: np.ndarray | None = None,
         batch_size: int = 32,
         device: torch.device | None = None,
+        history_category: np.ndarray | None = None,
+        history_subcategory: np.ndarray | None = None,
+        history_entity: np.ndarray | None = None,
     ):
         self.history_news_ids = np.asarray(history_news_ids, dtype=np.int64)
         self.impression_ids = np.asarray(impression_ids)
@@ -296,6 +330,20 @@ class PLMUserHistoryBatchDataloader:
         self.batch_size = batch_size
         self.device = device or torch.device("cpu")
         self.num_users = len(impression_ids)
+
+        # Pack column order: [news_idx | entities | category | subcategory].
+        packed = [self.history_news_ids[..., None]]
+        if history_entity is not None:
+            packed.append(np.asarray(history_entity, dtype=np.int64))
+        if history_category is not None:
+            packed.append(np.asarray(history_category, dtype=np.int64)[..., None])
+        if history_subcategory is not None:
+            packed.append(np.asarray(history_subcategory, dtype=np.int64)[..., None])
+        self._packed = (
+            np.concatenate(packed, axis=-1)
+            if len(packed) > 1
+            else self.history_news_ids
+        )
 
     def __iter__(self) -> Iterator[tuple[Any, torch.Tensor | None, torch.Tensor]]:
         for i in range(0, self.num_users, self.batch_size):
@@ -306,7 +354,7 @@ class PLMUserHistoryBatchDataloader:
                 if self.user_ids is not None
                 else None
             )
-            history = torch.from_numpy(self.history_news_ids[i:end]).to(self.device)
+            history = torch.from_numpy(self._packed[i:end]).to(self.device)
             yield imp_ids, user_ids, history
 
     def __len__(self) -> int:
@@ -314,7 +362,16 @@ class PLMUserHistoryBatchDataloader:
 
 
 class PLMImpressionIterator:
-    """Iterate impressions one-by-one, yielding torch tensors of parsed ids."""
+    """Iterate impressions one-by-one, yielding torch tensors of parsed ids.
+
+    Default (single-view, e.g. NRMS):
+        Yields ``features`` of shape ``(C,)`` int64.
+
+    Multi-view (NAML+PLM): pass ``candidate_category`` and/or
+    ``candidate_subcategory`` (per-impression arrays of same shape as
+    ``candidate_news_ids``) and ``features`` becomes ``(C, k)`` with
+    column order ``[news_idx, category, subcategory]``.
+    """
 
     def __init__(
         self,
@@ -323,6 +380,9 @@ class PLMImpressionIterator:
         impression_ids: Any,
         candidate_ids: Any,  # same as candidate_news_ids by row, kept for API compat
         device: torch.device | None = None,
+        candidate_category: Any = None,
+        candidate_subcategory: Any = None,
+        candidate_entity: Any = None,
     ):
         self.candidate_news_ids = candidate_news_ids
         self.labels = labels
@@ -330,11 +390,41 @@ class PLMImpressionIterator:
         self.candidate_ids = candidate_ids
         self.device = device or torch.device("cpu")
         self.num_impressions = len(labels)
+        self.candidate_category = candidate_category
+        self.candidate_subcategory = candidate_subcategory
+        self.candidate_entity = candidate_entity
+        self._multi_view = (
+            candidate_category is not None
+            or candidate_subcategory is not None
+            or candidate_entity is not None
+        )
 
     def __iter__(self) -> Iterator[tuple[torch.Tensor, torch.Tensor, int, Any]]:
         for idx in range(self.num_impressions):
             cand_ids_np = np.asarray(self.candidate_news_ids[idx], dtype=np.int64)
-            features = torch.from_numpy(cand_ids_np).to(self.device)
+            if self._multi_view:
+                # Column order: [news_idx | entities | category | subcategory]
+                packed = [cand_ids_np[:, None]]
+                if self.candidate_entity is not None:
+                    packed.append(
+                        np.asarray(self.candidate_entity[idx], dtype=np.int64)
+                    )
+                if self.candidate_category is not None:
+                    packed.append(
+                        np.asarray(
+                            self.candidate_category[idx], dtype=np.int64
+                        ).reshape(-1, 1)
+                    )
+                if self.candidate_subcategory is not None:
+                    packed.append(
+                        np.asarray(
+                            self.candidate_subcategory[idx], dtype=np.int64
+                        ).reshape(-1, 1)
+                    )
+                features_np = np.concatenate(packed, axis=1)
+            else:
+                features_np = cand_ids_np
+            features = torch.from_numpy(features_np).to(self.device)
             label = torch.tensor(
                 np.asarray(self.labels[idx]),
                 dtype=torch.float32,
@@ -466,12 +556,6 @@ class GLORYTrainDataset(Dataset):
         entity_neighbors: int = 10,
         title_size: int = 30,
     ):
-        from src.core.data.processing.models.glory import (  # noqa: F401 — lazy import
-            build_csr_in_adjacency,
-            extract_edges_for_subgraph,
-            sample_subgraph,
-        )
-
         self.hist_ids = np.asarray(hist_ids).astype(np.int64)
         self.cand_ids = np.asarray(cand_ids).astype(np.int64)
         self.news_features = np.asarray(news_features).astype(np.int32)

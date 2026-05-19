@@ -13,6 +13,15 @@ model:
       attention_hidden_dim: 200
     click_predictor:
       type: dot_product
+    # Token-level PLM pooler (used only when encoder.type != 'glove').
+    # IP2-style attention pool by default. Set type=mean for a cheap
+    # ablation that collapses to sentence-level pooling.
+    text_pooler:
+      type: attention
+      num_heads: 6
+      head_dim: 128
+      attention_query_dim: 200
+      dropout_rate: 0.0
   embedding:
     size: 300
     trainable: true

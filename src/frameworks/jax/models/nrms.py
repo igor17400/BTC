@@ -15,7 +15,7 @@ from flax import nnx
 
 from src.core.models.configs import NRMSConfig
 
-from ..layers import AdditiveAttention, PLMNewsEncoder
+from ..layers import AdditiveAttention, PLMTokenNewsEncoder
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -197,17 +197,23 @@ class NRMS(BaseModel):
             self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
             self.news_encoder = NewsEncoder(config, self.embedding_layer, rngs=rngs)
         else:
-            # Frozen PLM lookup: a per-news vector cached by parsed-int id.
-            if "plm_embeddings_by_id" not in processed_news:
+            # PLM mode — token-level cache + model-side pooler.
+            if "plm_token_embeddings_by_id" not in processed_news:
                 raise KeyError(
                     f"NRMS with encoder.type='{encoder_type}' requires "
-                    "processed_news['plm_embeddings_by_id']. Call "
-                    "src.core.data.encoders.plm.attach_plm_embeddings(...) "
-                    "in the runner before building the model."
+                    "processed_news['plm_token_embeddings_by_id']. Call "
+                    "attach_plm_embeddings(..., level='token') in the runner."
                 )
-            self.news_encoder = PLMNewsEncoder(
-                processed_news["plm_embeddings_by_id"],
+            pooler = config.text_pooler
+            self.news_encoder = PLMTokenNewsEncoder(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
                 news_dim=config.embedding_size,
+                pooler_type=pooler.type,
+                attention_query_dim=pooler.attention_query_dim,
+                num_heads=pooler.num_heads,
+                head_dim=pooler.head_dim,
+                dropout_rate=pooler.dropout_rate,
                 rngs=rngs,
             )
 

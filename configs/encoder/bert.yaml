@@ -1,12 +1,35 @@
-# BERT-base-uncased frozen encoder.
-# Title text is tokenized with the HF tokenizer, run once through BERT
-# at dataset-init time, mean-pooled over tokens, and cached to
-# `.cache/plm_embeds/`.  Training reads only the cached vectors.
+# Canonical BERT encoder.
+#
+# Describes how text becomes feature tensors. The encoder ALWAYS caches
+# token-level BERT outputs `(num_news, T, plm_dim)` plus the matching
+# `(num_news, T)` attention mask. Sentence-level usage (mean over
+# tokens) is a model-side operation, not an encoder-side one.
+#
+# Both `text_field` (e.g. title) and `text_field_abstract` are cached
+# when the dataset provides the corresponding `raw_*` field. Models
+# decide which views to consume:
+#   - single-view models (NRMS, etc.) use the title cache only.
+#   - multi-view models (NAML, etc.) consume title + abstract.
+#
+# Trainability is also an encoder concern (it controls when the PLM
+# forward runs and which parameters are updated). The default keeps
+# the existing offline-encode-and-cache behaviour.
 type: bert
-slug: bert       # output-path segment; bert sentence-level path
-plm_name: bert  # alias; resolves to "bert-base-uncased" via PLM_REGISTRY
+slug: bert                # output-path segment; shared by every model that uses BERT
+plm_name: bert            # → "bert-base-uncased"
 plm_dim: 768
+
+# Tokenization / cache config — uniform across models.
+text_field: title
 max_length: 32
-pooling: mean
-text_field: title  # which raw text field to encode: "title" or "abstract"
+text_field_abstract: abstract
+max_length_abstract: 50
 batch_size: 64
+
+# Trainability regime:
+#   frozen_cached     — encode once offline; train-time = lookup. (Pass 1)
+#   last_n_trainable  — HF model in graph; freeze all but the last N transformer
+#                       blocks. (Pass 2, not yet implemented)
+#   full_trainable    — HF model in graph; everything trainable. (Pass 2)
+trainability: frozen_cached
+trainable_layers: 0

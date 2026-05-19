@@ -15,7 +15,7 @@ from flax import nnx
 
 from src.core.models.configs import NAMLConfig
 
-from ..layers import AdditiveAttention, apply_activation
+from ..layers import AdditiveAttention, PLMTokenCNNEncoder, apply_activation
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -168,21 +168,25 @@ class SubcategoryEncoder(nnx.Module):
 class NewsEncoder(nnx.Module):
     """Combine title, abstract, category, subcategory views with attention.
 
-    Input is a concatenated tensor:
-    ``[title_tokens | abstract_tokens | category_id | subcategory_id]``.
+    Encoder-aware unpacking: in GloVe mode the input is the original
+    concatenated token layout; in PLM mode the input is a 3-column
+    tensor ``[news_idx, category_id, subcategory_id]`` and the text
+    encoders are :class:`PLMTokenCNNEncoder` lookups.
     """
 
     def __init__(
         self,
         config: NAMLConfig,
-        title_encoder: TitleEncoder,
-        abstract_encoder: AbstractEncoder,
+        title_encoder: nnx.Module,
+        abstract_encoder: nnx.Module,
         category_encoder: CategoryEncoder,
         subcategory_encoder: SubcategoryEncoder,
         *,
+        encoder_type: str = "glove",
         rngs: nnx.Rngs,
     ):
         self.config = config
+        self.encoder_type = encoder_type
         self.title_encoder = title_encoder
         self.abstract_encoder = abstract_encoder
         self.category_encoder = category_encoder
@@ -195,29 +199,40 @@ class NewsEncoder(nnx.Module):
         )
 
     def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
-        """Args: inputs (B, title_len + abstract_len + 2) int32.
+        """Args:
+            GloVe mode: ``inputs (B, title_len + abstract_len + 2)`` int32.
+            PLM mode:   ``inputs (B, 3)`` = ``[news_idx, category, subcategory]``.
 
-        Returns: (B, cnn_filter_num).
+        Returns: ``(B, cnn_filter_num)``.
         """
         cfg = self.config
-        title_tokens = inputs[:, : cfg.max_title_length]
-        abstract_tokens = inputs[
-            :, cfg.max_title_length : cfg.max_title_length + cfg.max_abstract_length
-        ]
-        category_id = inputs[
-            :,
-            cfg.max_title_length + cfg.max_abstract_length : cfg.max_title_length
-            + cfg.max_abstract_length
-            + 1,
-        ]
-        subcategory_id = inputs[:, cfg.max_title_length + cfg.max_abstract_length + 1 :]
+        if self.encoder_type == "glove":
+            title_tokens = inputs[:, : cfg.max_title_length]
+            abstract_tokens = inputs[
+                :, cfg.max_title_length : cfg.max_title_length + cfg.max_abstract_length
+            ]
+            category_id = inputs[
+                :,
+                cfg.max_title_length + cfg.max_abstract_length : cfg.max_title_length
+                + cfg.max_abstract_length
+                + 1,
+            ]
+            subcategory_id = inputs[
+                :, cfg.max_title_length + cfg.max_abstract_length + 1 :
+            ]
+            title_vec = self.title_encoder(title_tokens, training=training)
+            abstract_vec = self.abstract_encoder(abstract_tokens, training=training)
+        else:
+            # PLM mode: column 0 = parsed news id (drives BOTH PLM lookups).
+            news_idx = inputs[:, 0]
+            category_id = inputs[:, 1:2]
+            subcategory_id = inputs[:, 2:3]
+            title_vec = self.title_encoder(news_idx, training=training)
+            abstract_vec = self.abstract_encoder(news_idx, training=training)
 
-        title_vec = self.title_encoder(title_tokens, training=training)
-        abstract_vec = self.abstract_encoder(abstract_tokens, training=training)
         category_vec = self.category_encoder(category_id, training=training)
         subcategory_vec = self.subcategory_encoder(subcategory_id, training=training)
 
-        # Stack views: (B, 4, cnn_filter_num)
         views = jnp.stack(
             [title_vec, abstract_vec, category_vec, subcategory_vec], axis=1
         )
@@ -249,17 +264,24 @@ class UserEncoder(nnx.Module):
         )
 
     def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
-        """Args: inputs (B, H, feature_size) int32.  Returns: (B, cnn_filter_num)."""
+        """Args:
+            inputs ``(B, H, feature_size)`` int32. GloVe mode uses the long
+            packed-token layout; PLM mode uses ``[news_idx, cat, subcat]``.
+        Returns: ``(B, cnn_filter_num)``.
+        """
         B, H, F = inputs.shape
 
         # TimeDistributed news encoding
         flat = inputs.reshape(B * H, F)
         flat_vecs = self.news_encoder(flat, training=training)
-        news_vecs = flat_vecs.reshape(B, H, -1)  # (B, H, cnn_filter_num)
+        news_vecs = flat_vecs.reshape(B, H, -1)
 
-        # History mask using title tokens (first max_title_length features)
-        title_tokens = inputs[:, :, : self.config.max_title_length]
-        history_mask = jnp.any(jnp.not_equal(title_tokens, 0), axis=-1)  # (B, H)
+        # Validity mask: encoder-dependent.
+        if self.news_encoder.encoder_type == "glove":
+            title_tokens = inputs[:, :, : self.config.max_title_length]
+            history_mask = jnp.any(jnp.not_equal(title_tokens, 0), axis=-1)
+        else:
+            history_mask = jnp.not_equal(inputs[:, :, 0], 0)
 
         return self.user_attention(news_vecs, mask=history_mask)
 
@@ -285,19 +307,63 @@ class NAML(BaseModel):
         self.config = config
         self.process_user_id = config.process_user_id
 
-        # Shared word embedding
-        embeddings_matrix = np.asarray(processed_news["embeddings"])
-        vocab_size = int(processed_news["vocab_size"])
-        self.embedding_layer = nnx.Embed(
-            num_embeddings=vocab_size,
-            features=config.embedding_size,
-            rngs=rngs,
-        )
-        self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        # View encoders
-        self.title_encoder = TitleEncoder(config, self.embedding_layer, rngs=rngs)
-        self.abstract_encoder = AbstractEncoder(config, self.embedding_layer, rngs=rngs)
+        if encoder_type == "glove":
+            # Shared word embedding initialised from pretrained GloVe.
+            embeddings_matrix = np.asarray(processed_news["embeddings"])
+            vocab_size = int(processed_news["vocab_size"])
+            self.embedding_layer = nnx.Embed(
+                num_embeddings=vocab_size,
+                features=config.embedding_size,
+                rngs=rngs,
+            )
+            self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
+            self.title_encoder = TitleEncoder(config, self.embedding_layer, rngs=rngs)
+            self.abstract_encoder = AbstractEncoder(
+                config, self.embedding_layer, rngs=rngs
+            )
+        else:
+            # PLM mode — token-level lookups + NAML's Conv1d/AddAttn pipeline.
+            for required in (
+                "plm_token_embeddings_by_id",
+                "plm_attention_mask_by_id",
+                "plm_abstract_token_embeddings_by_id",
+                "plm_abstract_attention_mask_by_id",
+            ):
+                if required not in processed_news:
+                    raise KeyError(
+                        f"NAML with encoder.type='{encoder_type}' requires "
+                        f"processed_news['{required}']. Make sure the encoder "
+                        "yaml sets text_field='title' and "
+                        "text_field_abstract='abstract' and the runner has "
+                        "called attach_plm_embeddings for both."
+                    )
+            plm_dim = int(processed_news["plm_dim"])
+            self.title_encoder = PLMTokenCNNEncoder(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                news_dim=config.cnn_filter_num,
+                plm_dim=plm_dim,
+                cnn_kernel_size=config.cnn_kernel_size,
+                dropout_rate=config.dropout_rate,
+                word_attention_query_dim=config.word_attention_query_dim,
+                activation=config.activation,
+                rngs=rngs,
+            )
+            self.abstract_encoder = PLMTokenCNNEncoder(
+                processed_news["plm_abstract_token_embeddings_by_id"],
+                processed_news["plm_abstract_attention_mask_by_id"],
+                news_dim=config.cnn_filter_num,
+                plm_dim=plm_dim,
+                cnn_kernel_size=config.cnn_kernel_size,
+                dropout_rate=config.dropout_rate,
+                word_attention_query_dim=config.word_attention_query_dim,
+                activation=config.activation,
+                rngs=rngs,
+            )
+
         self.category_encoder = CategoryEncoder(
             config, int(processed_news["num_categories"]), rngs=rngs
         )
@@ -305,17 +371,15 @@ class NAML(BaseModel):
             config, int(processed_news["num_subcategories"]), rngs=rngs
         )
 
-        # Multi-view news encoder
         self.news_encoder = NewsEncoder(
             config,
             self.title_encoder,
             self.abstract_encoder,
             self.category_encoder,
             self.subcategory_encoder,
+            encoder_type=encoder_type,
             rngs=rngs,
         )
-
-        # User encoder
         self.user_encoder = UserEncoder(config, self.news_encoder, rngs=rngs)
 
     # ---- Scoring helpers ------------------------------------------------
@@ -348,13 +412,28 @@ class NAML(BaseModel):
 
     # ---- Helpers to build concatenated inputs ---------------------------
 
-    @staticmethod
-    def _concat_features(inputs: dict[str, jax.Array], prefix: str) -> jax.Array:
+    def _concat_features(self, inputs: dict[str, jax.Array], prefix: str) -> jax.Array:
         """Build a single concatenated tensor from separate feature arrays.
 
-        Expected keys: ``{prefix}_tokens``, ``{prefix}_abstract_tokens``,
-        ``{prefix}_category``, ``{prefix}_subcategory``.
+        GloVe mode: ``[title_tokens | abstract_tokens | cat | subcat]``
+            along the last dim.
+        PLM mode: ``[news_idx | cat | subcat]`` along the last dim.
         """
+        if self.encoder_type != "glove":
+            news_idx = inputs[f"{prefix}_features"]
+            parts = [jnp.expand_dims(news_idx, axis=-1)]
+            if f"{prefix}_category" in inputs:
+                cat = inputs[f"{prefix}_category"]
+                if cat.ndim == news_idx.ndim:
+                    cat = jnp.expand_dims(cat, axis=-1)
+                parts.append(cat)
+            if f"{prefix}_subcategory" in inputs:
+                sub = inputs[f"{prefix}_subcategory"]
+                if sub.ndim == news_idx.ndim:
+                    sub = jnp.expand_dims(sub, axis=-1)
+                parts.append(sub)
+            return jnp.concatenate(parts, axis=-1)
+
         parts = [inputs[f"{prefix}_tokens"], inputs[f"{prefix}_abstract_tokens"]]
 
         cat = inputs[f"{prefix}_category"]

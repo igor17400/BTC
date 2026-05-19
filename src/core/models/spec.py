@@ -21,6 +21,7 @@ from .configs import (
     NRMSConfig,
     PPRecConfig,
     TCCMConfig,
+    TextPoolerConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -41,16 +42,31 @@ def _encoder_from_cfg(encoder_cfg: DictConfig | None) -> EncoderConfig:
         embedding_size=encoder_cfg.get("embedding_size", 300),
         plm_name=encoder_cfg.get("plm_name", ""),
         plm_dim=encoder_cfg.get("plm_dim", 0),
-        max_length=encoder_cfg.get("max_length", 32),
-        pooling=encoder_cfg.get("pooling", "mean"),
         text_field=encoder_cfg.get("text_field", "title"),
+        max_length=encoder_cfg.get("max_length", 32),
+        text_field_abstract=encoder_cfg.get("text_field_abstract", "") or "",
+        max_length_abstract=encoder_cfg.get("max_length_abstract", 50),
         batch_size=encoder_cfg.get("batch_size", 64),
-        level=encoder_cfg.get("level", "sentence"),
-        pooler_type=encoder_cfg.get("pooler_type", "attention"),
-        pooler_num_heads=encoder_cfg.get("pooler_num_heads", 6),
-        pooler_head_dim=encoder_cfg.get("pooler_head_dim", 128),
-        pooler_attention_query_dim=encoder_cfg.get("pooler_attention_query_dim", 200),
-        pooler_dropout_rate=encoder_cfg.get("pooler_dropout_rate", 0.0),
+        trainability=encoder_cfg.get("trainability", "frozen_cached"),
+        trainable_layers=encoder_cfg.get("trainable_layers", 0),
+    )
+
+
+def _text_pooler_from_arch(arch: DictConfig) -> TextPoolerConfig:
+    """Read the ``text_pooler`` block from a model architecture spec.
+
+    Tolerates missing sub-fields so old specs (no ``text_pooler`` block)
+    pick up the dataclass defaults.
+    """
+    pooler_cfg = arch.get("text_pooler")
+    if pooler_cfg is None:
+        return TextPoolerConfig()
+    return TextPoolerConfig(
+        type=pooler_cfg.get("type", "attention"),
+        num_heads=pooler_cfg.get("num_heads", 6),
+        head_dim=pooler_cfg.get("head_dim", 128),
+        attention_query_dim=pooler_cfg.get("attention_query_dim", 200),
+        dropout_rate=pooler_cfg.get("dropout_rate", 0.0),
     )
 
 
@@ -71,10 +87,13 @@ def spec_to_nrms_config(
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
         encoder=_encoder_from_cfg(encoder),
+        text_pooler=_text_pooler_from_arch(arch),
     )
 
 
-def spec_to_naml_config(spec: DictConfig) -> NAMLConfig:
+def spec_to_naml_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> NAMLConfig:
     """Convert a parsed NAML spec into NAMLConfig."""
     arch = spec.model.architecture
     views = arch.news_encoder.views
@@ -95,10 +114,13 @@ def spec_to_naml_config(spec: DictConfig) -> NAMLConfig:
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
         seed=spec.model.seed,
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_lstur_config(spec: DictConfig) -> LSTURConfig:
+def spec_to_lstur_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> LSTURConfig:
     """Convert a parsed LSTUR spec into LSTURConfig."""
     arch = spec.model.architecture
     return LSTURConfig(
@@ -120,10 +142,13 @@ def spec_to_lstur_config(spec: DictConfig) -> LSTURConfig:
         use_subcategory=spec.inputs.get("process_subcategory", False),
         category_embedding_dim=spec.model.get("category_embedding_dim", 100),
         subcategory_embedding_dim=spec.model.get("subcategory_embedding_dim", 100),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
+def spec_to_crown_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> CROWNConfig:
     """Convert a parsed CROWN spec into CROWNConfig."""
     arch = spec.model.architecture
     ne = arch.news_encoder
@@ -162,6 +187,7 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
@@ -170,7 +196,9 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
 # ---------------------------------------------------------------------------
 
 
-def spec_to_pprec_config(spec: DictConfig) -> PPRecConfig:
+def spec_to_pprec_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> PPRecConfig:
     """Convert a parsed PP-Rec spec into PPRecConfig."""
     arch = spec.model.architecture
     ne = arch.news_encoder
@@ -204,10 +232,13 @@ def spec_to_pprec_config(spec: DictConfig) -> PPRecConfig:
         max_impressions_length=spec.inputs.impressions.max_length,
         max_entities=spec.inputs.get("max_entities", 5),
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_digat_config(spec: DictConfig) -> DIGATConfig:
+def spec_to_digat_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> DIGATConfig:
     """Convert a parsed DIGAT spec into DIGATConfig."""
 
     ne = spec.model.architecture.news_encoder
@@ -226,6 +257,7 @@ def spec_to_digat_config(spec: DictConfig) -> DIGATConfig:
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
@@ -254,7 +286,9 @@ def spec_to_glory_config(spec: DictConfig) -> GLORYConfig:
     )
 
 
-def spec_to_tccm_config(spec: DictConfig) -> TCCMConfig:
+def spec_to_tccm_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> TCCMConfig:
     """Convert a parsed TCCM spec into TCCMConfig."""
     arch = spec.model.architecture
     ne = arch.news_encoder
@@ -293,6 +327,7 @@ def spec_to_tccm_config(spec: DictConfig) -> TCCMConfig:
         max_impressions_length=spec.inputs.impressions.max_length,
         max_entities=spec.inputs.get("max_entities", 5),
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
@@ -318,7 +353,9 @@ def spec_to_miner_config(spec: DictConfig) -> MINERConfig:
     )
 
 
-def spec_to_caum_config(spec: DictConfig) -> CAUMConfig:
+def spec_to_caum_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> CAUMConfig:
     """Convert a parsed CAUM spec into CAUMConfig."""
     arch = spec.model.architecture
     ne = arch.news_encoder
@@ -347,6 +384,7 @@ def spec_to_caum_config(spec: DictConfig) -> CAUMConfig:
         max_impressions_length=spec.inputs.impressions.max_length,
         max_entities=spec.inputs.get("max_entities", 5),
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 

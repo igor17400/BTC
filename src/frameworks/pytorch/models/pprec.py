@@ -20,6 +20,7 @@ from ..layers import (
     AttentivePoolingQKY,
     CrossAttention,
     MultiHeadSelfAttention,
+    PLMTokenLookup,
 )
 from .base import BaseModel
 
@@ -44,12 +45,15 @@ class PPRecNewsEncoder(nn.Module):
     def __init__(
         self,
         config: PPRecConfig,
-        word_embedding_layer: nn.Embedding,
+        word_embedding_layer: nn.Module,
         entity_embedding_layer: nn.Embedding | None = None,
         category_embedding_layer: nn.Embedding | None = None,
+        *,
+        encoder_type: str = "glove",
     ):
         super().__init__()
         self.config = config
+        self.encoder_type = encoder_type
         co_out_dim = config.co_num_heads * config.co_head_dim
         self.word_embedding = word_embedding_layer
         self.entity_embedding = entity_embedding_layer
@@ -163,36 +167,45 @@ class PPRecNewsEncoder(nn.Module):
             ``(batch, news_dim)`` news representation.
         """
         offset = 0
-        title_len = self.config.max_title_length
-
-        # --- Slice features ---
-        title_tokens = inputs[:, offset : offset + title_len].long()
-        offset += title_len
-        title_pad = title_tokens == 0  # (B, T) True = padded
-        title_keep = ~title_pad  # for AdditiveAttention (True = keep)
-
         has_entity = self.entity_embedding is not None and self.config.use_entity
+        has_category = self.category_embedding is not None
+
+        # --- Slice features and produce title embeddings ---
+        if self.encoder_type == "glove":
+            title_len = self.config.max_title_length
+            title_tokens = inputs[:, offset : offset + title_len].long()
+            offset += title_len
+            title_pad = title_tokens == 0  # (B, T) True = padded
+            title_keep = ~title_pad
+            title_emb = self.word_dropout(
+                self.word_embedding(title_tokens)
+            )  # (B, T, 300)
+        else:
+            # PLM layout: [news_idx(1) | entity_indices(E)? | category_idx(1)?]
+            news_idx = inputs[:, offset].long()  # (B,)
+            offset += 1
+            title_emb_raw, title_mask_raw = self.word_embedding(news_idx)
+            # title_emb_raw: (B, T, embedding_size), title_mask_raw: (B, T)
+            title_pad = title_mask_raw == 0
+            title_keep = ~title_pad
+            title_emb = self.word_dropout(title_emb_raw)
+
         if has_entity:
             entity_len = self.config.max_entities
             entity_indices = inputs[:, offset : offset + entity_len].long()
             offset += entity_len
             entity_pad = entity_indices == 0
             entity_keep = ~entity_pad
+            entity_emb = self.entity_embedding(entity_indices)  # (B, E, 100)
         else:
             entity_indices = None
             entity_pad = None
             entity_keep = None
 
-        has_category = self.category_embedding is not None
         if has_category:
             category_idx = inputs[:, offset : offset + 1].long()
         else:
             category_idx = None
-
-        # --- Raw embeddings ---
-        title_emb = self.word_dropout(self.word_embedding(title_tokens))  # (B, T, 300)
-        if has_entity:
-            entity_emb = self.entity_embedding(entity_indices)  # (B, E, 100)
 
         # --- Bidirectional MHCA on RAW embeddings ---
         if has_entity:
@@ -449,17 +462,45 @@ class PPRec(BaseModel):
 
         cfg = config
         pn = processed_news
+        encoder_type = getattr(getattr(cfg, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        # Shared word embedding (initialised from GloVe)
-        word_emb = nn.Embedding(pn["vocab_size"], cfg.embedding_size)
-        word_emb.weight = nn.Parameter(
-            torch.tensor(pn["embeddings"], dtype=torch.float32)
-        )
-
-        bias_word_emb = nn.Embedding(pn["vocab_size"], cfg.embedding_size)
-        bias_word_emb.weight = nn.Parameter(
-            torch.tensor(pn["embeddings"], dtype=torch.float32)
-        )
+        if encoder_type == "glove":
+            # Shared word embedding (initialised from GloVe)
+            word_emb: nn.Module = nn.Embedding(pn["vocab_size"], cfg.embedding_size)
+            word_emb.weight = nn.Parameter(
+                torch.tensor(pn["embeddings"], dtype=torch.float32)
+            )
+            bias_word_emb: nn.Module = nn.Embedding(
+                pn["vocab_size"], cfg.embedding_size
+            )
+            bias_word_emb.weight = nn.Parameter(
+                torch.tensor(pn["embeddings"], dtype=torch.float32)
+            )
+        else:
+            # PLM mode: replace token embedding with frozen-cache lookup +
+            # projection to ``embedding_size``. The downstream MHSA /
+            # cross-attn pipeline runs on (B, T, embedding_size) just like
+            # the GloVe path.
+            if "plm_token_embeddings_by_id" not in pn:
+                raise KeyError(
+                    f"PPRec with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']. Call "
+                    "attach_plm_embeddings(..., level='token') in the runner."
+                )
+            plm_dim = int(pn["plm_dim"])
+            word_emb = PLMTokenLookup(
+                pn["plm_token_embeddings_by_id"],
+                pn["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=cfg.embedding_size,
+            )
+            bias_word_emb = PLMTokenLookup(
+                pn["plm_token_embeddings_by_id"],
+                pn["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=cfg.embedding_size,
+            )
 
         # Entity embedding (trainable per paper co1)
         entity_emb = None
@@ -474,9 +515,11 @@ class PPRec(BaseModel):
         if "num_categories" in pn:
             cat_emb = nn.Embedding(pn["num_categories"] + 1, cfg.category_embedding_dim)
 
-        self.news_encoder = PPRecNewsEncoder(cfg, word_emb, entity_emb, cat_emb)
+        self.news_encoder = PPRecNewsEncoder(
+            cfg, word_emb, entity_emb, cat_emb, encoder_type=encoder_type
+        )
         self.bias_news_encoder = PPRecNewsEncoder(
-            cfg, bias_word_emb, entity_emb, cat_emb
+            cfg, bias_word_emb, entity_emb, cat_emb, encoder_type=encoder_type
         )
         self.user_encoder = PPRecUserEncoder(cfg, self.news_encoder)
         self.popularity_predictor = PopularityPredictor(cfg)

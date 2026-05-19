@@ -21,6 +21,7 @@ from huggingface_hub import hf_hub_download
 from omegaconf import DictConfig, OmegaConf
 from safetensors.numpy import load_file
 
+from src.core.data.encoders.plm import attach_plm_embeddings
 from src.core.io.logging import (
     console,
     log_test_results,
@@ -69,8 +70,48 @@ def _build_train_features(dataset_provider, encoder_cfg=None) -> tuple:
     )
 
     if encoder_type != "glove":
-        features["hist_features"] = np.asarray(data["histories_news_ids"])
-        features["cand_features"] = np.asarray(data["candidate_news_ids"])
+        hist_news_idx = np.asarray(data["histories_news_ids"])
+        cand_news_idx = np.asarray(data["candidate_news_ids"])
+        features["hist_features"] = hist_news_idx
+        features["cand_features"] = cand_news_idx
+
+        # PP-Rec / CAUM-style models consume a packed
+        # ``[news_idx | entities | category]`` tensor under
+        # ``hist_tokens`` / ``cand_tokens``.
+        hist_parts: list[np.ndarray] = [hist_news_idx[..., None]]
+        cand_parts: list[np.ndarray] = [cand_news_idx[..., None]]
+        if getattr(dataset_provider, "process_entities", False) and (
+            "history_news_entities" in data
+        ):
+            hist_parts.append(np.asarray(data["history_news_entities"]))
+            cand_parts.append(np.asarray(data["candidate_news_entities"]))
+        if dataset_provider.process_category:
+            features["hist_category"] = np.asarray(data["history_news_categories"])
+            features["cand_category"] = np.asarray(data["candidate_news_categories"])
+            hist_parts.append(np.asarray(data["history_news_categories"])[..., None])
+            cand_parts.append(np.asarray(data["candidate_news_categories"])[..., None])
+        if dataset_provider.process_subcategory:
+            features["hist_subcategory"] = np.asarray(
+                data["history_news_subcategories"]
+            )
+            features["cand_subcategory"] = np.asarray(
+                data["candidate_news_subcategories"]
+            )
+        if len(hist_parts) > 1:
+            features["hist_tokens"] = np.concatenate(hist_parts, axis=-1)
+            features["cand_tokens"] = np.concatenate(cand_parts, axis=-1)
+
+        if dataset_provider.process_user_id:
+            features["user_ids"] = np.asarray(data["user_ids"])
+
+        # PP-Rec CTR / recency features.
+        if "history_news_ctr" in data:
+            ctr = np.asarray(data["history_news_ctr"])
+            features["hist_ctr"] = np.minimum(np.ceil(ctr * 200).astype(np.int32), 199)
+            features["cand_ctr"] = np.asarray(data["candidate_news_ctr"])
+        if "candidate_news_recency" in data:
+            features["cand_recency"] = np.asarray(data["candidate_news_recency"])
+
         labels = np.asarray(data["labels"])
         return features, labels
 
@@ -159,16 +200,78 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
             ],
             dtype=np.int32,
         )
+        # Multi-view PLM (NAML, LSTUR): pack category/subcategory alongside
+        # the parsed news id. NRMS+PLM has process_category=False so no
+        # packing happens and the dataloaders keep their original shapes.
+        news_cat = (
+            np.asarray(pn["category_indices"])
+            if dataset_provider.process_category and "category_indices" in pn
+            else None
+        )
+        news_subcat = (
+            np.asarray(pn["subcategory_indices"])
+            if dataset_provider.process_subcategory and "subcategory_indices" in pn
+            else None
+        )
+        hist_cat = (
+            np.asarray(data["history_news_categories"])
+            if dataset_provider.process_category and "history_news_categories" in data
+            else None
+        )
+        hist_subcat = (
+            np.asarray(data["history_news_subcategories"])
+            if dataset_provider.process_subcategory
+            and "history_news_subcategories" in data
+            else None
+        )
+        cand_cat = (
+            data["candidate_news_categories"]
+            if dataset_provider.process_category and "candidate_news_categories" in data
+            else None
+        )
+        cand_subcat = (
+            data["candidate_news_subcategories"]
+            if dataset_provider.process_subcategory
+            and "candidate_news_subcategories" in data
+            else None
+        )
+
+        # Entity features (PP-Rec, CAUM-style models).
+        news_entity = (
+            np.asarray(pn["entity_indices"])
+            if getattr(dataset_provider, "process_entities", False)
+            and "entity_indices" in pn
+            else None
+        )
+        hist_entity = (
+            np.asarray(data["history_news_entities"])
+            if getattr(dataset_provider, "process_entities", False)
+            and "history_news_entities" in data
+            else None
+        )
+        cand_entity = (
+            data["candidate_news_entities"]
+            if getattr(dataset_provider, "process_entities", False)
+            and "candidate_news_entities" in data
+            else None
+        )
+
         news_dl = PLMNewsBatchDataloader(
             news_ids_str=news_ids_str,
             parsed_news_ids=parsed_news_ids,
             batch_size=cfg.eval.batch_size,
+            category_indices=news_cat,
+            subcategory_indices=news_subcat,
+            entity_indices=news_entity,
         )
         user_dl = PLMUserHistoryBatchDataloader(
             history_news_ids=np.asarray(data["histories_news_ids"], dtype=np.int32),
             impression_ids=data["impression_ids"],
             user_ids=data.get("user_ids"),
             batch_size=cfg.eval.batch_size,
+            history_category=hist_cat,
+            history_subcategory=hist_subcat,
+            history_entity=hist_entity,
         )
         # Ragged: each impression has a different candidate count. Pass
         # through as-is; the iterator casts per-row.
@@ -177,6 +280,9 @@ def _build_eval_dataloaders(dataset_provider, cfg, mode="val"):
             labels=data["labels"],
             impression_ids=data["impression_ids"],
             candidate_ids=data["candidate_news_ids"],
+            candidate_category=cand_cat,
+            candidate_subcategory=cand_subcat,
+            candidate_entity=cand_entity,
         )
         return news_dl, user_dl, imp_iter
 
@@ -245,27 +351,48 @@ def run(cfg: DictConfig):
     dataset_provider = hydra.utils.instantiate(cfg.dataset, mode="train")
     processed_news = dataset_provider.processed_news
 
-    # Pre-compute and cache frozen PLM embeddings if requested.
+    # Pre-compute and cache frozen PLM token-level embeddings if requested.
+    # Uniform across models: token-level cache + optional abstract cache.
     encoder_cfg = getattr(cfg, "encoder", None)
     if encoder_cfg is not None and encoder_cfg.get("type", "glove") != "glove":
-        from src.core.data.encoders.plm import attach_plm_embeddings
-
+        trainability = encoder_cfg.get("trainability", "frozen_cached")
+        if trainability != "frozen_cached":
+            raise NotImplementedError(
+                f"trainability='{trainability}' is not yet implemented (Pass 2). "
+                "Use trainability=frozen_cached for now."
+            )
         console.log(
-            f"Attaching frozen PLM embeddings "
-            f"(plm_name={encoder_cfg.plm_name}, pooling={encoder_cfg.pooling}, "
-            f"max_length={encoder_cfg.max_length}) ..."
+            f"Attaching frozen PLM token-level embeddings "
+            f"(plm_name={encoder_cfg.plm_name}, max_length={encoder_cfg.max_length}) ..."
         )
         attach_plm_embeddings(
             processed_news,
             plm_name=encoder_cfg.plm_name,
             text_field=encoder_cfg.text_field,
             max_length=encoder_cfg.max_length,
-            pooling=encoder_cfg.pooling,
             batch_size=encoder_cfg.batch_size,
             device="cuda",
             id_prefix=getattr(dataset_provider, "id_prefix", "N"),
-            level=encoder_cfg.get("level", "sentence"),
+            level="token",
         )
+        text_field_abstract = encoder_cfg.get("text_field_abstract", "") or ""
+        if text_field_abstract:
+            console.log(
+                f"Attaching second frozen PLM cache for abstract view "
+                f"(text_field={text_field_abstract}, "
+                f"max_length={encoder_cfg.get('max_length_abstract', 50)}) ..."
+            )
+            attach_plm_embeddings(
+                processed_news,
+                plm_name=encoder_cfg.plm_name,
+                text_field=text_field_abstract,
+                max_length=encoder_cfg.get("max_length_abstract", 50),
+                batch_size=encoder_cfg.batch_size,
+                device="cuda",
+                id_prefix=getattr(dataset_provider, "id_prefix", "N"),
+                level="token",
+                output_prefix="abstract_",
+            )
 
     # Model
     spec = cfg.spec

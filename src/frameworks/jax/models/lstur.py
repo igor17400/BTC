@@ -15,7 +15,13 @@ from flax import nnx
 
 from src.core.models.configs import LSTURConfig
 
-from ..layers import AdditiveAttention, apply_activation, compute_mask, overwrite_mask
+from ..layers import (
+    AdditiveAttention,
+    PLMTokenCNNEncoder,
+    apply_activation,
+    compute_mask,
+    overwrite_mask,
+)
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -153,6 +159,55 @@ class NewsEncoder(nnx.Module):
             return self._process_title(title_tokens, training=training)
 
 
+class PLMNewsEncoder(nnx.Module):
+    """PLM-mode news encoder for LSTUR (title + optional cat + subcat).
+
+    Title view uses a frozen token-level BERT cache run through Conv1d
+    + AdditiveAttention (NAML-style), delegated to
+    :class:`PLMTokenCNNEncoder`. Category / subcategory embeddings are
+    concatenated to the title vector — same output dim as the GloVe
+    :class:`NewsEncoder`.
+
+    Input layout (last dim):
+        - column 0: parsed news id (used by PLM title lookup)
+        - column 1: category id      (if ``use_category``)
+        - column 2: subcategory id   (if ``use_subcategory``)
+    """
+
+    def __init__(
+        self,
+        config: LSTURConfig,
+        title_encoder: PLMTokenCNNEncoder,
+        *,
+        rngs: nnx.Rngs,
+        category_encoder: CategoryEncoder | None = None,
+        subcategory_encoder: SubcategoryEncoder | None = None,
+    ):
+        self.config = config
+        self.title_encoder = title_encoder
+        self.category_encoder = category_encoder
+        self.subcategory_encoder = subcategory_encoder
+
+    def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
+        # inputs: (..., k) where k = 1 + use_category + use_subcategory.
+        news_idx = inputs[..., 0]
+        title_vec = self.title_encoder(news_idx, training=training)
+
+        parts = [title_vec]
+        col = 1
+        if self.category_encoder is not None:
+            cat = inputs[..., col : col + 1]
+            parts.append(self.category_encoder(cat, training=training))
+            col += 1
+        if self.subcategory_encoder is not None:
+            sub = inputs[..., col : col + 1]
+            parts.append(self.subcategory_encoder(sub, training=training))
+
+        if len(parts) > 1:
+            return jnp.concatenate(parts, axis=-1)
+        return title_vec
+
+
 # ---------------------------------------------------------------------------
 # User encoder
 # ---------------------------------------------------------------------------
@@ -288,17 +343,10 @@ class LSTUR(BaseModel):
         self.process_user_id = config.process_user_id
         self.num_users = num_users
 
-        # Shared word embedding
-        embeddings_matrix = np.asarray(processed_news["embeddings"])
-        vocab_size = int(processed_news["vocab_size"])
-        self.embedding_layer = nnx.Embed(
-            num_embeddings=vocab_size,
-            features=config.embedding_size,
-            rngs=rngs,
-        )
-        self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        # Optional category / subcategory encoders
+        # Optional category / subcategory encoders (shared across both modes).
         cat_enc: CategoryEncoder | None = None
         subcat_enc: SubcategoryEncoder | None = None
         if config.use_category:
@@ -310,16 +358,51 @@ class LSTUR(BaseModel):
                 config, int(processed_news["num_subcategories"]), rngs=rngs
             )
 
-        # News encoder
-        self.news_encoder = NewsEncoder(
-            config,
-            self.embedding_layer,
-            rngs=rngs,
-            category_encoder=cat_enc,
-            subcategory_encoder=subcat_enc,
-        )
+        if encoder_type == "glove":
+            embeddings_matrix = np.asarray(processed_news["embeddings"])
+            vocab_size = int(processed_news["vocab_size"])
+            self.embedding_layer = nnx.Embed(
+                num_embeddings=vocab_size,
+                features=config.embedding_size,
+                rngs=rngs,
+            )
+            self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
+            self.news_encoder = NewsEncoder(
+                config,
+                self.embedding_layer,
+                rngs=rngs,
+                category_encoder=cat_enc,
+                subcategory_encoder=subcat_enc,
+            )
+        else:
+            # PLM path — frozen token-level cache + Conv1d/AddAttn over
+            # BERT tokens (NAML-style), then concat optional cat/subcat.
+            if "plm_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"LSTUR with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']. Call "
+                    "attach_plm_embeddings(..., level='token') in the runner."
+                )
+            plm_dim = int(processed_news["plm_dim"])
+            title_encoder = PLMTokenCNNEncoder(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                news_dim=config.cnn_filter_num,
+                plm_dim=plm_dim,
+                cnn_kernel_size=config.cnn_kernel_size,
+                dropout_rate=config.dropout_rate,
+                word_attention_query_dim=config.attention_hidden_dim,
+                activation=config.cnn_activation,
+                rngs=rngs,
+            )
+            self.news_encoder = PLMNewsEncoder(
+                config,
+                title_encoder,
+                rngs=rngs,
+                category_encoder=cat_enc,
+                subcategory_encoder=subcat_enc,
+            )
 
-        # User encoder
         self.user_encoder = UserEncoder(config, self.news_encoder, num_users, rngs=rngs)
 
     # ---- Scoring helpers ------------------------------------------------
@@ -369,6 +452,27 @@ class LSTUR(BaseModel):
 
         return tokens
 
+    def _pack_plm_features(
+        self,
+        news_ids: jax.Array,
+        inputs: dict[str, jax.Array],
+        cat_key: str,
+        subcat_key: str,
+    ) -> jax.Array:
+        """PLM-mode: pack ``[news_idx | cat | subcat]`` along last dim."""
+        parts = [jnp.expand_dims(news_ids, axis=-1)]
+        if self.config.use_category and cat_key in inputs:
+            cat = inputs[cat_key]
+            if cat.ndim == news_ids.ndim:
+                cat = jnp.expand_dims(cat, axis=-1)
+            parts.append(cat)
+        if self.config.use_subcategory and subcat_key in inputs:
+            subcat = inputs[subcat_key]
+            if subcat.ndim == news_ids.ndim:
+                subcat = jnp.expand_dims(subcat, axis=-1)
+            parts.append(subcat)
+        return jnp.concatenate(parts, axis=-1)
+
     # ---- Unified call ---------------------------------------------------
 
     def __call__(
@@ -383,8 +487,16 @@ class LSTUR(BaseModel):
         directly via the shared evaluator (see
         :mod:`src.core.models.evaluation`), not this method.
         """
-        hist_tokens = self._maybe_concat_category(inputs, "hist", "hist_tokens")
-        cand_tokens = self._maybe_concat_category(inputs, "cand", "cand_tokens")
+        if self.encoder_type == "glove":
+            hist_tokens = self._maybe_concat_category(inputs, "hist", "hist_tokens")
+            cand_tokens = self._maybe_concat_category(inputs, "cand", "cand_tokens")
+        else:
+            hist_tokens = self._pack_plm_features(
+                inputs["hist_features"], inputs, "hist_category", "hist_subcategory"
+            )
+            cand_tokens = self._pack_plm_features(
+                inputs["cand_features"], inputs, "cand_category", "cand_subcategory"
+            )
         user_ids = inputs.get("user_ids", inputs.get("user_indices"))
         return self.score_training_batch(
             hist_tokens, user_ids, cand_tokens, training=training

@@ -27,6 +27,8 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
+import torch
+from transformers import AutoModel, AutoTokenizer
 
 logger = logging.getLogger(__name__)
 
@@ -124,9 +126,6 @@ def encode_corpus(
         ``(num_news, plm_dim)`` float32 numpy array, with rows in the same
         order as ``news_ids``.
     """
-    import torch
-    from transformers import AutoModel, AutoTokenizer
-
     plm_hf_id = resolve_plm_name(plm_name)
     corpus_hash = _corpus_hash(news_ids, texts)
     path = cache_path(plm_hf_id, max_length, pooling, corpus_hash, cache_root)
@@ -222,9 +221,6 @@ def encode_corpus_tokens(
             - ``token_embeddings``: ``(num_news, max_length, plm_dim)`` float32.
             - ``attention_mask``: ``(num_news, max_length)`` int8 (0/1).
     """
-    import torch
-    from transformers import AutoModel, AutoTokenizer
-
     plm_hf_id = resolve_plm_name(plm_name)
     corpus_hash = _corpus_hash(news_ids, texts)
     safe_plm = plm_hf_id.replace("/", "__")
@@ -316,11 +312,12 @@ def attach_plm_embeddings(
     device: str = "cuda",
     cache_root: Path | str = ".cache/plm_embeds",
     id_prefix: str = "N",
-    level: Literal["sentence", "token"] = "sentence",
+    level: Literal["sentence", "token"] = "token",
+    output_prefix: str = "",
 ) -> None:
     """Encode the given text field for every news item and attach a
     dense ``(max_parsed_id + 1, plm_dim)`` lookup table to
-    ``processed_news`` under ``plm_embeddings_by_id``.
+    ``processed_news`` under ``plm_{output_prefix}embeddings_by_id``.
 
     The lookup table is indexed by the **parsed integer news id** (the
     numeric suffix of ``"N123"``), matching the convention used in
@@ -328,16 +325,17 @@ def attach_plm_embeddings(
     ``["candidate_news_ids"]``. Row ``0`` is reserved for padding (zero
     vector) since MIND parsed ids start at 1.
 
-    Also stores:
-        - ``plm_embeddings``: the compact ``(num_news, plm_dim)`` matrix
-          in ``news_ids_original_strings`` row order, kept for any
-          downstream code that wants the per-news view.
-        - ``plm_dim``: integer hidden dim.
-
     Args:
         id_prefix: ID prefix to strip when parsing news_id strings.
             Defaults to ``"N"`` (MIND). Pass ``""`` for prefix-less
             datasets like the Japanese corpus.
+        output_prefix: Prefix inserted between ``plm_`` and the
+            ``embeddings*`` key name. Default ``""`` writes to
+            ``plm_embeddings_by_id`` / ``plm_token_embeddings_by_id``
+            (back-compat with single-view NRMS). Pass ``"abstract_"`` to
+            store a second, side-by-side cache under
+            ``plm_abstract_embeddings_by_id`` for multi-view models like
+            NAML.
     """
     news_ids = list(processed_news["news_ids_original_strings"])
 
@@ -372,11 +370,13 @@ def attach_plm_embeddings(
         by_id = np.zeros((max_parsed + 1, plm_dim), dtype=np.float32)
         for row, pid in enumerate(parsed_ids):
             by_id[pid] = compact[row]
-        processed_news["plm_embeddings"] = compact
-        processed_news["plm_embeddings_by_id"] = by_id
-        processed_news["plm_dim"] = int(plm_dim)
+        processed_news[f"plm_{output_prefix}embeddings"] = compact
+        processed_news[f"plm_{output_prefix}embeddings_by_id"] = by_id
+        processed_news[f"plm_{output_prefix}dim"] = int(plm_dim)
         logger.info(
-            f"Built PLM sentence-level lookup: ({by_id.shape[0]:,}, {plm_dim}) "
+            f"Built PLM sentence-level lookup "
+            f"[plm_{output_prefix}embeddings_by_id]: "
+            f"({by_id.shape[0]:,}, {plm_dim}) "
             f"= {by_id.nbytes / 1e6:.1f} MB (parsed_id 0 = padding)"
         )
     elif level == "token":
@@ -396,12 +396,13 @@ def attach_plm_embeddings(
         for row, pid in enumerate(parsed_ids):
             by_id[pid] = token_emb[row]
             mask_by_id[pid] = attn_mask[row]
-        processed_news["plm_token_embeddings_by_id"] = by_id
-        processed_news["plm_attention_mask_by_id"] = mask_by_id
-        processed_news["plm_dim"] = int(plm_dim)
-        processed_news["plm_max_length"] = int(max_length)
+        processed_news[f"plm_{output_prefix}token_embeddings_by_id"] = by_id
+        processed_news[f"plm_{output_prefix}attention_mask_by_id"] = mask_by_id
+        processed_news[f"plm_{output_prefix}dim"] = int(plm_dim)
+        processed_news[f"plm_{output_prefix}max_length"] = int(max_length)
         logger.info(
-            f"Built PLM token-level lookup: "
+            f"Built PLM token-level lookup "
+            f"[plm_{output_prefix}token_embeddings_by_id]: "
             f"({by_id.shape[0]:,}, {max_length}, {plm_dim}) "
             f"= {by_id.nbytes / 1e9:.2f} GB (parsed_id 0 = padding)"
         )

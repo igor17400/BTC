@@ -31,6 +31,8 @@ from src.core.io.logging import (
 from src.core.io.progress import ProgressManager, create_progress
 from src.core.io.timing import PhaseStats
 
+from .losses import categorical_cross_entropy
+
 logger = logging.getLogger(__name__)
 
 # Flax NNX's ``Optimizer.update`` signature changed in 0.10.5:
@@ -196,8 +198,6 @@ def training_loop(
     """
     # ---- Loss function ---------------------------------------------------
     if loss_fn is None:
-        from .losses import categorical_cross_entropy
-
         loss_fn = categorical_cross_entropy
 
     train_step = make_train_step(loss_fn, get_aux_loss=get_aux_loss, use_jit=use_jit)
@@ -417,7 +417,16 @@ def training_loop(
 
             # Flatten the state dict to dot-separated keys and convert
             # all arrays to numpy.  PRNGKey arrays are skipped (not
-            # model weights).
+            # model weights). Frozen PLM caches are also skipped — they
+            # are large (multi-GB) read-only buffers regenerable from
+            # ``.cache/plm_embeds/`` on disk, and including them bloats
+            # checkpoints to ~6-10 GB per seed.
+            _PLM_CACHE_SUBSTRINGS = (
+                "token_embeddings",
+                "attention_mask",
+                "plm_token_embeddings",
+                "plm_attention_mask",
+            )
             flat = {}
             for key_path, leaf in jax.tree_util.tree_leaves_with_path(best_state):
                 name = ".".join(str(k) for k in key_path)
@@ -425,6 +434,8 @@ def training_loop(
                     leaf.dtype, jax.dtypes.prng_key
                 ):
                     continue  # skip RNG state
+                if any(s in name for s in _PLM_CACHE_SUBSTRINGS):
+                    continue  # skip frozen PLM token/mask caches
                 flat[name] = np.asarray(leaf)
             save_safetensors(flat, str(ckpt_path))
             logger.info("Saved best model weights to %s", ckpt_path)

@@ -15,9 +15,8 @@ from .attention_layers import (
     overwrite_mask,
 )
 from .layer_utils import get_activation
-from .plm import PLMNewsEncoder
 from .plm_pooler import Pooler
-from .plm_token import PLMTokenNewsEncoder
+from .plm_token import PLMTokenCNNEncoder, PLMTokenLookup, PLMTokenNewsEncoder
 
 __all__ = [
     "AdditiveAttention",
@@ -26,7 +25,8 @@ __all__ = [
     "CrossAttention",
     "MultiHeadSelfAttention",
     "OverwriteMasking",
-    "PLMNewsEncoder",
+    "PLMTokenCNNEncoder",
+    "PLMTokenLookup",
     "PLMTokenNewsEncoder",
     "Pooler",
     "compute_mask",

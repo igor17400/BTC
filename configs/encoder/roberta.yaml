@@ -1,9 +1,14 @@
-# RoBERTa-base frozen encoder.
+# Canonical RoBERTa encoder. See bert.yaml for the schema documentation.
 type: roberta
-slug: roberta      # output-path segment
-plm_name: roberta  # → "roberta-base"
+slug: roberta
+plm_name: roberta         # → "roberta-base"
 plm_dim: 768
-max_length: 32
-pooling: mean
+
 text_field: title
+max_length: 32
+text_field_abstract: abstract
+max_length_abstract: 50
 batch_size: 64
+
+trainability: frozen_cached
+trainable_layers: 0

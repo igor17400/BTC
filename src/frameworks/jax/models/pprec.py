@@ -15,7 +15,12 @@ from flax import nnx
 
 from src.core.models.configs import PPRecConfig
 
-from ..layers import AdditiveAttention, AttentivePoolingQKY, CrossAttention
+from ..layers import (
+    AdditiveAttention,
+    AttentivePoolingQKY,
+    CrossAttention,
+    PLMTokenLookup,
+)
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -37,13 +42,15 @@ class PPRecNewsEncoder(nnx.Module):
     def __init__(
         self,
         config: PPRecConfig,
-        word_embedding_layer: nnx.Embed,
+        word_embedding_layer: nnx.Module,
         entity_embedding_layer: nnx.Embed | None = None,
         category_embedding_layer: nnx.Embed | None = None,
         *,
+        encoder_type: str = "glove",
         rngs: nnx.Rngs,
     ):
         self.config = config
+        self.encoder_type = encoder_type
         co_out_dim = config.co_num_heads * config.co_head_dim
         self.word_embedding = word_embedding_layer
         self.entity_embedding = entity_embedding_layer
@@ -123,30 +130,36 @@ class PPRecNewsEncoder(nnx.Module):
 
     def __call__(self, inputs: jax.Array, *, training: bool = False) -> jax.Array:
         offset = 0
-        title_len = self.config.max_title_length
-        title_tokens = inputs[:, offset : offset + title_len]
-        offset += title_len
-        title_keep = jnp.not_equal(title_tokens, 0)  # (B, T)
-
         has_entity = self.entity_embedding is not None and self.config.use_entity
+        has_category = self.category_embedding is not None
+
+        if self.encoder_type == "glove":
+            title_len = self.config.max_title_length
+            title_tokens = inputs[:, offset : offset + title_len]
+            offset += title_len
+            title_keep = jnp.not_equal(title_tokens, 0)
+            title_emb = self.word_dropout(
+                self.word_embedding(title_tokens), deterministic=not training
+            )
+        else:
+            # PLM layout: [news_idx(1) | entities(E)? | category(1)?]
+            news_idx = inputs[:, offset]  # (B,)
+            offset += 1
+            title_emb_raw, title_mask_raw = self.word_embedding(news_idx)
+            title_keep = jnp.not_equal(title_mask_raw, 0)
+            title_emb = self.word_dropout(title_emb_raw, deterministic=not training)
+
         if has_entity:
             entity_len = self.config.max_entities
             entity_indices = inputs[:, offset : offset + entity_len]
             offset += entity_len
-            entity_keep = jnp.not_equal(entity_indices, 0)  # (B, E)
+            entity_keep = jnp.not_equal(entity_indices, 0)
+            entity_emb = self.entity_embedding(entity_indices)
         else:
             entity_indices = None
             entity_keep = None
 
-        has_category = self.category_embedding is not None
         category_idx = inputs[:, offset : offset + 1] if has_category else None
-
-        # --- Raw embeddings ---
-        title_emb = self.word_dropout(
-            self.word_embedding(title_tokens), deterministic=not training
-        )
-        if has_entity:
-            entity_emb = self.entity_embedding(entity_indices)
 
         # --- Bidirectional MHCA on RAW embeddings (paper co1) ---
         if has_entity:
@@ -389,19 +402,41 @@ class PPRec(BaseModel):
 
         cfg = config
         pn = processed_news
-        embeddings_matrix = np.asarray(pn["embeddings"])
-        vocab_size = int(pn["vocab_size"])
+        encoder_type = getattr(getattr(cfg, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        # Two separate word embeddings (relevance + bias) per paper
-        word_emb = nnx.Embed(
-            num_embeddings=vocab_size, features=cfg.embedding_size, rngs=rngs
-        )
-        word_emb.embedding.value = jnp.asarray(embeddings_matrix)
-
-        bias_word_emb = nnx.Embed(
-            num_embeddings=vocab_size, features=cfg.embedding_size, rngs=rngs
-        )
-        bias_word_emb.embedding.value = jnp.asarray(embeddings_matrix)
+        if encoder_type == "glove":
+            embeddings_matrix = np.asarray(pn["embeddings"])
+            vocab_size = int(pn["vocab_size"])
+            word_emb: nnx.Module = nnx.Embed(
+                num_embeddings=vocab_size, features=cfg.embedding_size, rngs=rngs
+            )
+            word_emb.embedding.value = jnp.asarray(embeddings_matrix)
+            bias_word_emb: nnx.Module = nnx.Embed(
+                num_embeddings=vocab_size, features=cfg.embedding_size, rngs=rngs
+            )
+            bias_word_emb.embedding.value = jnp.asarray(embeddings_matrix)
+        else:
+            if "plm_token_embeddings_by_id" not in pn:
+                raise KeyError(
+                    f"PPRec with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']."
+                )
+            plm_dim = int(pn["plm_dim"])
+            word_emb = PLMTokenLookup(
+                pn["plm_token_embeddings_by_id"],
+                pn["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=cfg.embedding_size,
+                rngs=rngs,
+            )
+            bias_word_emb = PLMTokenLookup(
+                pn["plm_token_embeddings_by_id"],
+                pn["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=cfg.embedding_size,
+                rngs=rngs,
+            )
 
         # Entity embedding (trainable, initialised from TransE)
         entity_emb = None
@@ -424,10 +459,15 @@ class PPRec(BaseModel):
             )
 
         self.news_encoder = PPRecNewsEncoder(
-            cfg, word_emb, entity_emb, cat_emb, rngs=rngs
+            cfg, word_emb, entity_emb, cat_emb, encoder_type=encoder_type, rngs=rngs
         )
         self.bias_news_encoder = PPRecNewsEncoder(
-            cfg, bias_word_emb, entity_emb, cat_emb, rngs=rngs
+            cfg,
+            bias_word_emb,
+            entity_emb,
+            cat_emb,
+            encoder_type=encoder_type,
+            rngs=rngs,
         )
         self.user_encoder = PPRecUserEncoder(cfg, self.news_encoder, rngs=rngs)
         self.popularity_predictor = PopularityPredictor(cfg, rngs=rngs)

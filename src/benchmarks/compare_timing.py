@@ -45,19 +45,25 @@ def discover_timing_files(
     datasets: list[str] | None = None,
     models: list[str] | None = None,
     frameworks: list[str] | None = None,
+    encoders: list[str] | None = None,
     split_strategies: list[str] | None = None,
-) -> list[Path]:
+) -> list[tuple[Path, str]]:
     """Find ``timing.json`` files matching the given filters.
 
-    Expects the post-migration path layout:
-        ``<root>/<dataset>/<model>/<framework>/<split>/seed_*/timing.json``
+    Expects the post-encoder-slug path layout:
+        ``<root>/<dataset>/<model>/<framework>/<encoder>/<split>/seed_*/timing.json``
+
+    Returns a list of ``(timing_json_path, encoder_slug)`` pairs since
+    the encoder slug is not stored inside ``RunTiming`` and must come
+    from the path.
     """
-    paths: list[Path] = []
-    for p in root.glob("*/*/*/*/seed_*/timing.json"):
+    paths: list[tuple[Path, str]] = []
+    for p in root.glob("*/*/*/*/*/seed_*/timing.json"):
         try:
-            dataset = p.parents[4].name
-            model = p.parents[3].name
-            framework = p.parents[2].name
+            dataset = p.parents[5].name
+            model = p.parents[4].name
+            framework = p.parents[3].name
+            encoder = p.parents[2].name
             split = p.parents[1].name
         except IndexError:
             continue
@@ -67,19 +73,26 @@ def discover_timing_files(
             continue
         if frameworks and framework not in frameworks:
             continue
+        if encoders and encoder not in encoders:
+            continue
         if split_strategies and split not in split_strategies:
             continue
-        paths.append(p)
+        paths.append((p, encoder))
     return sorted(paths)
 
 
-def load_runs(paths: list[Path]) -> list[RunTiming]:
+def load_runs(paths: list[tuple[Path, str]]) -> list[RunTiming]:
+    """Load ``RunTiming`` from each path; attach encoder slug as an
+    ad-hoc attribute (not persisted in the dump, inferred from path).
+    """
     runs: list[RunTiming] = []
-    for path in paths:
+    for path, encoder in paths:
         try:
             with open(path) as f:
                 d = json.load(f)
-            runs.append(dict_to_run_timing(d))
+            rt = dict_to_run_timing(d)
+            rt.encoder = encoder  # type: ignore[attr-defined]
+            runs.append(rt)
         except Exception as e:
             console.log(f"[yellow]Skipping {path}: {e}[/yellow]")
     return runs
@@ -102,11 +115,14 @@ def _mean_steady_state(values: list[float]) -> float | None:
     return sum(values[1:]) / (len(values) - 1)
 
 
-def aggregate_runs(runs: list[RunTiming]) -> dict[tuple[str, str, str], dict[str, Any]]:
-    """Group by (dataset, model, framework); reduce across seeds."""
-    by_key: dict[tuple[str, str, str], list[RunTiming]] = defaultdict(list)
+def aggregate_runs(
+    runs: list[RunTiming],
+) -> dict[tuple[str, str, str, str], dict[str, Any]]:
+    """Group by (dataset, model, framework, encoder); reduce across seeds."""
+    by_key: dict[tuple[str, str, str, str], list[RunTiming]] = defaultdict(list)
     for r in runs:
-        by_key[(r.dataset_name, r.model_name, r.framework)].append(r)
+        encoder = getattr(r, "encoder", "")
+        by_key[(r.dataset_name, r.model_name, r.framework, encoder)].append(r)
 
     result: dict[tuple[str, str, str], dict[str, Any]] = {}
     for key, group in by_key.items():
@@ -198,15 +214,16 @@ def render_per_run_breakdown(runs: list[RunTiming]) -> None:
     ``steady mean`` drops epoch 1 (JIT/cuDNN warmup) for a comparison-
     fair number; that's what the aggregate table shows.
     """
-    by_key: dict[tuple[str, str, str], list[RunTiming]] = defaultdict(list)
+    by_key: dict[tuple[str, str, str, str], list[RunTiming]] = defaultdict(list)
     for r in runs:
-        by_key[(r.dataset_name, r.model_name, r.framework)].append(r)
+        encoder = getattr(r, "encoder", "")
+        by_key[(r.dataset_name, r.model_name, r.framework, encoder)].append(r)
 
-    for (dataset, model, fw), group in sorted(by_key.items()):
+    for (dataset, model, fw, enc), group in sorted(by_key.items()):
         for r in sorted(group, key=lambda x: x.seed):
             t = Table(
                 title=(
-                    f"[bold]{dataset} / {model} / {fw} / seed {r.seed}[/bold] "
+                    f"[bold]{dataset} / {model} / {fw} / {enc} / seed {r.seed}[/bold] "
                     f"— per-epoch breakdown"
                 ),
                 show_lines=False,
@@ -255,11 +272,13 @@ def render_per_run_breakdown(runs: list[RunTiming]) -> None:
             console.print()
 
 
-def render_table(agg: dict[tuple[str, str, str], dict[str, Any]]) -> None:
-    """Print one Rich table per (dataset, model), framework along rows."""
-    by_dm: dict[tuple[str, str], list[tuple[str, dict[str, Any]]]] = defaultdict(list)
-    for (dataset, model, fw), stats in agg.items():
-        by_dm[(dataset, model)].append((fw, stats))
+def render_table(agg: dict[tuple[str, str, str, str], dict[str, Any]]) -> None:
+    """Print one Rich table per (dataset, model); rows = (framework, encoder)."""
+    by_dm: dict[tuple[str, str], list[tuple[str, str, dict[str, Any]]]] = defaultdict(
+        list
+    )
+    for (dataset, model, fw, enc), stats in agg.items():
+        by_dm[(dataset, model)].append((fw, enc, stats))
 
     for (dataset, model), rows in sorted(by_dm.items()):
         table = Table(
@@ -267,6 +286,7 @@ def render_table(agg: dict[tuple[str, str, str], dict[str, Any]]) -> None:
             show_lines=True,
         )
         table.add_column("framework", style="bold")
+        table.add_column("encoder", style="bold")
         table.add_column("seeds", justify="right")
         table.add_column("params (M)", justify="right")
         table.add_column("time-to-first-step (s)", justify="right")
@@ -276,10 +296,11 @@ def render_table(agg: dict[tuple[str, str, str], dict[str, Any]]) -> None:
         table.add_column("test (s)", justify="right")
         table.add_column("total (s)", justify="right")
 
-        for fw, st in sorted(rows):
+        for fw, enc, st in sorted(rows):
             params_m = st["n_params"] / 1e6
             table.add_row(
                 fw,
+                enc,
                 str(st["n_seeds"]),
                 f"{params_m:.2f}",
                 _fmt(st["ttfs_s"]),
@@ -293,11 +314,16 @@ def render_table(agg: dict[tuple[str, str, str], dict[str, Any]]) -> None:
 
 
 def to_json_payload(
-    agg: dict[tuple[str, str, str], dict[str, Any]],
+    agg: dict[tuple[str, str, str, str], dict[str, Any]],
 ) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
-    for (dataset, model, fw), st in sorted(agg.items()):
-        row: dict[str, Any] = {"dataset": dataset, "model": model, "framework": fw}
+    for (dataset, model, fw, enc), st in sorted(agg.items()):
+        row: dict[str, Any] = {
+            "dataset": dataset,
+            "model": model,
+            "framework": fw,
+            "encoder": enc,
+        }
         for k, v in st.items():
             if isinstance(v, tuple):
                 row[f"{k}_mean"] = v[0]
@@ -337,6 +363,11 @@ def main() -> None:
         help="Comma-separated framework names (jax, pytorch).",
     )
     ap.add_argument(
+        "--encoders",
+        type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
+        help="Comma-separated encoder slugs (e.g. glove,bert,bert_token,bert_dual).",
+    )
+    ap.add_argument(
         "--splits",
         type=lambda s: [x.strip() for x in s.split(",") if x.strip()],
         help="Comma-separated split strategies (random, chronological, dev_as_val).",
@@ -359,6 +390,7 @@ def main() -> None:
         datasets=args.dataset,
         models=args.models,
         frameworks=args.frameworks,
+        encoders=args.encoders,
         split_strategies=args.splits,
     )
     if not paths:

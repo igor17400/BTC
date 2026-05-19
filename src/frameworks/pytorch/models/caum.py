@@ -14,7 +14,7 @@ import torch.nn as nn
 
 from src.core.models.configs import CAUMConfig
 
-from ..layers import AdditiveAttention
+from ..layers import AdditiveAttention, PLMTokenLookup
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -35,12 +35,15 @@ class NewsEncoder(nn.Module):
     def __init__(
         self,
         config: CAUMConfig,
-        embedding_layer: nn.Embedding,
+        embedding_layer: nn.Module,
         entity_embedding: nn.Embedding | None = None,
         category_embedding: nn.Embedding | None = None,
+        *,
+        encoder_type: str = "glove",
     ):
         super().__init__()
         self.config = config
+        self.encoder_type = encoder_type
         self.embedding_layer = embedding_layer
         self.entity_embedding = entity_embedding
         self.category_embedding = category_embedding
@@ -90,16 +93,24 @@ class NewsEncoder(nn.Module):
         self.fusion_dense = nn.Linear(fusion_in, config.news_dim)
 
     def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
-        """inputs: (batch, feature_dim) → (batch, news_dim)."""
+        """inputs: (batch, feature_dim) → (batch, news_dim).
+
+        GloVe layout: ``[title_tokens(T) | entities(E)? | category(1)?]``.
+        PLM layout:   ``[news_idx(1)     | entities(E)? | category(1)?]``.
+        """
         offset = 0
-        title_len = self.config.max_title_length
-
-        # Title
-        title_tokens = inputs[:, offset : offset + title_len]
-        offset += title_len
-        title_mask = title_tokens != 0
-
-        title_emb = self.title_dropout(self.embedding_layer(title_tokens))
+        if self.encoder_type == "glove":
+            title_len = self.config.max_title_length
+            title_tokens = inputs[:, offset : offset + title_len]
+            offset += title_len
+            title_mask = title_tokens != 0
+            title_emb = self.title_dropout(self.embedding_layer(title_tokens))
+        else:
+            news_idx = inputs[:, offset].long()
+            offset += 1
+            title_emb_raw, title_mask_raw = self.embedding_layer(news_idx)
+            title_mask = title_mask_raw != 0
+            title_emb = self.title_dropout(title_emb_raw)
 
         key_padding_mask = ~title_mask
         fully_padded = key_padding_mask.all(dim=-1)
@@ -318,13 +329,31 @@ class CAUM(BaseModel):
         self.config = config
         self.process_user_id = config.process_user_id
 
-        # Word embedding
-        vocab_size = processed_news["vocab_size"]
-        embeddings_matrix = processed_news["embeddings"]
-        self.embedding_layer = nn.Embedding(vocab_size, config.embedding_size)
-        self.embedding_layer.weight = nn.Parameter(
-            torch.tensor(embeddings_matrix, dtype=torch.float32)
-        )
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
+
+        if encoder_type == "glove":
+            vocab_size = processed_news["vocab_size"]
+            embeddings_matrix = processed_news["embeddings"]
+            self.embedding_layer: nn.Module = nn.Embedding(
+                vocab_size, config.embedding_size
+            )
+            self.embedding_layer.weight = nn.Parameter(
+                torch.tensor(embeddings_matrix, dtype=torch.float32)
+            )
+        else:
+            if "plm_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"CAUM with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']."
+                )
+            plm_dim = int(processed_news["plm_dim"])
+            self.embedding_layer = PLMTokenLookup(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=config.embedding_size,
+            )
 
         # Entity embedding (frozen)
         entity_emb = None
@@ -351,6 +380,7 @@ class CAUM(BaseModel):
             self.embedding_layer,
             entity_emb,
             category_emb,
+            encoder_type=encoder_type,
         )
         self.user_encoder = UserEncoder(config, self.news_encoder)
         self.inter_model = InterModel(config)

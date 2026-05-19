@@ -31,7 +31,7 @@ from flax import nnx
 
 from src.core.models.configs import CAUMConfig
 
-from ..layers import AdditiveAttention
+from ..layers import AdditiveAttention, PLMTokenLookup
 from .base import BaseModel
 
 # ---------------------------------------------------------------------------
@@ -55,13 +55,15 @@ class NewsEncoder(nnx.Module):
     def __init__(
         self,
         config: CAUMConfig,
-        embedding_layer: nnx.Embed,
+        embedding_layer: nnx.Module,
         entity_embedding_layer: nnx.Embed | None = None,
         category_embedding_layer: nnx.Embed | None = None,
         *,
+        encoder_type: str = "glove",
         rngs: nnx.Rngs,
     ):
         self.config = config
+        self.encoder_type = encoder_type
         self.embedding_layer = embedding_layer
         self.entity_embedding = entity_embedding_layer
         self.category_embedding = category_embedding_layer
@@ -129,17 +131,22 @@ class NewsEncoder(nnx.Module):
             (batch, news_dim) news vector.
         """
         offset = 0
-        title_len = self.config.max_title_length
-
         # --- Title ---
-        title_tokens = inputs[:, offset : offset + title_len]
-        offset += title_len
-        title_mask = jnp.not_equal(title_tokens, 0)
+        if self.encoder_type == "glove":
+            title_len = self.config.max_title_length
+            title_tokens = inputs[:, offset : offset + title_len]
+            offset += title_len
+            title_mask = jnp.not_equal(title_tokens, 0)
+            title_emb = self.title_dropout(
+                self.embedding_layer(title_tokens), deterministic=not training
+            )
+        else:
+            news_idx = inputs[:, offset]
+            offset += 1
+            title_emb_raw, title_mask_raw = self.embedding_layer(news_idx)
+            title_mask = jnp.not_equal(title_mask_raw, 0)
+            title_emb = self.title_dropout(title_emb_raw, deterministic=not training)
         title_attn_mask = title_mask[:, None, None, :]
-
-        title_emb = self.title_dropout(
-            self.embedding_layer(title_tokens), deterministic=not training
-        )
         title_vecs = self.title_mhsa(
             title_emb, title_emb, mask=title_attn_mask, deterministic=not training
         )
@@ -387,15 +394,32 @@ class CAUM(BaseModel):
         self.config = config
         self.process_user_id = config.process_user_id
 
-        # Shared word embedding initialised from pre-trained weights
-        embeddings_matrix = np.asarray(processed_news["embeddings"])
-        vocab_size = int(processed_news["vocab_size"])
-        self.embedding_layer = nnx.Embed(
-            num_embeddings=vocab_size,
-            features=config.embedding_size,
-            rngs=rngs,
-        )
-        self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
+
+        if encoder_type == "glove":
+            embeddings_matrix = np.asarray(processed_news["embeddings"])
+            vocab_size = int(processed_news["vocab_size"])
+            self.embedding_layer: nnx.Module = nnx.Embed(
+                num_embeddings=vocab_size,
+                features=config.embedding_size,
+                rngs=rngs,
+            )
+            self.embedding_layer.embedding.value = jnp.asarray(embeddings_matrix)
+        else:
+            if "plm_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"CAUM with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']."
+                )
+            plm_dim = int(processed_news["plm_dim"])
+            self.embedding_layer = PLMTokenLookup(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                plm_dim=plm_dim,
+                output_dim=config.embedding_size,
+                rngs=rngs,
+            )
 
         # Entity embedding (frozen)
         entity_emb_layer = None
@@ -427,6 +451,7 @@ class CAUM(BaseModel):
             self.embedding_layer,
             entity_embedding_layer=entity_emb_layer,
             category_embedding_layer=category_emb_layer,
+            encoder_type=encoder_type,
             rngs=rngs,
         )
         self.user_encoder = UserEncoder(config, self.news_encoder)

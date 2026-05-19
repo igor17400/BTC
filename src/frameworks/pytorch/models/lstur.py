@@ -8,7 +8,12 @@ import torch.nn.functional as F
 
 from src.core.models.configs import LSTURConfig
 
-from ..layers import AdditiveAttention, ComputeMasking, OverwriteMasking
+from ..layers import (
+    AdditiveAttention,
+    ComputeMasking,
+    OverwriteMasking,
+    PLMTokenCNNEncoder,
+)
 from .base import BaseModel
 
 # ------------------------------------------------------------------
@@ -148,6 +153,64 @@ class NewsEncoder(nn.Module):
             return self._process_title(title_tokens, training)
 
 
+class PLMNewsEncoder(nn.Module):
+    """PLM-mode news encoder for LSTUR.
+
+    Replaces the GloVe ``Embedding + Conv1d + AdditiveAttention`` title
+    pipeline with a frozen token-level BERT lookup + the same Conv1d /
+    AddAttn pipeline (delegated to :class:`PLMTokenCNNEncoder`).
+    Concatenates optional category / subcategory embeddings the same
+    way the GloVe :class:`NewsEncoder` does so the GRU input dim is
+    unchanged.
+
+    Input layout (packed, last dim):
+        - column 0: parsed news id (used by PLM title lookup)
+        - column 1: category id          (if ``use_category``)
+        - column 2: subcategory id       (if ``use_subcategory``)
+    """
+
+    def __init__(
+        self,
+        config: LSTURConfig,
+        title_encoder: PLMTokenCNNEncoder,
+        category_encoder: CategoryEncoder | None = None,
+        subcategory_encoder: SubcategoryEncoder | None = None,
+    ):
+        super().__init__()
+        self.config = config
+        self.title_encoder = title_encoder
+        self.category_encoder = category_encoder
+        self.subcategory_encoder = subcategory_encoder
+
+    @property
+    def output_dim(self) -> int:
+        dim = self.config.cnn_filter_num
+        if self.category_encoder is not None:
+            dim += self.config.category_embedding_dim
+        if self.subcategory_encoder is not None:
+            dim += self.config.subcategory_embedding_dim
+        return dim
+
+    def forward(self, inputs: torch.Tensor, training: bool = True) -> torch.Tensor:
+        # inputs: (..., k) where k = 1 + use_category + use_subcategory.
+        news_idx = inputs[..., 0]
+        title_vec = self.title_encoder(news_idx, training=training)
+
+        reps = [title_vec]
+        col = 1
+        if self.category_encoder is not None:
+            cat = inputs[..., col : col + 1]
+            reps.append(self.category_encoder(cat, training=training))
+            col += 1
+        if self.subcategory_encoder is not None:
+            sub = inputs[..., col : col + 1]
+            reps.append(self.subcategory_encoder(sub, training=training))
+
+        if len(reps) > 1:
+            return torch.cat(reps, dim=-1)
+        return title_vec
+
+
 class UserEncoder(nn.Module):
     """GRU-based user encoder with long-term user embeddings.
 
@@ -250,15 +313,10 @@ class LSTUR(BaseModel):
         self.num_users = num_users
         self.process_user_id = config.process_user_id
 
-        # Shared word embedding
-        vocab_size = processed_news["vocab_size"]
-        embeddings_matrix = processed_news["embeddings"]
-        self.embedding_layer = nn.Embedding(vocab_size, config.embedding_size)
-        self.embedding_layer.weight = nn.Parameter(
-            torch.tensor(embeddings_matrix, dtype=torch.float32)
-        )
+        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
+        self.encoder_type = encoder_type
 
-        # Optional category encoders
+        # Optional category encoders (shared across both encoder modes).
         category_encoder = None
         subcategory_encoder = None
         if config.use_category:
@@ -268,13 +326,47 @@ class LSTUR(BaseModel):
                 config, processed_news["num_subcategories"]
             )
 
-        # Encoders
-        self.news_encoder = NewsEncoder(
-            config,
-            self.embedding_layer,
-            category_encoder=category_encoder,
-            subcategory_encoder=subcategory_encoder,
-        )
+        if encoder_type == "glove":
+            # GloVe path — shared word embedding + token-level CNN+attn.
+            vocab_size = processed_news["vocab_size"]
+            embeddings_matrix = processed_news["embeddings"]
+            self.embedding_layer = nn.Embedding(vocab_size, config.embedding_size)
+            self.embedding_layer.weight = nn.Parameter(
+                torch.tensor(embeddings_matrix, dtype=torch.float32)
+            )
+            self.news_encoder = NewsEncoder(
+                config,
+                self.embedding_layer,
+                category_encoder=category_encoder,
+                subcategory_encoder=subcategory_encoder,
+            )
+        else:
+            # PLM path — frozen token-level cache + Conv1d / AddAttn over
+            # BERT tokens (NAML-style), then concat optional cat/subcat.
+            if "plm_token_embeddings_by_id" not in processed_news:
+                raise KeyError(
+                    f"LSTUR with encoder.type='{encoder_type}' requires "
+                    "processed_news['plm_token_embeddings_by_id']. Call "
+                    "attach_plm_embeddings(..., level='token') in the runner."
+                )
+            plm_dim = int(processed_news["plm_dim"])
+            title_encoder = PLMTokenCNNEncoder(
+                processed_news["plm_token_embeddings_by_id"],
+                processed_news["plm_attention_mask_by_id"],
+                news_dim=config.cnn_filter_num,
+                plm_dim=plm_dim,
+                cnn_kernel_size=config.cnn_kernel_size,
+                dropout_rate=config.dropout_rate,
+                word_attention_query_dim=config.attention_hidden_dim,
+                activation=config.cnn_activation,
+            )
+            self.news_encoder = PLMNewsEncoder(
+                config,
+                title_encoder,
+                category_encoder=category_encoder,
+                subcategory_encoder=subcategory_encoder,
+            )
+
         self.user_encoder = UserEncoder(config, self.news_encoder, num_users)
 
     def forward(
@@ -309,21 +401,55 @@ class LSTUR(BaseModel):
             return torch.cat(parts, dim=-1)
         return tokens
 
+    def _pack_plm_features(
+        self,
+        news_ids: torch.Tensor,
+        inputs: dict[str, torch.Tensor],
+        cat_key: str,
+        subcat_key: str,
+    ) -> torch.Tensor:
+        """Pack PLM-mode features [news_idx | cat | subcat] along last dim.
+
+        ``news_ids`` is one integer per news slot (no token axis). The
+        returned tensor matches the packed layout :class:`PLMNewsEncoder`
+        consumes.
+        """
+        parts = [news_ids.unsqueeze(-1)]
+        if self.config.use_category and cat_key in inputs:
+            cat = inputs[cat_key]
+            if cat.dim() == news_ids.dim():
+                cat = cat.unsqueeze(-1)
+            parts.append(cat)
+        if self.config.use_subcategory and subcat_key in inputs:
+            subcat = inputs[subcat_key]
+            if subcat.dim() == news_ids.dim():
+                subcat = subcat.unsqueeze(-1)
+            parts.append(subcat)
+        return torch.cat(parts, dim=-1)
+
     def score_training_batch(
         self, inputs: dict[str, torch.Tensor], training: bool
     ) -> torch.Tensor:
-        history_tokens = self._maybe_concat_category(
-            inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
-        )
-        candidate_tokens = self._maybe_concat_category(
-            inputs["cand_tokens"], inputs, "cand_category", "cand_subcategory"
-        )
+        if self.encoder_type == "glove":
+            history_packed = self._maybe_concat_category(
+                inputs["hist_tokens"], inputs, "hist_category", "hist_subcategory"
+            )
+            candidate_packed = self._maybe_concat_category(
+                inputs["cand_tokens"], inputs, "cand_category", "cand_subcategory"
+            )
+        else:
+            history_packed = self._pack_plm_features(
+                inputs["hist_features"], inputs, "hist_category", "hist_subcategory"
+            )
+            candidate_packed = self._pack_plm_features(
+                inputs["cand_features"], inputs, "cand_category", "cand_subcategory"
+            )
+
         user_ids = inputs.get("user_ids", inputs.get("user_indices"))
+        user_repr = self.user_encoder([history_packed, user_ids], training=training)
 
-        user_repr = self.user_encoder([history_tokens, user_ids], training=training)
-
-        B, C, T = candidate_tokens.shape
-        flat_cand = candidate_tokens.reshape(B * C, T)
+        B, C, F = candidate_packed.shape
+        flat_cand = candidate_packed.reshape(B * C, F)
         cand_repr = self.news_encoder(flat_cand, training=training).reshape(B, C, -1)
 
         scores = torch.sum(cand_repr * user_repr.unsqueeze(1), dim=-1)

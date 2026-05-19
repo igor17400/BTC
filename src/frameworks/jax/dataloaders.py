@@ -11,6 +11,7 @@ from typing import Any
 
 import jax.numpy as jnp
 import numpy as np
+from torch.utils.data import DataLoader
 
 # ---------------------------------------------------------------------------
 # Generic batch helper
@@ -275,7 +276,10 @@ class UserHistoryBatchDataloader:
 class PLMNewsBatchDataloader:
     """Batch news IDs for PLM-mode evaluation (JAX).
 
-    Yields ``{"news_id": str_ids, "news_features": (B,) jnp int32}``.
+    Default (single-view): yields ``news_features`` of shape ``(B,)`` int32.
+    Multi-view (NAML/LSTUR+PLM): pass ``category_indices`` and/or
+    ``subcategory_indices`` and ``news_features`` becomes ``(B, k)`` int32
+    with column order ``[news_idx, category, subcategory]``.
     """
 
     def __init__(
@@ -283,18 +287,35 @@ class PLMNewsBatchDataloader:
         news_ids_str: np.ndarray,
         parsed_news_ids: np.ndarray,
         batch_size: int = 1024,
+        category_indices: np.ndarray | None = None,
+        subcategory_indices: np.ndarray | None = None,
+        entity_indices: np.ndarray | None = None,
     ):
         self.news_ids_str = np.asarray(news_ids_str)
         self.parsed_news_ids = np.asarray(parsed_news_ids, dtype=np.int32)
         self.batch_size = batch_size
         self.num_news = len(news_ids_str)
 
+        # Column order: [news_idx | entities | category | subcategory].
+        packed = [self.parsed_news_ids[:, None]]
+        if entity_indices is not None:
+            packed.append(np.asarray(entity_indices, dtype=np.int32))
+        if category_indices is not None:
+            packed.append(np.asarray(category_indices, dtype=np.int32).reshape(-1, 1))
+        if subcategory_indices is not None:
+            packed.append(
+                np.asarray(subcategory_indices, dtype=np.int32).reshape(-1, 1)
+            )
+        self._packed = (
+            np.concatenate(packed, axis=1) if len(packed) > 1 else self.parsed_news_ids
+        )
+
     def __iter__(self) -> Iterator[dict[str, Any]]:
         for i in range(0, self.num_news, self.batch_size):
             end = min(i + self.batch_size, self.num_news)
             yield {
                 "news_id": self.news_ids_str[i:end],
-                "news_features": jnp.asarray(self.parsed_news_ids[i:end]),
+                "news_features": jnp.asarray(self._packed[i:end]),
             }
 
     def __len__(self) -> int:
@@ -304,7 +325,10 @@ class PLMNewsBatchDataloader:
 class PLMUserHistoryBatchDataloader:
     """Batch user histories for PLM-mode evaluation (JAX).
 
-    Yields ``(impression_ids, user_ids_or_None, history_news_ids)``.
+    Default (single-view): history shape ``(B, H)`` int32.
+    Multi-view: pass ``history_category`` / ``history_subcategory`` and
+    history becomes ``(B, H, k)`` with the same column order as
+    :class:`PLMNewsBatchDataloader`.
     """
 
     def __init__(
@@ -313,12 +337,29 @@ class PLMUserHistoryBatchDataloader:
         impression_ids: np.ndarray,
         user_ids: np.ndarray | None = None,
         batch_size: int = 32,
+        history_category: np.ndarray | None = None,
+        history_subcategory: np.ndarray | None = None,
+        history_entity: np.ndarray | None = None,
     ):
         self.history_news_ids = np.asarray(history_news_ids, dtype=np.int32)
         self.impression_ids = np.asarray(impression_ids)
         self.user_ids = np.asarray(user_ids) if user_ids is not None else None
         self.batch_size = batch_size
         self.num_users = len(impression_ids)
+
+        # Column order: [news_idx | entities | category | subcategory].
+        packed = [self.history_news_ids[..., None]]
+        if history_entity is not None:
+            packed.append(np.asarray(history_entity, dtype=np.int32))
+        if history_category is not None:
+            packed.append(np.asarray(history_category, dtype=np.int32)[..., None])
+        if history_subcategory is not None:
+            packed.append(np.asarray(history_subcategory, dtype=np.int32)[..., None])
+        self._packed = (
+            np.concatenate(packed, axis=-1)
+            if len(packed) > 1
+            else self.history_news_ids
+        )
 
     def __iter__(
         self,
@@ -330,7 +371,7 @@ class PLMUserHistoryBatchDataloader:
                 jnp.asarray(self.user_ids[i:end])
                 if self.user_ids is not None
                 else None,
-                jnp.asarray(self.history_news_ids[i:end]),
+                jnp.asarray(self._packed[i:end]),
             )
 
     def __len__(self) -> int:
@@ -338,7 +379,13 @@ class PLMUserHistoryBatchDataloader:
 
 
 class PLMImpressionIterator:
-    """Iterate impressions one-by-one yielding parsed-int news ids (JAX)."""
+    """Iterate impressions one-by-one yielding parsed-int news ids (JAX).
+
+    Default (single-view): ``features`` shape ``(C,)`` int32.
+    Multi-view: pass ``candidate_category`` / ``candidate_subcategory``
+    (per-impression arrays of same shape as ``candidate_news_ids``) and
+    ``features`` becomes ``(C, k)``.
+    """
 
     def __init__(
         self,
@@ -346,17 +393,50 @@ class PLMImpressionIterator:
         labels: Any,
         impression_ids: Any,
         candidate_ids: Any,
+        candidate_category: Any = None,
+        candidate_subcategory: Any = None,
+        candidate_entity: Any = None,
     ):
         self.candidate_news_ids = candidate_news_ids
         self.labels = labels
         self.impression_ids = impression_ids
         self.candidate_ids = candidate_ids
+        self.candidate_category = candidate_category
+        self.candidate_subcategory = candidate_subcategory
+        self.candidate_entity = candidate_entity
+        self._multi_view = (
+            candidate_category is not None
+            or candidate_subcategory is not None
+            or candidate_entity is not None
+        )
         self.num_impressions = len(labels)
 
     def __iter__(self):
         for idx in range(self.num_impressions):
             cand_ids_np = np.asarray(self.candidate_news_ids[idx], dtype=np.int32)
-            features = jnp.asarray(cand_ids_np)
+            if self._multi_view:
+                # Column order: [news_idx | entities | category | subcategory]
+                packed = [cand_ids_np[:, None]]
+                if self.candidate_entity is not None:
+                    packed.append(
+                        np.asarray(self.candidate_entity[idx], dtype=np.int32)
+                    )
+                if self.candidate_category is not None:
+                    packed.append(
+                        np.asarray(
+                            self.candidate_category[idx], dtype=np.int32
+                        ).reshape(-1, 1)
+                    )
+                if self.candidate_subcategory is not None:
+                    packed.append(
+                        np.asarray(
+                            self.candidate_subcategory[idx], dtype=np.int32
+                        ).reshape(-1, 1)
+                    )
+                features_np = np.concatenate(packed, axis=1)
+            else:
+                features_np = cand_ids_np
+            features = jnp.asarray(features_np)
             labels_arr = jnp.asarray(self.labels[idx], dtype=jnp.float32)
             imp_id = self.impression_ids[idx]
             cand_ids = self.candidate_ids[idx] if idx < len(self.candidate_ids) else []
@@ -564,8 +644,6 @@ def create_glory_jax_dataloader(
     (the dataset ``__getitem__`` returns numpy arrays) and converts
     to fixed-shape JAX arrays in the collate function.
     """
-    from torch.utils.data import DataLoader
-
     return DataLoader(
         dataset,
         batch_size=batch_size,

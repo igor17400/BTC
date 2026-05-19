@@ -9,12 +9,18 @@ from dataclasses import dataclass, field
 
 @dataclass
 class EncoderConfig:
-    """Encoder backbone selection.
+    """Encoder backbone selection — describes how text becomes features.
 
-    ``type='glove'`` reproduces the existing behavior (pretrained GloVe
-    word vectors + per-model architecture-specific encoders).  Other
-    types pre-encode the news text with a frozen PLM at dataset-init
-    time and feed a single per-news vector into the model.
+    ``type='glove'`` keeps the legacy behaviour (pretrained GloVe word
+    embeddings; models tokenize and run their own per-token encoders).
+    PLM types (``bert`` | ``roberta`` | ``sbert`` | ``distilbert``)
+    cache the token-level HF output at dataset-init time and expose it
+    to models as a frozen lookup. Both ``text_field`` (e.g. title) and
+    ``text_field_abstract`` are cached when the dataset provides the
+    corresponding raw text. Models decide which views to consume.
+
+    Model-specific concerns (poolers, view selection, etc.) live in
+    each model's spec, not here.
     """
 
     type: str = "glove"  # 'glove' | 'bert' | 'roberta' | 'sbert' | 'distilbert'
@@ -25,23 +31,36 @@ class EncoderConfig:
     # PLM-only (ignored when type=='glove')
     plm_name: str = ""  # HF model id or alias from PLM_REGISTRY
     plm_dim: int = 0  # pretrained hidden size (set at build time)
-    max_length: int = 32
-    pooling: str = "mean"  # 'mean' or 'cls' (sentence-level only)
     text_field: str = "title"
+    max_length: int = 32
+    text_field_abstract: str = ""
+    max_length_abstract: int = 50
     batch_size: int = 64
-    # PLM caching granularity:
-    #   "sentence" (default) — one pooled vector per news; ``PLMNewsEncoder``
-    #     applies a trainable Linear projection on top. Cheapest, smallest cache.
-    #   "token" — full (max_length, plm_dim) sequence per news; the model uses
-    #     ``PLMTokenNewsEncoder`` (frozen tokens + trainable MHA/pool +
-    #     projection — IP2-style architecture).
-    level: str = "sentence"
-    # Pooler (used when ``level='token'``; ignored otherwise).
-    pooler_type: str = "attention"  # 'mean' | 'cls' | 'attention' | 'gate'
-    pooler_num_heads: int = 6
-    pooler_head_dim: int = 128
-    pooler_attention_query_dim: int = 200
-    pooler_dropout_rate: float = 0.0
+
+    # Trainability regime — orthogonal to the model architecture.
+    #   "frozen_cached"     — encode once offline; train-time = lookup.
+    #   "last_n_trainable"  — HF model in graph; freeze all but the last N
+    #                         transformer blocks. (Pass 2 — not yet implemented.)
+    #   "full_trainable"    — HF model in graph; everything trainable. (Pass 2.)
+    trainability: str = "frozen_cached"
+    trainable_layers: int = 0
+
+
+@dataclass
+class TextPoolerConfig:
+    """Pooler over per-news token features. Used by models that consume
+    token-level PLM caches and want to collapse them to a per-news
+    vector at training time (e.g. NRMS's IP2-style attention pooler).
+
+    Lives at the model level (not the encoder) because each model
+    independently decides whether and how to pool token-level features.
+    """
+
+    type: str = "attention"  # 'mean' | 'cls' | 'attention' | 'gate'
+    num_heads: int = 6
+    head_dim: int = 128
+    attention_query_dim: int = 200
+    dropout_rate: float = 0.0
 
 
 @dataclass
@@ -59,6 +78,9 @@ class NRMSConfig:
     max_impressions_length: int = 5
     process_user_id: bool = False
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
+    # PLM-only: how to collapse the (T, plm_dim) token sequence into a
+    # per-news vector. Ignored when encoder.type == 'glove'.
+    text_pooler: TextPoolerConfig = field(default_factory=TextPoolerConfig)
 
 
 @dataclass
@@ -81,6 +103,7 @@ class NAMLConfig:
     max_impressions_length: int = 5
     process_user_id: bool = False
     seed: int = 42
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -107,6 +130,7 @@ class LSTURConfig:
     use_subcategory: bool = False
     category_embedding_dim: int = 100
     subcategory_embedding_dim: int = 100
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -162,6 +186,7 @@ class CROWNConfig:
     # Training
     process_user_id: bool = False
     gradient_clip_norm: float = 4.0
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -253,6 +278,7 @@ class DIGATConfig:
     # Training
     process_user_id: bool = False
     gradient_clip_norm: float = 1.0
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
     @property
     def news_embedding_dim(self) -> int:
@@ -340,6 +366,7 @@ class TCCMConfig:
     max_entities: int = 5
 
     process_user_id: bool = False
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -399,6 +426,7 @@ class PPRecConfig:
     max_entities: int = 5
 
     process_user_id: bool = False
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -453,6 +481,7 @@ class CAUMConfig:
 
     # Training
     process_user_id: bool = False
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
