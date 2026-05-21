@@ -10,7 +10,6 @@
 # AdditiveAttention pipeline.
 #
 # Skips the abstract PLM cache (PP-Rec only consumes the title view).
-# PyTorch only.
 # Usage: python src/train.py experiment=mind/plm/pprec framework=pytorch
 
 defaults:
@@ -39,8 +38,14 @@ dataset:
   process_entities: true
   max_entities: ${spec.inputs.max_entities}
 
+# PLM-specific batch override. PP-Rec JAX PLM at the spec default
+# bs=256 OOMs at the epoch-1→2 transition: XLA holds the JIT-compiled
+# eval graph (per-impression scoring is heavy) in memory while
+# planning the next training step, and the 10.88 GB allocation
+# fails on a 40 GB GPU. bs=64 / eval_bs=128 fits cleanly with
+# room for both graphs in the XLA cache.
 train:
-  batch_size: ${spec.training.batch_size}
+  batch_size: 64
   num_epochs: ${spec.training.num_epochs}
   learning_rate: ${spec.training.learning_rate}
   early_stopping:
@@ -49,7 +54,7 @@ train:
 
 eval:
   fast_evaluation: true
-  batch_size: ${spec.evaluation.batch_size}
+  batch_size: 128
 
 sampling:
   max_impressions_length: ${spec.inputs.impressions.max_length}

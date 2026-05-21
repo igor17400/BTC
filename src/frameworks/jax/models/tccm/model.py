@@ -1,8 +1,8 @@
 """TCCM main model class (JAX/Flax NNX).
 
-Reuses PP-Rec's ``co1`` news encoder and popularity-aware user encoder
-from the JAX PP-Rec implementation. The popularity encoder and activity
-gater are TCCM-specific.
+Reuses PP-Rec's :class:`NewsEncoder` and :class:`UserEncoder` for the
+relevance branch. The popularity branch (:class:`TCCMPopularityEncoder`)
+and :class:`TCCMActivityGater` are TCCM-specific.
 
 Final fusion (paper reference)::
 
@@ -19,11 +19,11 @@ import jax.numpy as jnp
 from flax import nnx
 
 from src.core.models.configs import PPRecConfig, TCCMConfig
+from src.core.models.text_encoder import build_text_encoder
 
-from ...layers import PLMTokenLookup
 from ..base import BaseModel
-from ..pprec import PPRecNewsEncoder, PPRecUserEncoder
-from .layers import TCCMActivityGater, TCCMPopularityEncoder
+from ..pprec import NewsEncoder, UserEncoder
+from .popularity import TCCMActivityGater, TCCMPopularityEncoder
 
 
 def _tccm_to_pprec_config(cfg: TCCMConfig) -> PPRecConfig:
@@ -74,30 +74,6 @@ class TCCM(BaseModel):
         self._max_entities = config.max_entities
 
         pn = processed_news
-        encoder_type = getattr(getattr(config, "encoder", None), "type", "glove")
-        self.encoder_type = encoder_type
-
-        if encoder_type == "glove":
-            word_emb: nnx.Module = nnx.Embed(
-                num_embeddings=pn["vocab_size"],
-                features=config.embedding_size,
-                rngs=rngs,
-            )
-            word_emb.embedding.value = jnp.asarray(pn["embeddings"])
-        else:
-            if "plm_token_embeddings_by_id" not in pn:
-                raise KeyError(
-                    f"TCCM with encoder.type='{encoder_type}' requires "
-                    "processed_news['plm_token_embeddings_by_id']."
-                )
-            plm_dim = int(pn["plm_dim"])
-            word_emb = PLMTokenLookup(
-                pn["plm_token_embeddings_by_id"],
-                pn["plm_attention_mask_by_id"],
-                plm_dim=plm_dim,
-                output_dim=config.embedding_size,
-                rngs=rngs,
-            )
 
         if not (config.use_entity and "entity_embeddings" in pn):
             raise ValueError(
@@ -111,21 +87,26 @@ class TCCM(BaseModel):
         )
         entity_emb.embedding.value = jnp.asarray(pn["entity_embeddings"])
 
+        text_encoder = build_text_encoder(
+            framework="jax",
+            encoder_cfg=getattr(config, "encoder", None),
+            processed_news=pn,
+            kind="title",
+            rngs=rngs,
+        )
+
         # PP-Rec ``co1`` news encoder (no category branch). Popularity
         # branch (below) stays keyed on GloVe-token CTR regardless of
         # encoder.type.
-        self.news_encoder = PPRecNewsEncoder(
+        self.news_encoder = NewsEncoder(
             self._pprec_config,
-            word_emb,
+            text_encoder,
             entity_emb,
             None,
-            encoder_type=encoder_type,
             rngs=rngs,
         )
-        self.user_encoder = PPRecUserEncoder(
-            self._pprec_config,
-            self.news_encoder,
-            rngs=rngs,
+        self.user_encoder = UserEncoder(
+            self._pprec_config, self.news_encoder, rngs=rngs
         )
         self.popularity_encoder = TCCMPopularityEncoder(config, rngs=rngs)
         self.activity_gater = (

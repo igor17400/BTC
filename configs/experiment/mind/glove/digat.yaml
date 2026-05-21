@@ -27,9 +27,12 @@ dataset:
   process_subcategory: ${spec.inputs.process_subcategory}
   process_user_id: ${spec.inputs.process_user_id}
 
-# Training: from spec
+# Training: spec default 64 + grad_accum, but DIGAT JAX OOMs at the
+# default eval_bs=256 (multi-graph attention + 2-hop semantic graph
+# compiles to a heavy XLA graph). bs=32 / eval_bs=64 fits cleanly on
+# 40 GB GPU. PyTorch tolerates bs=64 but uses 32 here for consistency.
 train:
-  batch_size: ${spec.training.batch_size}
+  batch_size: 32
   num_epochs: ${spec.training.num_epochs}
   learning_rate: ${spec.training.learning_rate}
   gradient_clip_val: ${spec.training.gradient_clip_val}
@@ -38,10 +41,10 @@ train:
     patience: ${spec.training.early_stopping.patience}
     min_improvement: ${spec.training.early_stopping.min_improvement}
 
-# Evaluation: from spec
+# Evaluation: smaller batch for JAX compile-memory headroom.
 eval:
   fast_evaluation: true
-  batch_size: ${spec.evaluation.batch_size}
+  batch_size: 64
 
 # Sampling: from spec
 sampling:

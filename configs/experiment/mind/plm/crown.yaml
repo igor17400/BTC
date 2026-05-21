@@ -29,7 +29,12 @@ encoder:
   # CROWN consumes both views; keep the encoder's abstract cache.
   text_field_abstract: abstract
   max_length: ${spec.inputs.title.max_length}
-  max_length_abstract: ${spec.inputs.abstract.max_length}
+  # CROWN spec defaults abstract to 128 tokens, but the resulting
+  # ~25 GB PLM token cache loads into Python after writing and OOM-
+  # kills the host (~64 GB RAM ceiling, ~57 GB anon-rss observed).
+  # Cap at 50 here -> ~10 GB cache. Matches every other multi-view
+  # PLM model (NAML, ...).
+  max_length_abstract: 50
 
 dataset:
   version: small

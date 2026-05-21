@@ -1,17 +1,19 @@
-"""TCCM (Time and Content-Aware Causal Model) — PyTorch port.
+"""TCCM (PyTorch) — folder-style model.
 
-Same architecture as the Keras TCCM: PP-Rec ``co1`` news/user encoders
-for the user-content matching score, plus a content-aware popularity
-encoder driven by per-token bucketed CTR and a reciprocal-power
-timeliness module.
+Layout:
+    popularity.py — TCCM-specific popularity encoder + activity gater
+    model.py      — top-level TCCM, composes PP-Rec encoders +
+                    TCCM popularity branch
+
+Relevance branch (news / user encoder) is reused from PP-Rec; see
+:mod:`src.frameworks.pytorch.models.pprec`.
 """
 
-from .layers import TCCMActivityGater, TCCMNewsEncoder, TCCMPopularityEncoder
 from .model import TCCM
+from .popularity import TCCMActivityGater, TCCMPopularityEncoder
 
 __all__ = [
     "TCCM",
     "TCCMActivityGater",
-    "TCCMNewsEncoder",
     "TCCMPopularityEncoder",
 ]

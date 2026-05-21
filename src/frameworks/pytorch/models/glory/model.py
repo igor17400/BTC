@@ -9,11 +9,12 @@ candidate / history news with both:
 
 The two views are fused per clicked news, pooled into a user vector via
 MHA + attention, and compared with candidate embeddings via dot product.
+When ``use_entity=True``, a third entity view is added on both the
+clicked and candidate sides.
 
-No ``torch_geometric`` dependency — all graph ops live in
-:mod:`.layers`.  This keeps the model parallel to
-:mod:`src.frameworks.pytorch.models.digat` and makes the future JAX /
-Keras ports direct translations.
+No ``torch_geometric`` dependency by default — all graph ops live in
+:mod:`.global_encoder`.  Setting ``use_torchgeo=True`` swaps in PyG's
+CUDA-optimised ``GatedGraphConv`` for parity with the reference repo.
 
 Reference: Yang et al., "Going Beyond Local: Global Graph-Enhanced
 Personalized News Recommendations", RecSys 2023.
@@ -30,154 +31,17 @@ import torch.nn as nn
 from src.core.models.configs import GLORYConfig
 
 from ..base import BaseModel
-from .layers import (
-    AttentionPooling,
-    DotProduct,
-    EntityEncoder,
-    GatedGraphConv,
-    GlobalEntityEncoder,
-    MultiHeadAttention,
-)
-
-# ======================================================================
-# News encoder (local — no graph)
-# ======================================================================
+from .global_encoder import EntityEncoder, GatedGraphConv, GlobalEntityEncoder
+from .news_encoder import AttentionPooling, NewsEncoder
+from .user_encoder import ClickEncoder, UserEncoder
 
 
-class GLORYNewsEncoder(nn.Module):
-    """Local news encoder: word emb → dropout → MHA → LN → drop → pool → LN.
-
-    Consumes a (*, T + E + 1 + 1 + 1) feature tensor where the columns
-    are [title tokens (T), entity ids (E), category, subcategory,
-    news_index].  Only the title tokens are used here — entity /
-    category features are consumed downstream.
-    """
-
-    def __init__(
-        self,
-        config: GLORYConfig,
-        word_embedding: nn.Embedding,
-    ):
-        super().__init__()
-        self.config = config
-        self.word_embedding = word_embedding
-        self.news_dim = config.head_num * config.head_dim
-        self.title_size = config.title_size
-        self.entity_size = config.entity_size
-
-        self.dropout1 = nn.Dropout(config.dropout_rate)
-        self.msa = MultiHeadAttention(
-            config.word_emb_dim,
-            config.word_emb_dim,
-            config.word_emb_dim,
-            config.head_num,
-            config.head_dim,
-        )
-        self.layernorm1 = nn.LayerNorm(self.news_dim)
-        self.dropout2 = nn.Dropout(config.dropout_rate)
-        self.attn_pool = AttentionPooling(self.news_dim, config.attention_hidden_dim)
-        self.layernorm2 = nn.LayerNorm(self.news_dim)
-
-    def forward(
-        self,
-        news_input: torch.Tensor,
-        mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Encode a batch of news.
-
-        Args:
-            news_input: ``(B, N, feature_dim)`` int tensor — feature_dim
-                = ``title_size + entity_size + 3``.
-            mask: optional ``(B*N, title_size)`` token mask.
-
-        Returns:
-            ``(B, N, news_dim)`` news representations.
-        """
-        B, N = news_input.shape[:2]
-        # Columns: [title | entity | cat | sub | news_idx]
-        title_tokens = news_input[..., : self.title_size]
-        flat_title = title_tokens.reshape(B * N, self.title_size).long()
-
-        word_emb = self.dropout1(self.word_embedding(flat_title))  # (B*N, T, E)
-
-        attn_out = self.msa(word_emb, word_emb, word_emb, mask)  # (B*N, T, D)
-        attn_out = self.layernorm1(attn_out)
-        attn_out = self.dropout2(attn_out)
-
-        pooled = self.attn_pool(attn_out, mask)  # (B*N, D)
-        pooled = self.layernorm2(pooled)
-
-        return pooled.view(B, N, self.news_dim)
-
-
-# ======================================================================
-# Click / User / Candidate encoders
-# ======================================================================
-
-
-class GLORYClickEncoder(nn.Module):
-    """Fuse per-clicked-news views via attention pooling.
-
-    Stacks 2 views (title, graph) or 3 views (title, graph, entity)
-    depending on whether ``entity_emb`` is provided.
-    """
-
-    def __init__(self, config: GLORYConfig):
-        super().__init__()
-        self.news_dim = config.head_num * config.head_dim
-        self.attn_pool = AttentionPooling(self.news_dim, config.attention_hidden_dim)
-
-    def forward(
-        self,
-        title_emb: torch.Tensor,  # (B, N, D)
-        graph_emb: torch.Tensor,  # (B, N, D)
-        entity_emb: torch.Tensor | None = None,  # (B, N, D)
-    ) -> torch.Tensor:
-        B, N = title_emb.shape[:2]
-        if entity_emb is not None:
-            stacked = torch.stack(
-                [title_emb, graph_emb, entity_emb],
-                dim=-2,
-            )  # (B, N, 3, D)
-            num_views = 3
-        else:
-            stacked = torch.stack([title_emb, graph_emb], dim=-2)  # (B, N, 2, D)
-            num_views = 2
-        stacked = stacked.view(B * N, num_views, self.news_dim)
-        fused = self.attn_pool(stacked)  # (B*N, D)
-        return fused.view(B, N, self.news_dim)
-
-
-class GLORYUserEncoder(nn.Module):
-    """Pool a sequence of clicked-news embeddings into a user vector."""
-
-    def __init__(self, config: GLORYConfig):
-        super().__init__()
-        self.news_dim = config.head_num * config.head_dim
-        self.msa = MultiHeadAttention(
-            self.news_dim,
-            self.news_dim,
-            self.news_dim,
-            config.head_num,
-            config.head_dim,
-        )
-        self.attn_pool = AttentionPooling(self.news_dim, config.attention_hidden_dim)
-
-    def forward(
-        self,
-        clicked_news: torch.Tensor,  # (B, H, D)
-        mask: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        h = self.msa(clicked_news, clicked_news, clicked_news, mask)
-        return self.attn_pool(h, mask)
-
-
-class GLORYCandidateEncoder(nn.Module):
+class CandidateEncoder(nn.Module):
     """Candidate encoder.
 
-    Without entities: Linear + LeakyReLU on title embeddings.
+    Without entities: ``Linear + LeakyReLU`` on title embeddings.
     With entities: stack ``[title, origin_entity, neighbor_entity]`` →
-    AttentionPooling → Linear + LeakyReLU.
+    ``AttentionPooling`` → ``Linear + LeakyReLU``.
     """
 
     def __init__(self, config: GLORYConfig):
@@ -213,9 +77,12 @@ class GLORYCandidateEncoder(nn.Module):
         return self.act(self.linear(cand_emb))
 
 
-# ======================================================================
-# Full GLORY model
-# ======================================================================
+class DotProduct(nn.Module):
+    """Batched dot product for candidate scoring."""
+
+    def forward(self, left: torch.Tensor, right: torch.Tensor) -> torch.Tensor:
+        # left: (B, C, D), right: (B, D) → (B, C)
+        return torch.bmm(left, right.unsqueeze(-1)).squeeze(-1)
 
 
 class GLORY(BaseModel):
@@ -249,12 +116,13 @@ class GLORY(BaseModel):
             torch.tensor(embeddings_matrix, dtype=torch.float32)
         )
 
-        self.local_news_encoder = GLORYNewsEncoder(config, self.word_embedding)
-        # ``use_torchgeo=True`` swaps in PyG's CUDA-optimized GatedGraphConv
+        self.local_news_encoder = NewsEncoder(config, self.word_embedding)
+        # ``use_torchgeo=True`` swaps in PyG's CUDA-optimised GatedGraphConv
         # (matches the reference GLORY repo). Default keeps the
         # framework-agnostic pure-PyTorch implementation.
         if getattr(config, "use_torchgeo", False):
             from torch_geometric.nn import GatedGraphConv as _PyGGatedGraphConv
+
             self.global_news_encoder = _PyGGatedGraphConv(
                 out_channels=self.news_dim,
                 num_layers=config.gnn_num_layers,
@@ -266,9 +134,9 @@ class GLORY(BaseModel):
                 num_layers=config.gnn_num_layers,
                 aggr="add",
             )
-        self.click_encoder = GLORYClickEncoder(config)
-        self.user_encoder = GLORYUserEncoder(config)
-        self.candidate_encoder = GLORYCandidateEncoder(config)
+        self.click_encoder = ClickEncoder(config)
+        self.user_encoder = UserEncoder(config)
+        self.candidate_encoder = CandidateEncoder(config)
         self.click_predictor = DotProduct()
 
         # Entity path (optional).
@@ -305,10 +173,11 @@ class GLORY(BaseModel):
                 dropout_rate=config.dropout_rate,
             )
 
-        # news_encoder / user_encoder names satisfy the BaseModel contract
-        # used by the shared evaluator for standard models.  GLORY's eval
-        # path is custom (pre-computes global embeddings once per epoch),
-        # so these attributes exist only for introspection.
+        # ``news_encoder`` / ``user_encoder_public`` aliases satisfy the
+        # BaseModel contract used by the shared evaluator for standard
+        # models. GLORY's eval path is custom (pre-computes global
+        # embeddings once per epoch), so these attributes exist only for
+        # introspection.
         self.news_encoder = self.local_news_encoder
         self.user_encoder_public = self.user_encoder
 

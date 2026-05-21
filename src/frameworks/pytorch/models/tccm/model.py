@@ -1,9 +1,8 @@
 """TCCM main model class (PyTorch) — TCCM-faithful.
 
-Now uses the TCCM-specific encoders (:class:`TCCMNewsEncoder`,
-:class:`TCCMPopularityEncoder`, :class:`TCCMActivityGater`) instead of
-PP-Rec's. The user encoder is reused from PP-Rec because it already
-matches the reference's ``popularity_user_modeling`` branch.
+Reuses PP-Rec's :class:`NewsEncoder` and :class:`UserEncoder` for the
+relevance branch. The popularity branch (:class:`TCCMPopularityEncoder`)
+and :class:`TCCMActivityGater` are TCCM-specific.
 
 Final fusion (paper reference)::
 
@@ -17,14 +16,13 @@ from dataclasses import asdict
 from typing import Any
 
 import torch
-import torch.nn as nn
 
 from src.core.models.configs import PPRecConfig, TCCMConfig
+from src.core.models.text_encoder import build_text_encoder
 
-from ...layers import PLMTokenLookup
 from ..base import BaseModel
-from ..pprec import PPRecNewsEncoder, PPRecUserEncoder
-from .layers import TCCMActivityGater, TCCMPopularityEncoder
+from ..pprec import NewsEncoder, UserEncoder
+from .popularity import TCCMActivityGater, TCCMPopularityEncoder
 
 
 def _tccm_to_pprec_config(cfg: TCCMConfig) -> PPRecConfig:
@@ -82,47 +80,35 @@ class TCCM(BaseModel):
 
         cfg = config
         pn = processed_news
-        encoder_type = getattr(getattr(cfg, "encoder", None), "type", "glove")
-        self.encoder_type = encoder_type
-
-        if encoder_type == "glove":
-            word_emb: nn.Module = nn.Embedding(pn["vocab_size"], cfg.embedding_size)
-            word_emb.weight = nn.Parameter(
-                torch.tensor(pn["embeddings"], dtype=torch.float32)
-            )
-        else:
-            if "plm_token_embeddings_by_id" not in pn:
-                raise KeyError(
-                    f"TCCM with encoder.type='{encoder_type}' requires "
-                    "processed_news['plm_token_embeddings_by_id']."
-                )
-            plm_dim = int(pn["plm_dim"])
-            word_emb = PLMTokenLookup(
-                pn["plm_token_embeddings_by_id"],
-                pn["plm_attention_mask_by_id"],
-                plm_dim=plm_dim,
-                output_dim=cfg.embedding_size,
-            )
 
         if not (cfg.use_entity and "entity_embeddings" in pn):
             raise ValueError(
                 "TCCM requires entity embeddings (use_entity=True and "
                 "'entity_embeddings' in processed_news)."
             )
+        import torch.nn as nn
+
         entity_emb = nn.Embedding(pn["entity_vocab_size"], cfg.entity_embedding_dim)
         entity_emb.weight = nn.Parameter(
             torch.tensor(pn["entity_embeddings"], dtype=torch.float32)
         )
 
+        text_encoder = build_text_encoder(
+            framework="pytorch",
+            encoder_cfg=getattr(cfg, "encoder", None),
+            processed_news=pn,
+            kind="title",
+        )
+
         # PP-Rec ``co1`` news encoder (no category branch — TCCM
         # follows the reference's ``attrs = ['title', 'entity']``).
-        # Popularity branch (below) stays keyed on GloVe-token-CTR
+        # Popularity branch (below) stays keyed on GloVe-token CTR
         # regardless of encoder.type — the relevance encoder is the
         # only branch that consumes PLM features.
-        self.news_encoder = PPRecNewsEncoder(
-            self._pprec_config, word_emb, entity_emb, None, encoder_type=encoder_type
+        self.news_encoder = NewsEncoder(
+            self._pprec_config, text_encoder, entity_emb, None
         )
-        self.user_encoder = PPRecUserEncoder(self._pprec_config, self.news_encoder)
+        self.user_encoder = UserEncoder(self._pprec_config, self.news_encoder)
         self.popularity_encoder = TCCMPopularityEncoder(cfg)
         self.activity_gater = TCCMActivityGater(cfg) if cfg.use_activity_gate else None
 

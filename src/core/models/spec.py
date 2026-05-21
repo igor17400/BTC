@@ -453,9 +453,9 @@ _MODEL_CLASS_PATHS = {
         "crown": "src.frameworks.pytorch.models.crown.CROWN",
         "digat": "src.frameworks.pytorch.models.digat.DIGAT",
         "glory": "src.frameworks.pytorch.models.glory.GLORY",
-        "pprec": "src.frameworks.pytorch.models.pprec.PPRec",
+        "pprec": "src.frameworks.pytorch.models.pprec.model.PPRec",
         "miner": "src.frameworks.pytorch.models.miner.MINER",
-        "tccm": "src.frameworks.pytorch.models.tccm.TCCM",
+        "tccm": "src.frameworks.pytorch.models.tccm.model.TCCM",
     },
     "jax": {
         "caum": "src.frameworks.jax.models.caum.model.CAUM",
@@ -463,11 +463,11 @@ _MODEL_CLASS_PATHS = {
         "naml": "src.frameworks.jax.models.naml.model.NAML",
         "lstur": "src.frameworks.jax.models.lstur.model.LSTUR",
         "crown": "src.frameworks.jax.models.crown.CROWN",
-        "pprec": "src.frameworks.jax.models.pprec.PPRec",
+        "pprec": "src.frameworks.jax.models.pprec.model.PPRec",
         "digat": "src.frameworks.jax.models.digat.DIGAT",
         "glory": "src.frameworks.jax.models.glory.GLORY",
         "miner": "src.frameworks.jax.models.miner.MINER",
-        "tccm": "src.frameworks.jax.models.tccm.TCCM",
+        "tccm": "src.frameworks.jax.models.tccm.model.TCCM",
     },
 }
 

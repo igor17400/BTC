@@ -86,99 +86,35 @@ def _build_tccm_cache(dataset_provider, processed_news, spec) -> dict:
 
 
 def _build_features(dataset_provider, encoder_cfg=None) -> tuple[dict, np.ndarray]:
-    """Replicate the standard PyTorch feature builder used by the runner.
+    """Replicate the standard runner feature builder for TCCM.
 
-    Kept inline here so the setup hook can return a complete
-    ``features`` dict (the runner's ``_build_train_features`` is private
-    and not part of the framework-agnostic surface).
-
-    In PLM mode (``encoder_cfg.type != 'glove'``) ``hist_tokens`` and
-    ``cand_tokens`` carry packed ``[news_idx | entities]`` (no title
-    tokens) — the news encoder reads ``news_idx`` and looks up cached
-    PLM features. The popularity branch stays keyed on GloVe-token CTR
-    via ``cand_pop_buckets`` built downstream.
+    Single contract across GloVe and PLM: ``hist_tokens`` /
+    ``cand_tokens`` are packed ``[news_idx | entities]`` (no title
+    tokens). The news encoder reads ``news_idx`` and delegates the
+    per-news title lookup to its injected :class:`TextEncoder`.
+    The popularity branch is keyed on GloVe-token CTR via
+    ``cand_pop_buckets`` built downstream — unaffected by ``encoder_cfg``.
     """
     data = dataset_provider.train_behaviors_data
     features: dict = {}
-    encoder_type = (
-        encoder_cfg.get("type", "glove") if encoder_cfg is not None else "glove"
-    )
 
-    if encoder_type != "glove":
-        hist_news_idx = np.asarray(data["histories_news_ids"])
-        cand_news_idx = np.asarray(data["candidate_news_ids"])
-        features["hist_features"] = hist_news_idx
-        features["cand_features"] = cand_news_idx
+    hist_news_idx = np.asarray(data["histories_news_ids"])
+    cand_news_idx = np.asarray(data["candidate_news_ids"])
+    features["hist_features"] = hist_news_idx
+    features["cand_features"] = cand_news_idx
 
-        hist_parts: list[np.ndarray] = [hist_news_idx[..., None]]
-        cand_parts: list[np.ndarray] = [cand_news_idx[..., None]]
-        if getattr(dataset_provider, "process_entities", False) and (
-            "history_news_entities" in data
-        ):
-            hist_parts.append(np.asarray(data["history_news_entities"]))
-            cand_parts.append(np.asarray(data["candidate_news_entities"]))
-        features["hist_tokens"] = np.concatenate(hist_parts, axis=-1)
-        features["cand_tokens"] = np.concatenate(cand_parts, axis=-1)
+    hist_parts: list[np.ndarray] = [hist_news_idx[..., None]]
+    cand_parts: list[np.ndarray] = [cand_news_idx[..., None]]
+    if getattr(dataset_provider, "process_entities", False) and (
+        "history_news_entities" in data
+    ):
+        hist_parts.append(np.asarray(data["history_news_entities"]))
+        cand_parts.append(np.asarray(data["candidate_news_entities"]))
+    features["hist_tokens"] = np.concatenate(hist_parts, axis=-1)
+    features["cand_tokens"] = np.concatenate(cand_parts, axis=-1)
 
-        if dataset_provider.process_user_id:
-            features["user_ids"] = np.asarray(data["user_ids"])
-        if "history_news_ctr" in data:
-            ctr = np.asarray(data["history_news_ctr"])
-            features["hist_ctr"] = np.minimum(np.ceil(ctr * 200).astype(np.int32), 199)
-            features["cand_ctr"] = np.asarray(data["candidate_news_ctr"])
-        if "candidate_news_recency" in data:
-            features["cand_recency"] = np.asarray(data["candidate_news_recency"])
-
-        labels = np.asarray(data["labels"])
-        return features, labels
-
-    if dataset_provider.process_title:
-        features["hist_tokens"] = np.asarray(data["history_news_tokens"])
-        features["cand_tokens"] = np.asarray(data["candidate_news_tokens"])
-    if dataset_provider.process_abstract:
-        features["hist_abstract_tokens"] = np.asarray(
-            data["history_news_abstract_tokens"]
-        )
-        features["cand_abstract_tokens"] = np.asarray(
-            data["candidate_news_abstract_tokens"]
-        )
-    if dataset_provider.process_category:
-        features["hist_category"] = np.asarray(data["history_news_categories"])
-        features["cand_category"] = np.asarray(data["candidate_news_categories"])
-    if dataset_provider.process_subcategory:
-        features["hist_subcategory"] = np.asarray(data["history_news_subcategories"])
-        features["cand_subcategory"] = np.asarray(data["candidate_news_subcategories"])
     if dataset_provider.process_user_id:
         features["user_ids"] = np.asarray(data["user_ids"])
-
-    # PP-Rec entity + category concat (matches runner._build_train_features)
-    if "history_news_entities" in data and dataset_provider.process_entities:
-        hist_ent = np.asarray(data["history_news_entities"])
-        cand_ent = np.asarray(data["candidate_news_entities"])
-        if "hist_tokens" in features:
-            features["hist_tokens"] = np.concatenate(
-                [features["hist_tokens"], hist_ent], axis=-1
-            )
-            features["cand_tokens"] = np.concatenate(
-                [features["cand_tokens"], cand_ent], axis=-1
-            )
-    if dataset_provider.process_category and getattr(
-        dataset_provider, "process_entities", False
-    ):
-        hist_cat = np.asarray(data["history_news_categories"])
-        cand_cat = np.asarray(data["candidate_news_categories"])
-        if "hist_tokens" in features:
-            features["hist_tokens"] = np.concatenate(
-                [features["hist_tokens"], np.expand_dims(hist_cat, axis=-1)],
-                axis=-1,
-            )
-            features["cand_tokens"] = np.concatenate(
-                [features["cand_tokens"], np.expand_dims(cand_cat, axis=-1)],
-                axis=-1,
-            )
-
-    # PP-Rec CTR features: history CTR discretized to int buckets,
-    # candidate CTR stays float for the scaler.
     if "history_news_ctr" in data:
         ctr = np.asarray(data["history_news_ctr"])
         features["hist_ctr"] = np.minimum(np.ceil(ctr * 200).astype(np.int32), 199)
