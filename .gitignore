@@ -91,3 +91,7 @@ site/
 .env.*
 .claude
 .data/
+
+# Local-only Nikkei dataset (proprietary, do not commit)
+configs/dataset/nikkei.yaml
+configs/experiment/nikkei/
