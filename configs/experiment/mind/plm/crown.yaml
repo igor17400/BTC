@@ -5,12 +5,25 @@
 # CROWN is two-view (title + abstract). Under PLM, both views are
 # served from separate PLM caches indexed by parsed news_idx:
 #   - title:    plm_token_embeddings_by_id           (T=32  by default)
-#   - abstract: plm_abstract_token_embeddings_by_id  (A=128 by default)
-# Both project plm_dim -> embedding_size before CROWN's transformer +
-# k-intent disentanglement pipeline (unchanged from GloVe).
+#   - abstract: plm_abstract_token_embeddings_by_id  (A=128 — paper default)
 #
-# GPU footprint: ~6.4 GB title cache + ~25 GB abstract cache @ T=128.
-# If memory-constrained, drop max_length_abstract here.
+# Option-2 PLM: the Transformer runs at the encoder's NATIVE dim (768
+# for BERT-base) — no projection before MHSA. Preserves the BERT signal
+# through the per-news Transformer + mean pool. The only post-pool
+# projection is the intent_layers collapse (text_dim + cat_dim ->
+# intent_dim).
+#
+# Host RAM footprint (this box is 56 GB) — A=128 fits thanks to the
+# fp16 by_id lookup added in ``src/core/data/encoders/plm.py``:
+#   - title cache  @ T=32:  6.4 GB
+#   - abstract by_id @ A=128 (fp16): ~12 GB
+#   - encode buffer transient (fp32): ~25 GB during build, freed after
+#   - process state:                  ~10 GB
+#   Peak RSS during build ~47 GB → fits with ~9 GB headroom.
+# An earlier all-fp32 by_id hit ~50 GB peak and OOM-killed.
+#
+# Train batch_size=32 with no grad-accum matches the reference repo
+# (``crown-www25/config.py:107``) — same SGD dynamics as the paper.
 #
 # Usage: python src/train.py experiment=mind/plm/crown framework=pytorch
 
@@ -25,16 +38,32 @@ name: mind_crown_plm
 model_name: CROWN
 seed: 42
 
+spec:
+  model:
+    architecture:
+      news_encoder:
+        # BERT-base text_dim=768 must be divisible by num_heads. Paper
+        # default (10 heads, 30 head_dim @ 300) doesn't divide 768, so
+        # we use 12 heads (head_dim=64) at BERT-base.
+        num_heads: 12
+        head_dim: 64
+  training:
+    # Reference repo trains at bs=32 with no grad-accum
+    # (``crown-www25/config.py:107``). At A=128 the per-batch BERT
+    # training graph + the two ~16 GB PLM caches on GPU exceed the
+    # 40 GB VRAM at bs=32. Halve to bs=16 + grad_accum=2 so the
+    # effective batch (and SGD dynamics) still equal the paper's
+    # bs=32; only the peak activation footprint halves.
+    batch_size: 16
+    grad_accum_steps: 2
+
 encoder:
   # CROWN consumes both views; keep the encoder's abstract cache.
   text_field_abstract: abstract
   max_length: ${spec.inputs.title.max_length}
-  # CROWN spec defaults abstract to 128 tokens, but the resulting
-  # ~25 GB PLM token cache loads into Python after writing and OOM-
-  # kills the host (~64 GB RAM ceiling, ~57 GB anon-rss observed).
-  # Cap at 50 here -> ~10 GB cache. Matches every other multi-view
-  # PLM model (NAML, ...).
-  max_length_abstract: 50
+  # Paper default. Fits on the 56 GB host thanks to the fp16 by_id
+  # lookup in ``encoders/plm.py``; cache file on disk is fp32 (~25 GB).
+  max_length_abstract: 128
 
 dataset:
   version: small
@@ -61,7 +90,13 @@ train:
 
 eval:
   fast_evaluation: true
-  batch_size: ${spec.evaluation.batch_size}
+  # Spec default is 64, but at A=128 + BERT-base the CROWN custom
+  # evaluator's per-impression GNN precompute runs the news_encoder
+  # transformer on (eval_bs * history_len * abstract_len, plm_dim)
+  # tokens in one shot. bs=64 -> 3,200 sequences -> ~3.5 GB single
+  # allocation that fragmented the 40 GB GPU. Halve to 16 to match
+  # train; ~4x more dataloader iterations but no model change.
+  batch_size: 16
 
 sampling:
   max_impressions_length: ${spec.inputs.impressions.max_length}

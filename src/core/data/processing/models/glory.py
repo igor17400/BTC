@@ -100,11 +100,62 @@ def build_news_feature_matrix(
 # ----------------------------------------------------------------------
 
 
+def _build_edges_from_raw_behaviors(
+    raw_behaviors_path: Path,
+    news_str_id_to_int_idx: dict[str, int],
+    use_graph_type: int,
+) -> Counter:
+    """Build edge counter by reading raw behaviors.tsv (FULL history).
+
+    Mirrors reference GLORY's ``prepare_news_graph``
+    (``reference_codes/GLORY/src/dataload/data_preprocess.py:242-278``)
+    which uses each user's full click history straight from
+    behaviors.tsv -- NOT the truncated ``histories_news_ids`` array
+    (which is capped at ``max_history_length=50`` for the model's
+    user-encoder input). For users with >50 clicks the truncated
+    version silently drops the bulk of their click trajectory, which
+    severely depresses edge weights and starves GLORY's global graph
+    encoder. See GLORY_PARITY_FINDINGS.md.
+    """
+    edge_counter: Counter = Counter()
+    seen_users: set = set()
+    with open(raw_behaviors_path, encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split("\t")
+            if len(parts) < 4:
+                continue
+            user_id = parts[1]
+            if user_id in seen_users:
+                continue
+            seen_users.add(user_id)
+            history_str_ids = parts[3].split() if parts[3] else []
+            history = [
+                news_str_id_to_int_idx[s]
+                for s in history_str_ids
+                if s in news_str_id_to_int_idx
+            ]
+            if len(history) < 2:
+                continue
+            if use_graph_type == 0:
+                for i in range(len(history) - 1):
+                    edge_counter[(history[i], history[i + 1])] += 1
+            elif use_graph_type == 1:
+                for i in range(len(history) - 1):
+                    for j in range(i + 1, len(history)):
+                        edge_counter[(history[i], history[j])] += 1
+                        edge_counter[(history[j], history[i])] += 1
+            else:
+                raise ValueError(f"Unknown use_graph_type={use_graph_type}")
+    return edge_counter
+
+
 def build_news_graph(
     train_behaviors: dict,
     num_news: int,
     use_graph_type: int = 0,
     cache_path: Path | None = None,
+    raw_behaviors_path: Path | None = None,
+    news_str_id_to_int_idx: dict[str, int] | None = None,
 ) -> dict:
     """Build the global news graph from user click trajectories.
 
@@ -120,6 +171,14 @@ def build_news_graph(
         use_graph_type: 0 = trajectory (directed consecutive edges),
             1 = co-occurrence (undirected all-pairs).
         cache_path: Optional path to load/save the result.
+        raw_behaviors_path: Optional path to the raw ``behaviors.tsv``
+            file.  When provided (with ``news_str_id_to_int_idx``),
+            edges are built from each user's FULL history (matching
+            reference GLORY).  When not provided, falls back to the
+            truncated ``histories_news_ids`` in ``train_behaviors``
+            (capped at ``max_history_length``).
+        news_str_id_to_int_idx: String news ID → processed_news row
+            index map (required when ``raw_behaviors_path`` is given).
 
     Returns:
         Dict with ``edge_index`` ``(2, E)`` int64, ``edge_attr`` ``(E,)``
@@ -129,6 +188,45 @@ def build_news_graph(
         logger.info(f"Loading cached GLORY news graph from {cache_path}")
         with open(cache_path, "rb") as f:
             return pickle.load(f)
+
+    # Preferred path: read raw behaviors.tsv → full histories (matches
+    # reference). Falls back to truncated ``histories_news_ids`` only
+    # when raw data isn't reachable (e.g. synthetic datasets).
+    if (
+        raw_behaviors_path is not None
+        and news_str_id_to_int_idx is not None
+        and raw_behaviors_path.exists()
+    ):
+        logger.info(
+            f"Building GLORY news graph from raw behaviors at "
+            f"{raw_behaviors_path} (full histories)."
+        )
+        edge_counter = _build_edges_from_raw_behaviors(
+            raw_behaviors_path, news_str_id_to_int_idx, use_graph_type
+        )
+        edges = list(edge_counter.keys())
+        if edges:
+            edge_index = np.asarray(edges, dtype=np.int64).T
+            edge_attr = np.asarray([edge_counter[e] for e in edges], dtype=np.int64)
+        else:
+            edge_index = np.zeros((2, 0), dtype=np.int64)
+            edge_attr = np.zeros((0,), dtype=np.int64)
+        graph = {
+            "edge_index": edge_index,
+            "edge_attr": edge_attr,
+            "num_nodes": int(num_news),
+        }
+        logger.info(
+            f"Built GLORY news graph (raw-behaviors): {graph['num_nodes']} "
+            f"nodes, {edge_index.shape[1]} directed edges, "
+            f"total weight {int(edge_attr.sum())}."
+        )
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, "wb") as f:
+                pickle.dump(graph, f)
+            logger.info(f"Cached GLORY news graph to {cache_path}")
+        return graph
 
     histories = train_behaviors.get("histories_news_ids")
     if histories is None:

@@ -45,12 +45,45 @@ def setup_digat(
         all_news_df = read_all_news(dataset_provider.dataset_path)
         id_map = dataset_provider.news_str_id_to_int_idx
         cache_dir = dataset_provider.dataset_path / "processed"
+        # Restrict SAG corpus to news appearing in train/news.tsv. Without
+        # this, valid/test-only news appear as graph neighbors of train
+        # news during training, leaking eval-set representations into
+        # the model. Reference DIGAT does the equivalent via its
+        # mode='corpus' filter (construct_SAG.py:32).
+        import csv as _csv
+
+        import pandas as _pd
+
+        cols = [
+            "id",
+            "category",
+            "subcategory",
+            "title",
+            "abstract",
+            "url",
+            "title_entities",
+            "abstract_entities",
+        ]
+        corpus_news_str_ids: set[str] | None = None
+        train_news_path = dataset_provider.dataset_path / "train" / "news.tsv"
+        if train_news_path.exists():
+            train_df = _pd.read_table(
+                train_news_path,
+                header=None,
+                names=cols,
+                na_filter=False,
+                on_bad_lines="skip",
+                engine="python",
+                quoting=_csv.QUOTE_NONE,
+            )
+            corpus_news_str_ids = set(train_df["id"].astype(str))
         sag_data = construct_sag(
             all_news_df,
             id_map,
             sag_hops=digat_cfg.sag_hops,
             sag_neighbors=digat_cfg.sag_neighbors,
             cache_dir=cache_dir,
+            corpus_news_str_ids=corpus_news_str_ids,
         )
     else:
         num_news = processed_news["tokens"].shape[0]

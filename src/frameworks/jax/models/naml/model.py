@@ -45,12 +45,19 @@ class NAML(BaseModel):
             kind="title",
             rngs=rngs,
         )
-        abstract_text_encoder = build_text_encoder(
-            framework="jax",
-            encoder_cfg=encoder_cfg,
-            processed_news=processed_news,
-            kind="abstract",
-            rngs=rngs,
+        # Abstract view is optional: when process_abstract is False the data
+        # pipeline produces no abstract cache, so skip the encoder entirely
+        # (the news encoder then runs on title + category + subcategory).
+        abstract_text_encoder = (
+            build_text_encoder(
+                framework="jax",
+                encoder_cfg=encoder_cfg,
+                processed_news=processed_news,
+                kind="abstract",
+                rngs=rngs,
+            )
+            if config.process_abstract
+            else None
         )
 
         self.news_encoder = NewsEncoder(

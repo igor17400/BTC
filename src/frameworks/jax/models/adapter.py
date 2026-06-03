@@ -192,6 +192,70 @@ class JAXAdapter:
         return np.asarray(scores)
 
     # ------------------------------------------------------------------
+    # CROWN-specific methods (candidate-aware user encoder).
+    # ------------------------------------------------------------------
+
+    def encode_crown_history_graph(
+        self,
+        user_encoder: Any,
+        features: Any,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Encode history packed features through news encoder + 1-layer SAGE.
+
+        Returns ``(gcn_news_np, mask_np)`` where ``gcn_news_np`` is
+        ``(B, H, D)`` GNN-updated history reps and ``mask_np`` is
+        ``(B, H)`` bool.
+        """
+        f = jnp.asarray(features).astype(jnp.int32)
+        mask = user_encoder.news_encoder.valid_mask(f)
+        news_history = user_encoder.news_encoder(
+            f, compute_aux_loss=False, training=False
+        )
+        gcn_news = user_encoder.run_gnn(news_history, mask, training=False)
+        return np.asarray(gcn_news), np.asarray(mask).astype(bool)
+
+    def run_crown_candidate_attention(
+        self,
+        user_encoder: Any,
+        gcn_news: np.ndarray,
+        hist_mask: np.ndarray,
+        cand_news_vecs: np.ndarray,
+        max_C: int | None = None,
+    ) -> np.ndarray:
+        """Candidate-aware scaled-dot attention + click score for one impression.
+
+        Args:
+            user_encoder: CROWN :class:`UserEncoder` (NNX module).
+            gcn_news: ``(H, D)`` numpy.
+            hist_mask: ``(H,)`` bool numpy.
+            cand_news_vecs: ``(C, D)`` numpy.
+            max_C: When set, pad ``cand_news_vecs`` to ``(max_C, D)`` with
+                zeros before the JIT call. Forces every per-impression
+                call to use the same shape so JAX caches a single
+                compiled binary instead of one per unique ``C`` — the
+                fix for the PLM-A=128 ep1→ep2 OOM where dozens of
+                cached binaries fragmented GPU memory. Returned scores
+                are sliced back to the real ``C``.
+
+        Returns:
+            ``(real_C,)`` numpy array of click scores.
+        """
+        real_C, D = cand_news_vecs.shape
+        pad_to = max_C if max_C is not None else real_C
+        if pad_to == real_C:
+            c_pad = cand_news_vecs.astype(np.float32, copy=False)
+        else:
+            c_pad = np.zeros((pad_to, D), dtype=np.float32)
+            c_pad[:real_C] = cand_news_vecs
+
+        g = jnp.asarray(gcn_news, dtype=jnp.float32)[None, :, :]  # (1, H, D)
+        m = jnp.asarray(hist_mask).astype(jnp.bool_)[None, :]  # (1, H)
+        c = jnp.asarray(c_pad, dtype=jnp.float32)[None, :, :]  # (1, pad_to, D)
+        user_per_cand = user_encoder.candidate_attention(g, c, m)  # (1, pad_to, D)
+        scores = jnp.sum(user_per_cand * c, axis=-1)  # (1, pad_to)
+        return np.asarray(scores[0, :real_C])  # back to real C
+
+    # ------------------------------------------------------------------
     # CAUM-specific methods
     # ------------------------------------------------------------------
 

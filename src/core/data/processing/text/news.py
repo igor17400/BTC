@@ -4,6 +4,7 @@ Standalone functions extracted from NewsDatasetBase for reading news TSV files,
 tokenizing titles/abstracts, and orchestrating the full news processing pipeline.
 """
 
+import csv
 import json
 import logging
 import os
@@ -56,7 +57,15 @@ def read_all_news(dataset_path: Path) -> pd.DataFrame:
     ]
 
     def read_news_file(file_path: Path) -> pd.DataFrame:
-        """Read a news.tsv file with auto-detected column format."""
+        """Read a news.tsv file with auto-detected column format.
+
+        ``quoting=csv.QUOTE_NONE`` is required: MIND news titles and abstracts
+        contain unescaped double-quotes (e.g. ``"No more Mr. Nice Guy"``). With
+        the default ``quotechar='"'``, pandas misparses these rows and
+        ``on_bad_lines="skip"`` silently drops them — ~1,153 news in
+        MIND-small, which then cascades into phantom skip-edges in the GLORY
+        click-trajectory graph and missing tokens/embeddings everywhere.
+        """
         return pd.read_table(
             file_path,
             header=None,
@@ -64,6 +73,7 @@ def read_all_news(dataset_path: Path) -> pd.DataFrame:
             na_filter=False,
             on_bad_lines="skip",
             engine="python",
+            quoting=csv.QUOTE_NONE,
         )
 
     for split in ("train", "valid", "test"):

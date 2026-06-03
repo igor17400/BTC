@@ -58,7 +58,12 @@ class CROWN(BaseModel):
             kind="abstract",
         )
 
-        # Category / subcategory embeddings (paper: uniform init).
+        # Category / subcategory embeddings — uniform-init then FROZEN
+        # to match the reference repo
+        # (``crown-www25/newsEncoders.py:33-35`` sets ``requires_grad =
+        # False`` after a U(-0.1, 0.1) init, with ``subCategory[0]``
+        # zeroed). Freeing these to train was hurting test AUC by
+        # several points in our ablations.
         self.category_embedding = nn.Embedding(
             num_categories + 1, config.category_embedding_dim
         )
@@ -67,6 +72,10 @@ class CROWN(BaseModel):
         )
         nn.init.uniform_(self.category_embedding.weight, -0.1, 0.1)
         nn.init.uniform_(self.subcategory_embedding.weight, -0.1, 0.1)
+        with torch.no_grad():
+            self.subcategory_embedding.weight[0].zero_()
+        self.category_embedding.weight.requires_grad = False
+        self.subcategory_embedding.weight.requires_grad = False
 
         self.news_encoder = NewsEncoder(
             config,
@@ -109,13 +118,16 @@ class CROWN(BaseModel):
 
         history_mask = self.news_encoder.valid_mask(hist_packed)
 
-        user_repr = self.user_encoder.forward_with_candidates(
+        # Candidate-aware user representations (B, C, D) — every candidate
+        # produces a different attended-history vector. Matches reference
+        # ``seongeunryu/crown-www25/userEncoders.py:CROWN.forward``.
+        user_per_cand = self.user_encoder.forward_with_candidates(
             history_packed=hist_packed,
             history_mask=history_mask,
             candidate_repr=cand_full,
         )
 
-        return (user_repr.unsqueeze(1) * cand_full).sum(dim=-1)
+        return (user_per_cand * cand_full).sum(dim=-1)
 
     def get_auxiliary_loss(self) -> torch.Tensor:
         """Return weighted auxiliary loss from the news encoder."""

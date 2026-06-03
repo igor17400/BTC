@@ -112,6 +112,10 @@ class NAMLConfig:
     max_history_length: int = 50
     max_impressions_length: int = 5
     process_user_id: bool = False
+    # When False the abstract view is dropped entirely (encoder + view-attention
+    # input), so NAML runs on title + category + subcategory only. Mirrors the
+    # spec's ``inputs.process_abstract`` flag.
+    process_abstract: bool = True
     seed: int = 42
     encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
@@ -173,8 +177,9 @@ class CROWNConfig:
     alpha: float = 0.3  # auxiliary category-prediction loss weight
 
     # Bipartite user-news GNN (paper §3.3 eq. 8)
-    # Paper uses GAT; reference code ships GraphSAGE. Both supported for ablation.
-    gnn_type: str = "gat"  # 'gat' or 'graphsage'
+    # Paper uses GAT; reference code ships GraphSAGE. Default = graphsage
+    # (matches the reference; honours [[feedback_paper_vs_reference_code]]).
+    gnn_type: str = "graphsage"  # 'graphsage' or 'gat'
     graph_num_layers: int = 1
     graph_hidden_dim: int = 0  # 0 = auto (news_embedding_dim); set explicitly for Keras
     gat_num_heads: int = 4
@@ -234,15 +239,10 @@ class GLORYConfig:
     entity_emb_dim: int = 100
     entity_neighbors: int = 10
 
-    # Backend for graph ops. ``True`` swaps our pure-PyTorch
-    # ``GatedGraphConv`` for ``torch_geometric.nn.GatedGraphConv``
-    # (CUDA-optimized scatter/gather). Default ``False`` keeps the
-    # framework-agnostic pure-PyTorch path.
-    use_torchgeo: bool = False
-
     # Standard
     process_user_id: bool = False
     gradient_clip_norm: float = 1.0
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
     @property
     def news_embedding_dim(self) -> int:

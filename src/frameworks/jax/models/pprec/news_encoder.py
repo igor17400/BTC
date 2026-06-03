@@ -38,27 +38,27 @@ class NewsEncoder(nnx.Module):
         self.entity_embedding = entity_embedding_layer
         self.category_embedding = category_embedding_layer
 
+        # Option-2 PLM: per-news MHSA runs at the encoder's NATIVE
+        # text dim (300 for GloVe, 768 for BERT-base). Flax NNX
+        # MultiHeadAttention's out_features defaults to in_features, so
+        # MHSA output stays at text_dim regardless of qkv_features. The
+        # only post-pool projection is ``word_proj`` collapsing to news_dim.
         text_dim = text_encoder.output_dim
-        emb_dim = config.embedding_size
         self.text_dim = int(text_dim)
-        self.text_projection = (
-            nnx.Linear(text_dim, emb_dim, rngs=rngs) if text_dim != emb_dim else None
-        )
 
         co_out_dim = config.co_num_heads * config.co_head_dim
 
-        # --- Word (title) branch — MHSA at embedding_size ---
+        # --- Word (title) branch — MHSA at text_dim ---
         self.word_dropout = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
         self.word_mhsa = nnx.MultiHeadAttention(
             num_heads=config.num_heads,
-            in_features=emb_dim,
+            in_features=text_dim,
             qkv_features=config.num_heads * config.head_dim,
             decode=False,
             rngs=rngs,
         )
-        # Flax NNX MHA has out_features = in_features by default, so the
-        # MHSA output stays at emb_dim regardless of qkv_features.
-        word_concat_dim = emb_dim + (
+        # MHSA output stays at text_dim (out_features defaults to in_features).
+        word_concat_dim = text_dim + (
             co_out_dim if entity_embedding_layer is not None else 0
         )
         self.word_proj = nnx.Linear(word_concat_dim, config.news_dim, rngs=rngs)
@@ -86,9 +86,11 @@ class NewsEncoder(nnx.Module):
                 query_vec_dim=config.attention_hidden_dim,
                 rngs=rngs,
             )
-
+            # Bidirectional cross-attention (paper ``co1``). CrossAttention
+            # folds Q/KV projections into its own weights, so asymmetric
+            # dims are handled natively. title @ text_dim, entity @ entity_dim.
             self.title_mhca = CrossAttention(
-                q_dim=emb_dim,
+                q_dim=text_dim,
                 kv_dim=config.entity_embedding_dim,
                 num_heads=config.co_num_heads,
                 head_dim=config.co_head_dim,
@@ -97,7 +99,7 @@ class NewsEncoder(nnx.Module):
             )
             self.entity_mhca = CrossAttention(
                 q_dim=config.entity_embedding_dim,
-                kv_dim=emb_dim,
+                kv_dim=text_dim,
                 num_heads=config.co_num_heads,
                 head_dim=config.co_head_dim,
                 dropout_rate=config.dropout_rate,
@@ -166,10 +168,9 @@ class NewsEncoder(nnx.Module):
             flat_news_idx
         )  # (N*, T, text_dim), (N*, T)
         title_keep = jnp.not_equal(title_mask_raw, 0)
-        title_emb = (
-            tokens if self.text_projection is None else self.text_projection(tokens)
-        )
-        title_emb = self.word_dropout(title_emb, deterministic=not training)
+        title_emb = self.word_dropout(
+            tokens, deterministic=not training
+        )  # (N*, T, text_dim)
 
         has_entity = self.entity_embedding is not None
         has_category = self.category_embedding is not None

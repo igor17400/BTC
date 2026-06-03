@@ -44,11 +44,18 @@ class NAML(BaseModel):
             processed_news=processed_news,
             kind="title",
         )
-        abstract_text_encoder = build_text_encoder(
-            framework="pytorch",
-            encoder_cfg=encoder_cfg,
-            processed_news=processed_news,
-            kind="abstract",
+        # Abstract view is optional: when process_abstract is False the data
+        # pipeline produces no abstract cache, so skip the encoder entirely
+        # (the news encoder then runs on title + category + subcategory).
+        abstract_text_encoder = (
+            build_text_encoder(
+                framework="pytorch",
+                encoder_cfg=encoder_cfg,
+                processed_news=processed_news,
+                kind="abstract",
+            )
+            if config.process_abstract
+            else None
         )
 
         self.news_encoder = NewsEncoder(

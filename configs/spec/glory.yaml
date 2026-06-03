@@ -1,5 +1,10 @@
 model:
   name: glory
+  # PyTorch-backed: torch_geometric gives the graph models (CROWN/DIGAT/GLORY)
+  # mature scatter/gather ops over variable-size subgraphs. A faithful JAX port
+  # is feasible but unmaintained, so framework=jax is gated in
+  # src/core/models/spec.py:_check_framework_supported.
+  supported_frameworks: [pytorch]
   architecture:
     news_encoder:
       type: mha_pool
@@ -23,11 +28,6 @@ model:
   seed: 42
   use_entity: true
   entity_emb_dim: 100
-  # Backend for the global GNN. ``true`` swaps in
-  # ``torch_geometric.nn.GatedGraphConv`` (CUDA-optimized scatter/gather)
-  # — matches the reference GLORY repo. ``false`` uses our
-  # framework-agnostic pure-PyTorch implementation.
-  use_torchgeo: false
 
 inputs:
   title: { max_length: 30 }

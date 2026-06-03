@@ -43,13 +43,22 @@ def _encode_titles(titles: list[str], batch_size: int = 256) -> np.ndarray:
 
 
 def _compute_top_k_similarities(
-    embeddings: np.ndarray, top_k: int, device: str = "cuda"
+    embeddings: np.ndarray,
+    top_k: int,
+    device: str = "cuda",
+    allowed_corpus_mask: np.ndarray | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Compute top-k cosine-similar neighbors per embedding.
 
     Args:
         embeddings: (N, D) float32.
         top_k: Number of neighbors to keep.
+        allowed_corpus_mask: Optional (N,) bool array. When provided,
+            news positions where this is False are NEVER returned as
+            neighbors of any query — matches reference DIGAT's
+            ``mode='corpus'`` which excludes eval-only news from the
+            candidate pool to avoid train-time leakage of evaluation
+            data into the graph attention.
 
     Returns:
         (values, indices) — each (N, top_k) with self excluded.
@@ -64,6 +73,12 @@ def _compute_top_k_similarities(
     all_values = torch.zeros(N, top_k, device=emb.device)
     all_indices = torch.zeros(N, top_k, dtype=torch.long, device=emb.device)
 
+    corpus_mask_t: torch.Tensor | None = None
+    if allowed_corpus_mask is not None:
+        corpus_mask_t = torch.from_numpy(allowed_corpus_mask.astype(np.bool_))
+        if device == "cuda" and torch.cuda.is_available():
+            corpus_mask_t = corpus_mask_t.cuda()
+
     chunk = 512
     with torch.no_grad():
         for start in range(0, N, chunk):
@@ -73,6 +88,9 @@ def _compute_top_k_similarities(
                 torch.arange(end - start, device=sim.device),
                 torch.arange(start, end, device=sim.device),
             ] = -1.0
+            if corpus_mask_t is not None:
+                # Mask out disallowed candidates by sentinel similarity.
+                sim[:, ~corpus_mask_t] = -1.0
             vals, idxs = sim.topk(top_k, dim=1)
             all_values[start:end] = vals
             all_indices[start:end] = idxs
@@ -153,6 +171,7 @@ def construct_sag(
     sag_neighbors: int = 5,
     top_k: int = 20,
     cache_dir: Path | None = None,
+    corpus_news_str_ids: set[str] | None = None,
 ) -> dict[str, np.ndarray]:
     """Build the Semantic Augmented Graph for all news.
 
@@ -163,6 +182,16 @@ def construct_sag(
         sag_neighbors: Neighbors per hop.
         top_k: Top-k similar news to consider (before BFS filtering).
         cache_dir: Where to cache intermediate results.
+        corpus_news_str_ids: Optional set of news string IDs that are
+            allowed to appear as neighbors in the SAG. Every news still
+            gets its own subgraph (queries are unrestricted), but its
+            neighbors are drawn only from this corpus. Matches reference
+            DIGAT's ``mode='corpus'`` filter (construct_SAG.py:32) which
+            excludes eval-only news from the candidate pool to prevent
+            train-time leakage of evaluation data through graph
+            attention. When ``None``, all news in
+            ``news_str_id_to_int_idx`` are eligible (current behaviour
+            -> leaks ~14k MIND-dev-only news for MIND-small).
 
     Returns:
         Dict with keys ``news_node_ID``, ``news_graph``, ``news_graph_mask``.
@@ -180,7 +209,13 @@ def construct_sag(
     num_news = len(news_str_id_to_int_idx)
     cache_file = None
     if cache_dir is not None:
-        cache_file = cache_dir / f"sag_h{sag_hops}_n{sag_neighbors}_k{top_k}.pkl"
+        # Cache filename embeds the corpus-filter status so a fresh
+        # build is forced when the corpus changes (avoids silently
+        # loading a leaky cache after enabling the filter).
+        suffix = "_corpus" if corpus_news_str_ids is not None else ""
+        cache_file = (
+            cache_dir / f"sag_h{sag_hops}_n{sag_neighbors}_k{top_k}{suffix}.pkl"
+        )
         if cache_file.exists():
             logger.info(f"Loading cached SAG from {cache_file}")
             with open(cache_file, "rb") as f:
@@ -204,8 +239,23 @@ def construct_sag(
     logger.info(f"Encoding {num_news} news titles with Sentence-BERT...")
     embeddings = _encode_titles(titles)
 
+    allowed_corpus_mask: np.ndarray | None = None
+    if corpus_news_str_ids is not None:
+        allowed_corpus_mask = np.zeros(num_news, dtype=bool)
+        for s, idx in news_str_id_to_int_idx.items():
+            if s in corpus_news_str_ids:
+                allowed_corpus_mask[idx] = True
+        logger.info(
+            f"SAG corpus filter active: {int(allowed_corpus_mask.sum())} of "
+            f"{num_news} news eligible as neighbors "
+            f"({num_news - int(allowed_corpus_mask.sum())} excluded "
+            f"to prevent eval-set leakage)."
+        )
+
     logger.info(f"Computing top-{top_k} similarities...")
-    sim_values, sim_indices = _compute_top_k_similarities(embeddings, top_k)
+    sim_values, sim_indices = _compute_top_k_similarities(
+        embeddings, top_k, allowed_corpus_mask=allowed_corpus_mask
+    )
 
     logger.info(
         f"Building BFS graphs (hops={sag_hops}, neighbors={sag_neighbors}, graph_size={news_graph_size})..."

@@ -2,127 +2,23 @@
 
 Hosts the auxiliary encoders used on the "global" / KG enrichment path:
 
-- :class:`GatedGraphConv` — pure-PyTorch port of
-  ``torch_geometric.nn.GatedGraphConv`` (Li et al. 2016) used to
-  propagate features across the precomputed news graph.
+- ``GatedGraphConv`` — re-exported from ``torch_geometric.nn`` to
+  match the reference implementation at
+  ``reference_codes/glory_official/src/models/GLORY.py:30``
+  (``GatedGraphConv(news_dim, num_layers=3, aggr='add')``).
 - :class:`EntityEncoder` and :class:`GlobalEntityEncoder` — entity
   branch (only built when ``use_entity=True``).
-
-Pure PyTorch — no ``torch_geometric`` dependency.  References:
-Yang et al., "Going Beyond Local…", RecSys 2023; Li et al., GGNN, ICLR 2016.
 """
 
 from __future__ import annotations
 
 import torch
 import torch.nn as nn
+from torch_geometric.nn import GatedGraphConv
 
 from .news_encoder import AttentionPooling, MultiHeadAttention
 
-# ======================================================================
-# GatedGraphConv (pure PyTorch, no torch_geometric)
-# ======================================================================
-
-
-def _scatter_add(
-    src: torch.Tensor,
-    index: torch.Tensor,
-    dim_size: int,
-) -> torch.Tensor:
-    """Segment sum along dim 0: ``out[index[i]] += src[i]``.
-
-    Args:
-        src: ``(E, D)`` source values (edge features).
-        index: ``(E,)`` int target indices in ``[0, dim_size)``.
-        dim_size: Output size along dim 0.
-
-    Returns:
-        ``(dim_size, D)`` aggregated output.
-    """
-    out = torch.zeros(dim_size, src.shape[1], device=src.device, dtype=src.dtype)
-    idx = index.unsqueeze(-1).expand_as(src)
-    return out.scatter_add_(0, idx, src)
-
-
-class GatedGraphConv(nn.Module):
-    """Gated Graph Neural Network (Li et al. 2016).
-
-    Pure-PyTorch replacement for ``torch_geometric.nn.GatedGraphConv``.
-    Shared weight ``W`` across all ``num_layers`` propagation steps,
-    with a single ``GRUCell`` mixing messages into node states (matches
-    GLORY's original configuration which uses the PyG default).
-
-    Implementation::
-
-        for t in range(num_layers):
-            m_i = Σ_{j ∈ N(i)} W · h_j        # weighted neighbor sum
-            h_i = GRU(m_i, h_i)               # gated update
-
-    Args:
-        out_channels: Output feature dimension.  ``in_channels`` may be
-            smaller; inputs are zero-padded to ``out_channels``.
-        num_layers: Number of propagation steps.
-        aggr: Aggregation function; only ``"add"`` supported (matches
-            GLORY's config).
-    """
-
-    def __init__(
-        self,
-        out_channels: int,
-        num_layers: int = 3,
-        aggr: str = "add",
-        bias: bool = True,
-    ):
-        super().__init__()
-        if aggr != "add":
-            raise ValueError(
-                f"Only aggr='add' supported; got {aggr!r}. "
-                f"GLORY's reference uses add aggregation."
-            )
-        self.out_channels = out_channels
-        self.num_layers = num_layers
-        self.weight = nn.Parameter(torch.empty(num_layers, out_channels, out_channels))
-        self.rnn = nn.GRUCell(out_channels, out_channels, bias=bias)
-        self._reset_parameters()
-
-    def _reset_parameters(self) -> None:
-        for i in range(self.num_layers):
-            nn.init.xavier_uniform_(self.weight[i])
-        # GRUCell is self-initialised by PyTorch default.
-
-    def forward(self, x: torch.Tensor, edge_index: torch.Tensor) -> torch.Tensor:
-        """Propagate features across a graph.
-
-        Args:
-            x: ``(N, F_in)`` node features.  Will be zero-padded to
-                ``(N, out_channels)`` if ``F_in < out_channels``.
-            edge_index: ``(2, E)`` int tensor of directed edges
-                ``(src, dst)`` — messages flow src → dst.
-
-        Returns:
-            ``(N, out_channels)`` updated node features.
-        """
-        if x.shape[1] > self.out_channels:
-            raise ValueError(
-                f"GatedGraphConv: input feature dim {x.shape[1]} exceeds "
-                f"out_channels={self.out_channels}."
-            )
-        if x.shape[1] < self.out_channels:
-            zero = x.new_zeros(x.shape[0], self.out_channels - x.shape[1])
-            x = torch.cat([x, zero], dim=-1)
-
-        src, dst = edge_index[0], edge_index[1]
-        num_nodes = x.shape[0]
-
-        for i in range(self.num_layers):
-            # Message: W_i @ h[src] (per-layer weight).
-            m = x @ self.weight[i]  # (N, D)
-            # Aggregate at destination nodes.
-            agg = _scatter_add(m[src], dst, num_nodes)  # (N, D)
-            # Gated update.
-            x = self.rnn(agg, x)  # (N, D)
-
-        return x
+__all__ = ["GatedGraphConv", "EntityEncoder", "GlobalEntityEncoder"]
 
 
 # ======================================================================

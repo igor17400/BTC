@@ -5,6 +5,15 @@ The attention primitives (``ScaledDotProductAttention``,
 ``src/models/base/layers.py`` exactly — including the non-standard
 masking scheme (``exp`` then mask) — and are shared by every other
 encoder in the package.
+
+GLORY is currently **GloVe-only**: the NewsEncoder consumes title
+token ids directly from columns [0:title_size] of the packed
+``news_features`` tensor. A PLM TextEncoder path was attempted but
+removed because GLORY's setup pipeline pre-remaps news ids to row
+positions (``build_news_feature_matrix:84`` puts ``np.arange(num_news)``
+in the last column), while the shared TextEncoder expects parsed
+news ids. Re-introducing PLM here requires either a row-indexed
+PLM cache or dropping ``id_remap`` from GLORY's pipeline.
 """
 
 from __future__ import annotations
@@ -38,11 +47,15 @@ class ScaledDotProductAttention(nn.Module):
         attn_mask: torch.Tensor | None = None,
     ) -> torch.Tensor:
         scores = torch.matmul(Q, K.transpose(-1, -2)) / math.sqrt(self.d_k)
-        scores = torch.exp(scores)
+        # Promote exp + normalize to fp32: bare torch.exp is NOT
+        # autocast-promoted, so under fp16 AMP scores > ~11 overflow to
+        # inf and scores < ~-16 underflow to 0, killing the attention
+        # distribution. Measured ~+0.005 AUC on GLORY MIND-small.
+        scores = torch.exp(scores.float())
         if attn_mask is not None:
-            scores = scores * attn_mask.unsqueeze(dim=-2)
+            scores = scores * attn_mask.unsqueeze(dim=-2).float()
         attn = scores / (torch.sum(scores, dim=-1, keepdim=True) + 1e-8)
-        return torch.matmul(attn, V)
+        return torch.matmul(attn.to(V.dtype), V)
 
 
 class MultiHeadAttention(nn.Module):
@@ -124,24 +137,25 @@ class AttentionPooling(nn.Module):
         super().__init__()
         self.att_fc1 = nn.Linear(emb_size, hidden_size)
         self.att_fc2 = nn.Linear(hidden_size, 1)
-
-        nn.init.xavier_uniform_(
-            self.att_fc1.weight,
-            gain=nn.init.calculate_gain("tanh"),
-        )
-        nn.init.zeros_(self.att_fc1.bias)
-        nn.init.xavier_uniform_(self.att_fc2.weight)
+        # NOTE: deliberately NOT explicit-initing here. PyTorch nn.Linear
+        # default is kaiming_uniform_(a=sqrt(5)) — same as the reference
+        # GLORY (which has an `initialize()` method but never calls it
+        # from main.py). Earlier code Xavier-inited explicitly which
+        # produced different early-epoch gradient dynamics over our
+        # 6 AttentionPooling instances. See investigation 2026-05-27
+        # and [[project_glory_training_pipeline_gaps]].
 
     def forward(
         self, x: torch.Tensor, attn_mask: torch.Tensor | None = None
     ) -> torch.Tensor:
         # x: (B, N, E)
         e = torch.tanh(self.att_fc1(x))
-        alpha = torch.exp(self.att_fc2(e))  # (B, N, 1)
+        # Promote exp + normalize to fp32 (see ScaledDotProductAttention note).
+        alpha = torch.exp(self.att_fc2(e).float())  # (B, N, 1)
         if attn_mask is not None:
-            alpha = alpha * attn_mask.unsqueeze(2)
+            alpha = alpha * attn_mask.unsqueeze(2).float()
         alpha = alpha / (torch.sum(alpha, dim=1, keepdim=True) + 1e-8)
-        return torch.bmm(x.permute(0, 2, 1), alpha).squeeze(dim=-1)
+        return torch.bmm(x.permute(0, 2, 1), alpha.to(x.dtype)).squeeze(dim=-1)
 
 
 class NewsEncoder(nn.Module):

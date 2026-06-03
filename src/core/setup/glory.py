@@ -108,11 +108,25 @@ def setup_glory(spec, dataset_provider, processed_news) -> ModelSetupResult:
         if graph_cache_dir
         else None
     )
+    # Pass raw behaviors path + news_str_id_to_int_idx so the graph is
+    # built from full (untruncated) click histories, matching reference
+    # GLORY. Otherwise build_news_graph falls back to the truncated
+    # histories_news_ids (capped at max_history_length=50), which
+    # severely depresses edge weights for the ~20% of MIND-small users
+    # with >50 clicks. See GLORY_PARITY_FINDINGS.md.
+    raw_train_behaviors_path = None
+    if hasattr(dataset_provider, "dataset_path"):
+        candidate = dataset_provider.dataset_path / "train" / "behaviors.tsv"
+        if candidate.exists():
+            raw_train_behaviors_path = candidate
+    news_str_id_to_int_idx = getattr(dataset_provider, "news_str_id_to_int_idx", None)
     glory_graph = build_news_graph(
         dataset_provider.train_behaviors_data,
         num_news=num_news,
         use_graph_type=g_cfg.use_graph_type,
         cache_path=graph_path,
+        raw_behaviors_path=raw_train_behaviors_path,
+        news_str_id_to_int_idx=news_str_id_to_int_idx,
     )
     glory_neighbors = build_neighbor_dict(
         glory_graph,

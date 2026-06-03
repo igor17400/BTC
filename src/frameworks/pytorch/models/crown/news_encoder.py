@@ -99,17 +99,32 @@ class NewsEncoder(nn.Module):
         self.category_embedding = category_embedding
         self.subcategory_embedding = subcategory_embedding
 
-        # Project text features down to embedding_size if they aren't
-        # already (GloVe stays Identity; PLM Linear 768 -> embedding_size).
-        emb = config.embedding_size
+        # Option-2 PLM: the Transformer encoder + intent disentanglement
+        # run at the text encoder's native dim (300 for GloVe, 768 for
+        # BERT-base). The only post-pool projection is implicit in the
+        # intent_layers (text_dim+cat_dim -> intent_dim), which collapse
+        # to news_dim-shaped output. Preserves the BERT signal through
+        # the per-news Transformer + mean pool.
         t_dim = title_text_encoder.output_dim
         a_dim = abstract_text_encoder.output_dim
-        self.title_proj: nn.Module = (
-            nn.Linear(t_dim, emb) if t_dim != emb else nn.Identity()
-        )
-        self.abstract_proj: nn.Module = (
-            nn.Linear(a_dim, emb) if a_dim != emb else nn.Identity()
-        )
+        # CROWN runs a single Transformer block shared across views, so
+        # title and abstract must have the same per-token dim. With the
+        # standard TextEncoder factory both views come from the same
+        # backbone (GloVe or BERT-base) so this holds.
+        if t_dim != a_dim:
+            raise ValueError(
+                f"CROWN expects title_text_encoder.output_dim ({t_dim}) "
+                f"to match abstract_text_encoder.output_dim ({a_dim})."
+            )
+        if t_dim % config.num_heads != 0:
+            raise ValueError(
+                f"CROWN Transformer: text_dim={t_dim} not divisible by "
+                f"num_heads={config.num_heads}. Override "
+                "spec.model.architecture.news_encoder.num_heads in the "
+                f"experiment yaml to a divisor of {t_dim} (e.g. 12 for "
+                "BERT-base 768d -> head_dim 64)."
+            )
+        self.text_dim = int(t_dim)
 
         self.news_embedding_dim = (
             config.intent_embedding_dim * 2
@@ -120,14 +135,14 @@ class NewsEncoder(nn.Module):
         self.dropout = nn.Dropout(config.dropout_rate)
 
         self.title_pos = PositionalEncoding(
-            config.embedding_size, config.dropout_rate, config.max_title_length
+            t_dim, config.dropout_rate, config.max_title_length
         )
         self.body_pos = PositionalEncoding(
-            config.embedding_size, config.dropout_rate, config.max_abstract_length
+            t_dim, config.dropout_rate, config.max_abstract_length
         )
 
         encoder_layer = nn.TransformerEncoderLayer(
-            d_model=config.embedding_size,
+            d_model=t_dim,
             nhead=config.num_heads,
             dim_feedforward=config.feedforward_dim,
             dropout=config.dropout_rate,
@@ -145,7 +160,9 @@ class NewsEncoder(nn.Module):
         )
         self.category_affine = nn.Linear(cat_concat_dim, config.category_embedding_dim)
 
-        intent_input_dim = config.embedding_size + config.category_embedding_dim
+        # Intent layers map text_dim+cat_dim -> intent_dim. This is the
+        # only post-pool projection for CROWN — collapses BERT to intent_dim.
+        intent_input_dim = t_dim + config.category_embedding_dim
         self.intent_layers = nn.ModuleList(
             [
                 nn.Linear(intent_input_dim, config.intent_embedding_dim)
@@ -214,8 +231,8 @@ class NewsEncoder(nn.Module):
 
         title_tokens, title_mask = self.title_text_encoder(news_idx)
         body_tokens, body_mask = self.abstract_text_encoder(news_idx)
-        title_emb = self.dropout(self.title_proj(title_tokens))  # (N, T, emb)
-        body_emb = self.dropout(self.abstract_proj(body_tokens))
+        title_emb = self.dropout(title_tokens)  # (N, T, text_dim)
+        body_emb = self.dropout(body_tokens)
         title_mask = title_mask.bool()
         body_mask = body_mask.bool()
 
@@ -225,13 +242,15 @@ class NewsEncoder(nn.Module):
         title_enc = self.title_transformer(title_emb)  # (N, T, E)
         body_enc = self.body_transformer(body_emb)  # (N, A, E)
 
-        # Mask-weighted mean pool.
-        title_w = title_mask.to(title_enc.dtype).unsqueeze(-1)
-        body_w = body_mask.to(body_enc.dtype).unsqueeze(-1)
-        title_pool = (title_enc * title_w).sum(dim=1) / title_w.sum(dim=1).clamp(
-            min=1.0
-        )
-        body_pool = (body_enc * body_w).sum(dim=1) / body_w.sum(dim=1).clamp(min=1.0)
+        # Unmasked mean pool — matches reference
+        # ``crown-www25/newsEncoders.py:164,168`` which uses plain
+        # ``.mean(dim=1)`` over the transformer output. For GloVe with
+        # ``pad_id=0`` this is a (T_valid / T) scaling vs the masked
+        # mean; for PLM/BERT pad tokens have non-zero outputs so the
+        # divergence is larger. The masked variant flattened the intent
+        # signal in our ablations; reverted to plain mean.
+        title_pool = title_enc.mean(dim=1)
+        body_pool = body_enc.mean(dim=1)
 
         cat_emb = self.category_embedding(category_ids.long())
         subcat_emb = self.subcategory_embedding(subcategory_ids.long())

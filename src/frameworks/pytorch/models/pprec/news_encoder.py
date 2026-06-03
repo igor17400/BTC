@@ -72,26 +72,31 @@ class NewsEncoder(nn.Module):
         self.entity_embedding = entity_embedding_layer
         self.category_embedding = category_embedding_layer
 
+        # Option-2 PLM: per-news pipeline runs at the encoder's NATIVE
+        # text dim (300 for GloVe, 768 for BERT-base). MultiHeadSelfAttention
+        # and CrossAttention project Q/K/V internally to num_heads*head_dim,
+        # so no divisibility constraint between text_dim and num_heads.
+        # The post-pool ``word_proj`` is the only place we collapse down
+        # to ``news_dim``.
         text_dim = text_encoder.output_dim
-        emb_dim = config.embedding_size
         self.text_dim = int(text_dim)
-        self.text_projection: nn.Module = (
-            nn.Linear(text_dim, emb_dim) if text_dim != emb_dim else nn.Identity()
-        )
 
         co_out_dim = config.co_num_heads * config.co_head_dim
 
-        # --- Word (title) branch — MHSA at embedding_size ---
+        # --- Word (title) branch — MHSA at text_dim ---
         self.word_dropout = nn.Dropout(config.dropout_rate)
         self.word_mhsa = MultiHeadSelfAttention(
-            in_features=emb_dim,
+            in_features=text_dim,
             num_heads=config.num_heads,
             head_dim=config.head_dim,
             dropout_rate=config.dropout_rate,
         )
-        # Title MHSA emits (B, T, emb_dim). After concat with title_co
-        # (B, T, co_out_dim) project to news_dim.
-        word_concat_dim = emb_dim + (
+        # MultiHeadSelfAttention's out_features defaults to in_features,
+        # so MHSA output stays at text_dim. After optional concat with
+        # title_co (B, T, co_out_dim) we project to news_dim. The
+        # word_proj is the only place we collapse the BERT signal —
+        # preserves it through the per-news MHSA + cross-attention.
+        word_concat_dim = text_dim + (
             co_out_dim if entity_embedding_layer is not None else 0
         )
         self.word_proj = nn.Linear(word_concat_dim, config.news_dim)
@@ -119,8 +124,9 @@ class NewsEncoder(nn.Module):
             # Bidirectional cross-attention (paper ``co1``). CrossAttention
             # folds the query projection into W_q natively, so different
             # Q/KV dims are handled without a separate pre-projection.
+            # title -> entity: query at text_dim, key/value at entity_dim.
             self.title_mhca = CrossAttention(
-                q_dim=emb_dim,
+                q_dim=text_dim,
                 kv_dim=config.entity_embedding_dim,
                 num_heads=config.co_num_heads,
                 head_dim=config.co_head_dim,
@@ -128,7 +134,7 @@ class NewsEncoder(nn.Module):
             )
             self.entity_mhca = CrossAttention(
                 q_dim=config.entity_embedding_dim,
-                kv_dim=emb_dim,
+                kv_dim=text_dim,
                 num_heads=config.co_num_heads,
                 head_dim=config.co_head_dim,
                 dropout_rate=config.dropout_rate,
@@ -202,8 +208,7 @@ class NewsEncoder(nn.Module):
         )  # (N*, T, text_dim), (N*, T)
         title_keep = title_mask_raw != 0
         title_pad = ~title_keep
-        title_emb = self.text_projection(tokens)
-        title_emb = self.word_dropout(title_emb)  # (N*, T, emb_dim)
+        title_emb = self.word_dropout(tokens)  # (N*, T, text_dim)
 
         has_entity = self.entity_embedding is not None
         has_category = self.category_embedding is not None

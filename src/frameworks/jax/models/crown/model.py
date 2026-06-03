@@ -19,9 +19,27 @@ from flax import nnx
 from src.core.models.configs import CROWNConfig
 from src.core.models.text_encoder import build_text_encoder
 
+from ...layers.plm_token import FrozenCache
 from ..base import BaseModel
 from .news_encoder import NewsEncoder
 from .user_encoder import UserEncoder
+
+
+class _FrozenEmbed(nnx.Module):
+    """Drop-in for ``nnx.Embed`` with a non-trainable embedding table.
+
+    Holds the table as :class:`FrozenCache` (an ``nnx.Variable``
+    subclass that is NOT an ``nnx.Param``), so the JAX optimizer —
+    which uses ``wrt=nnx.Param`` — never updates it. Matches the
+    PyTorch ``requires_grad=False`` semantics for CROWN's category
+    embeddings (reference ``crown-www25/newsEncoders.py:33-35``).
+    """
+
+    def __init__(self, table: jax.Array):
+        self.embedding = FrozenCache(table)
+
+    def __call__(self, ids: jax.Array) -> jax.Array:
+        return self.embedding.value[ids]
 
 
 class CROWN(BaseModel):
@@ -59,28 +77,27 @@ class CROWN(BaseModel):
             rngs=rngs,
         )
 
-        self.category_embedding = nnx.Embed(
-            num_embeddings=num_categories + 1,
-            features=config.category_embedding_dim,
-            rngs=rngs,
-        )
-        self.category_embedding.embedding.value = jax.random.uniform(
+        # Category / subcategory embeddings — uniform-init then FROZEN
+        # to match the reference repo
+        # (``crown-www25/newsEncoders.py:33-35`` sets ``requires_grad =
+        # False`` after a U(-0.1, 0.1) init, with ``subCategory[0]``
+        # zeroed). _FrozenEmbed holds the table as :class:`FrozenCache`,
+        # which the JAX optimizer (``wrt=nnx.Param``) skips.
+        cat_table = jax.random.uniform(
             rngs.params(),
             (num_categories + 1, config.category_embedding_dim),
             minval=-0.1,
             maxval=0.1,
         )
-        self.subcategory_embedding = nnx.Embed(
-            num_embeddings=num_subcategories + 1,
-            features=config.subcategory_embedding_dim,
-            rngs=rngs,
-        )
-        self.subcategory_embedding.embedding.value = jax.random.uniform(
+        subcat_table = jax.random.uniform(
             rngs.params(),
             (num_subcategories + 1, config.subcategory_embedding_dim),
             minval=-0.1,
             maxval=0.1,
         )
+        subcat_table = subcat_table.at[0].set(0.0)
+        self.category_embedding = _FrozenEmbed(cat_table)
+        self.subcategory_embedding = _FrozenEmbed(subcat_table)
 
         self.news_encoder = NewsEncoder(
             config,
@@ -115,14 +132,17 @@ class CROWN(BaseModel):
 
         history_mask = self.news_encoder.valid_mask(hist_packed)
 
-        user_repr = self.user_encoder.forward_with_candidates(
+        # Candidate-aware user representations ``(B, C, D)`` — every
+        # candidate produces a different attended-history vector
+        # (reference ``userEncoders.py:CROWN.forward``).
+        user_per_cand = self.user_encoder.forward_with_candidates(
             history_packed=hist_packed,
             history_mask=history_mask,
             candidate_repr=cand_full,
             training=training,
         )
 
-        return jnp.sum(user_repr[:, None, :] * cand_full, axis=-1)
+        return jnp.sum(user_per_cand * cand_full, axis=-1)
 
     def get_auxiliary_loss(self) -> jax.Array:
         return self.alpha * self.news_encoder._aux_loss.value

@@ -6,8 +6,9 @@ Layout:
                         AttentionPooling)
     user_encoder.py   — UserEncoder (history MHA + pool) + ClickEncoder
                         (per-clicked-news view fusion)
-    global_encoder.py — GatedGraphConv (pure-PyTorch GGNN) + EntityEncoder
-                        and GlobalEntityEncoder (used when use_entity=True)
+    global_encoder.py — re-export of torch_geometric.nn.GatedGraphConv +
+                        EntityEncoder / GlobalEntityEncoder
+                        (used when use_entity=True)
     model.py          — top-level GLORY + CandidateEncoder
 """
 

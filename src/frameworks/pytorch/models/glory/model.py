@@ -12,10 +12,6 @@ MHA + attention, and compared with candidate embeddings via dot product.
 When ``use_entity=True``, a third entity view is added on both the
 clicked and candidate sides.
 
-No ``torch_geometric`` dependency by default — all graph ops live in
-:mod:`.global_encoder`.  Setting ``use_torchgeo=True`` swaps in PyG's
-CUDA-optimised ``GatedGraphConv`` for parity with the reference repo.
-
 Reference: Yang et al., "Going Beyond Local: Global Graph-Enhanced
 Personalized News Recommendations", RecSys 2023.
 """
@@ -109,31 +105,22 @@ class GLORY(BaseModel):
         vocab_size = int(processed_news["vocab_size"])
         embeddings_matrix = np.asarray(processed_news["embeddings"])
 
+        # GLORY is GloVe-only. PLM support was attempted via the shared
+        # TextEncoder but the indexing didn't line up (GLORY pre-remaps
+        # news ids to row positions; TextEncoder expects parsed news
+        # ids). See news_encoder.py docstring for the path forward.
         self.word_embedding = nn.Embedding(
             vocab_size, config.word_emb_dim, padding_idx=0
         )
         self.word_embedding.weight = nn.Parameter(
             torch.tensor(embeddings_matrix, dtype=torch.float32)
         )
-
         self.local_news_encoder = NewsEncoder(config, self.word_embedding)
-        # ``use_torchgeo=True`` swaps in PyG's CUDA-optimised GatedGraphConv
-        # (matches the reference GLORY repo). Default keeps the
-        # framework-agnostic pure-PyTorch implementation.
-        if getattr(config, "use_torchgeo", False):
-            from torch_geometric.nn import GatedGraphConv as _PyGGatedGraphConv
-
-            self.global_news_encoder = _PyGGatedGraphConv(
-                out_channels=self.news_dim,
-                num_layers=config.gnn_num_layers,
-                aggr="add",
-            )
-        else:
-            self.global_news_encoder = GatedGraphConv(
-                self.news_dim,
-                num_layers=config.gnn_num_layers,
-                aggr="add",
-            )
+        self.global_news_encoder = GatedGraphConv(
+            out_channels=self.news_dim,
+            num_layers=config.gnn_num_layers,
+            aggr="add",
+        )
         self.click_encoder = ClickEncoder(config)
         self.user_encoder = UserEncoder(config)
         self.candidate_encoder = CandidateEncoder(config)

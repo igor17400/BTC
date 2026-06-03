@@ -91,7 +91,8 @@ class NewsEncoder(nn.Module):
     Args:
         config: NAML hyperparameters.
         title_text_encoder: :class:`TextEncoder` for the title cache.
-        abstract_text_encoder: :class:`TextEncoder` for the abstract cache.
+        abstract_text_encoder: :class:`TextEncoder` for the abstract cache,
+            or ``None`` to drop the abstract view (``process_abstract=False``).
         num_categories: Size of category vocab (excludes padding index 0).
         num_subcategories: Size of subcategory vocab (excludes padding index 0).
     """
@@ -100,7 +101,7 @@ class NewsEncoder(nn.Module):
         self,
         config: NAMLConfig,
         title_text_encoder: TextEncoder,
-        abstract_text_encoder: TextEncoder,
+        abstract_text_encoder: TextEncoder | None,
         num_categories: int,
         num_subcategories: int,
     ):
@@ -109,7 +110,13 @@ class NewsEncoder(nn.Module):
         self.news_dim = config.cnn_filter_num
 
         self.title_view = _TextViewEncoder(config, title_text_encoder)
-        self.abstract_view = _TextViewEncoder(config, abstract_text_encoder)
+        # Optional abstract view — absent when process_abstract=False, in which
+        # case the view-attention pools over title + category + subcategory only.
+        self.abstract_view = (
+            _TextViewEncoder(config, abstract_text_encoder)
+            if abstract_text_encoder is not None
+            else None
+        )
         self.category_view = _StructuredViewEncoder(
             config, num_categories, config.category_embedding_dim
         )
@@ -146,13 +153,17 @@ class NewsEncoder(nn.Module):
         subcategory_id = flat[:, 2]
 
         title_vec = self.title_view(news_idx, training=training)
-        abstract_vec = self.abstract_view(news_idx, training=training)
         category_vec = self.category_view(category_id, training=training)
         subcategory_vec = self.subcategory_view(subcategory_id, training=training)
 
-        # Stack views: (N*, 4, cnn_filter_num)
-        views = torch.stack(
-            [title_vec, abstract_vec, category_vec, subcategory_vec], dim=1
-        )
+        # Stack views: (N*, num_views, cnn_filter_num). Abstract is included
+        # only when present (process_abstract=True), giving 4 views; otherwise
+        # 3. View-attention pools over whatever views are stacked.
+        view_vecs = [title_vec]
+        if self.abstract_view is not None:
+            view_vecs.append(self.abstract_view(news_idx, training=training))
+        view_vecs += [category_vec, subcategory_vec]
+
+        views = torch.stack(view_vecs, dim=1)
         pooled = self.view_attention(views)  # (N*, cnn_filter_num)
         return pooled.reshape(*leading_shape, self.news_dim)

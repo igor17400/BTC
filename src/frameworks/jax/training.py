@@ -29,6 +29,7 @@ from src.core.io.logging import (
     log_epoch_end,
 )
 from src.core.io.progress import ProgressManager, create_progress
+from src.core.io.saving import cleanup_val_staging, promote_best_val_predictions
 from src.core.io.timing import PhaseStats
 
 from .losses import categorical_cross_entropy
@@ -378,6 +379,10 @@ def training_loop(
                     # Deep-copy best model state so later NaN corruption
                     # doesn't propagate into the saved checkpoint.
                     best_state = jax.tree.map(lambda x: x.copy(), nnx.state(model))
+                    if save_dir:
+                        promote_best_val_predictions(
+                            Path(save_dir).parent / "predictions"
+                        )
 
             # Log epoch (shared format)
             log_epoch_end(
@@ -446,6 +451,9 @@ def training_loop(
                 flat[name] = np.asarray(leaf)
             save_safetensors(flat, str(ckpt_path))
             logger.info("Saved best model weights to %s", ckpt_path)
+
+    if save_dir:
+        cleanup_val_staging(Path(save_dir).parent / "predictions")
 
     best_metrics["timing"] = timing
     return best_metrics

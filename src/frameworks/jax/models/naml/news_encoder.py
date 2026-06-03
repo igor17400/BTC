@@ -94,7 +94,7 @@ class NewsEncoder(nnx.Module):
         self,
         config: NAMLConfig,
         title_text_encoder: TextEncoder,
-        abstract_text_encoder: TextEncoder,
+        abstract_text_encoder: TextEncoder | None,
         num_categories: int,
         num_subcategories: int,
         *,
@@ -104,7 +104,13 @@ class NewsEncoder(nnx.Module):
         self.news_dim = config.cnn_filter_num
 
         self.title_view = _TextViewEncoder(config, title_text_encoder, rngs=rngs)
-        self.abstract_view = _TextViewEncoder(config, abstract_text_encoder, rngs=rngs)
+        # Optional abstract view — absent when process_abstract=False, in which
+        # case the view-attention pools over title + category + subcategory only.
+        self.abstract_view = (
+            _TextViewEncoder(config, abstract_text_encoder, rngs=rngs)
+            if abstract_text_encoder is not None
+            else None
+        )
         self.category_view = _StructuredViewEncoder(
             config, num_categories, config.category_embedding_dim, rngs=rngs
         )
@@ -138,12 +144,17 @@ class NewsEncoder(nnx.Module):
         subcategory_id = flat[:, 2]
 
         title_vec = self.title_view(news_idx, training=training)
-        abstract_vec = self.abstract_view(news_idx, training=training)
         category_vec = self.category_view(category_id, training=training)
         subcategory_vec = self.subcategory_view(subcategory_id, training=training)
 
-        views = jnp.stack(
-            [title_vec, abstract_vec, category_vec, subcategory_vec], axis=1
-        )
+        # Stack views: (N*, num_views, cnn_filter_num). Abstract is included
+        # only when present (process_abstract=True), giving 4 views; otherwise
+        # 3. View-attention pools over whatever views are stacked.
+        view_vecs = [title_vec]
+        if self.abstract_view is not None:
+            view_vecs.append(self.abstract_view(news_idx, training=training))
+        view_vecs += [category_vec, subcategory_vec]
+
+        views = jnp.stack(view_vecs, axis=1)
         pooled = self.view_attention(views)
         return pooled.reshape(*leading_shape, self.news_dim)

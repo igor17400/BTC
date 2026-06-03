@@ -1,9 +1,13 @@
 """Model-specific setup hooks.
 
-Most models (NRMS, NAML, LSTUR, MINER, PP-REC, CROWN) use the standard
+Most models (NRMS, NAML, LSTUR, MINER, PP-REC) use the standard
 pipeline: ``_build_train_features`` → standard dataloader → default
 evaluator. DIGAT and GLORY need custom data pipelines, graph
-construction, and evaluation closures.
+construction, and evaluation closures. TCCM keeps standard features but
+uses a popularity-aware evaluator. CROWN keeps standard features but
+uses a candidate-aware evaluator (reference repo's user encoder is
+``Q=candidate, K/V=GNN-history`` — the default precompute-user-vec
+trick doesn't apply).
 
 Usage in runners::
 
@@ -16,6 +20,7 @@ Usage in runners::
         # Standard path
 """
 
+from .crown import setup_crown
 from .digat import setup_digat
 from .glory import setup_glory
 from .tccm import setup_tccm
@@ -41,6 +46,8 @@ def setup_model(
         return setup_glory(spec, dataset_provider, processed_news)
     elif name == "tccm":
         return setup_tccm(spec, dataset_provider, processed_news, encoder_cfg)
+    elif name == "crown":
+        return setup_crown(spec, dataset_provider, processed_news, encoder_cfg)
     return None
 
 

@@ -334,10 +334,24 @@ def run(cfg: DictConfig):
 
         # Build dataloader — GLORY uses its own DataLoader
         if model_setup.train_dataset is not None:
+            # Reference GLORY shuffles training rows once at preprocess
+            # time and replays the same order every epoch. When the
+            # ``train.fixed_epoch_order`` flag is set, mirror that here
+            # by permuting the dataset's rows once with a seeded RNG and
+            # disabling the DataLoader's per-epoch reshuffle.
+            fixed_epoch_order = bool(getattr(cfg.train, "fixed_epoch_order", False))
+            if fixed_epoch_order:
+                ds = model_setup.train_dataset
+                if hasattr(ds, "hist_ids") and hasattr(ds, "cand_ids"):
+                    rng = np.random.RandomState(int(cfg.seed))
+                    perm = rng.permutation(ds.hist_ids.shape[0])
+                    ds.hist_ids = ds.hist_ids[perm]
+                    ds.cand_ids = ds.cand_ids[perm]
+                    ds.labels = ds.labels[perm]
             train_dataloader = create_glory_train_dataloader(
                 dataset=model_setup.train_dataset,
                 batch_size=cfg.train.batch_size,
-                shuffle=True,
+                shuffle=not fixed_epoch_order,
                 num_workers=4,
                 pin_memory=True,
             )

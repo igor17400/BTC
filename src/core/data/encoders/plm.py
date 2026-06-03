@@ -236,8 +236,11 @@ def encode_corpus_tokens(
                 "PLM token cache news_ids mismatch — falling back to recompute"
             )
         else:
+            # Return whatever dtype the cache stored (fp16 since the
+            # disk-cache write switched to fp16 below); the by_id step
+            # casts to fp16 anyway, and the model upcasts on lookup.
             return (
-                data["embeddings"].astype(np.float32),
+                np.asarray(data["embeddings"]),
                 data["attention_mask"].astype(np.int8),
             )
 
@@ -277,14 +280,23 @@ def encode_corpus_tokens(
                     f"  Encoded {end}/{len(texts)} ({100 * end / len(texts):.1f}%)"
                 )
 
+    # Save as fp16 — halves disk footprint (24 GB -> 12 GB at A=128)
+    # and host RAM during reload. BERT-base outputs are typically in
+    # ±5 range so fp16 precision loss is negligible for the downstream
+    # mean-pool + intent disentangle. The model side casts to fp32
+    # (PT) / bfloat16 (JAX) on buffer registration anyway.
+    embeddings_fp16 = embeddings.astype(np.float16)
+    del embeddings  # release the 24 GB fp32 buffer before write.
     np.savez(
         path,
-        embeddings=embeddings,
+        embeddings=embeddings_fp16,
         attention_mask=attention_mask,
         news_ids=np.array(news_ids, dtype=object),
     )
-    logger.info(f"PLM token cache written: {path} ({embeddings.nbytes / 1e9:.2f} GB)")
-    return embeddings, attention_mask
+    logger.info(
+        f"PLM token cache written: {path} ({embeddings_fp16.nbytes / 1e9:.2f} GB, fp16)"
+    )
+    return embeddings_fp16, attention_mask
 
 
 # ---------------------------------------------------------------------------
@@ -391,10 +403,16 @@ def attach_plm_embeddings(
         )
         plm_dim = token_emb.shape[-1]
         # Dense lookup indexed by parsed news id; row 0 is padding (zeros).
-        by_id = np.zeros((max_parsed + 1, max_length, plm_dim), dtype=np.float32)
+        # Stored as fp16 to halve host RAM (24 GB -> 12 GB at A=128 +
+        # 64k news). The PT text_encoder upcasts via ``.float()`` on
+        # buffer registration, and the JAX side casts to bfloat16 — so
+        # no model-side dtype change is needed. Lets A=128 fit on a
+        # 56 GB host where fp32 was OOM-killed (peak ~50 GB during the
+        # token_emb + by_id co-residency in the loop below).
+        by_id = np.zeros((max_parsed + 1, max_length, plm_dim), dtype=np.float16)
         mask_by_id = np.zeros((max_parsed + 1, max_length), dtype=np.int8)
         for row, pid in enumerate(parsed_ids):
-            by_id[pid] = token_emb[row]
+            by_id[pid] = token_emb[row].astype(np.float16)
             mask_by_id[pid] = attn_mask[row]
         processed_news[f"plm_{output_prefix}token_embeddings_by_id"] = by_id
         processed_news[f"plm_{output_prefix}attention_mask_by_id"] = mask_by_id

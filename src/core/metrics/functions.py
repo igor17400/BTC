@@ -9,12 +9,9 @@ logger = logging.getLogger(__name__)
 def auc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     """Compute AUC using the trapezoidal rule.
 
-    Args:
-        y_true: Binary ground truth labels.
-        y_pred: Predicted scores.
-
-    Returns:
-        AUC score, or 0.5 if only one class is present.
+    Returns NaN when only one class is present so that downstream
+    ``nanmean`` aggregation skips the impression — matches reference
+    GLORY which uses ``sklearn.roc_auc_score`` (raises) + ``np.nanmean``.
     """
     y_true = np.asarray(y_true, dtype=np.float64)
     y_pred = np.asarray(y_pred, dtype=np.float64)
@@ -22,9 +19,8 @@ def auc(y_true: np.ndarray, y_pred: np.ndarray) -> float:
     n_pos = np.sum(y_true)
     n_neg = np.sum(1 - y_true)
 
-    # If only one class present, return 0.5
     if n_pos == 0 or n_neg == 0:
-        return 0.5
+        return float("nan")
 
     # Sort by predictions in descending order
     sorted_indices = np.argsort(-y_pred)
@@ -169,10 +165,10 @@ class NewsRecommenderMetrics:
             ndcg10_scores[i] = ndcg_at_k(y_true[i], y_pred_logits[i], k=10)
 
         return {
-            "auc": float(np.mean(auc_scores)),
-            "mrr": float(np.mean(mrr_scores)),
-            "ndcg@5": float(np.mean(ndcg5_scores)),
-            "ndcg@10": float(np.mean(ndcg10_scores)),
+            "auc": float(np.nanmean(auc_scores)),
+            "mrr": float(np.nanmean(mrr_scores)),
+            "ndcg@5": float(np.nanmean(ndcg5_scores)),
+            "ndcg@10": float(np.nanmean(ndcg10_scores)),
         }
 
     def compute_metrics_from_scores(

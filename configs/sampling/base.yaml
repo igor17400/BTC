@@ -2,6 +2,10 @@
 max_impressions_length: 5 # Maximum number of impressions to keep per user
 strategy: "random" # Options: random, topic_diverse, temporal, popularity
 random_seed: ${seed} # Use global seed from base config
+# When false, val/test candidates are returned in the order they appear
+# in behaviors.tsv (matches reference GLORY). When true, candidates are
+# np.random.shuffle'd before being returned.
+shuffle_eval_candidates: true
 
 # Strategy-specific parameters
 random:

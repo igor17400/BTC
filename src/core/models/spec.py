@@ -113,6 +113,7 @@ def spec_to_naml_config(
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
+        process_abstract=spec.inputs.get("process_abstract", True),
         seed=spec.model.seed,
         encoder=_encoder_from_cfg(encoder),
     )
@@ -171,7 +172,7 @@ def spec_to_crown_config(
         attention_dim=ne.attention_dim,
         alpha=spec.training.get("auxiliary_alpha", 0.3),
         # Bipartite GNN (paper §3.3)
-        gnn_type=ue.get("gnn_type", "gat"),
+        gnn_type=ue.get("gnn_type", "graphsage"),
         graph_num_layers=ue.get("graph_num_layers", 1),
         graph_hidden_dim=ue.get("graph_hidden_dim", 0),
         gat_num_heads=ue.get("gat_num_heads", 4),
@@ -261,8 +262,17 @@ def spec_to_digat_config(
     )
 
 
-def spec_to_glory_config(spec: DictConfig) -> GLORYConfig:
-    """Convert a parsed GLORY spec into GLORYConfig."""
+def spec_to_glory_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> GLORYConfig:
+    """Convert a parsed GLORY spec into GLORYConfig.
+
+    Args:
+        spec: Parsed YAML spec (``cfg.spec``).
+        encoder: Optional top-level ``cfg.encoder`` — when provided and not
+            GloVe, the model swaps its GloVe word lookup for a frozen-cached
+            PLM lookup (TextEncoder pattern, same as NRMS / CROWN).
+    """
     ne = spec.model.architecture.news_encoder
     ge = spec.model.architecture.graph_encoder
     return GLORYConfig(
@@ -281,8 +291,8 @@ def spec_to_glory_config(spec: DictConfig) -> GLORYConfig:
         k_hops=ge.get("k_hops", 2),
         num_neighbors=ge.get("num_neighbors", 8),
         use_entity=spec.model.get("use_entity", False),
-        use_torchgeo=spec.model.get("use_torchgeo", False),
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
@@ -508,6 +518,29 @@ def get_model_class(model_name: str, framework: str):
 # ---------------------------------------------------------------------------
 
 
+_ALL_FRAMEWORKS = ("pytorch", "jax", "keras")
+
+
+def _check_framework_supported(
+    spec: DictConfig, framework: str, model_name: str
+) -> None:
+    """Raise if the spec restricts framework support and `framework` isn't in the list.
+
+    Spec opts into restriction with ``model.supported_frameworks: [pytorch]`` (or any
+    subset). When the field is absent, all frameworks are allowed (backwards-compatible).
+    """
+    supported = spec.model.get("supported_frameworks", None)
+    if supported is None:
+        return
+    supported_lower = [str(f).lower() for f in supported]
+    if framework.lower() not in supported_lower:
+        raise ValueError(
+            f"Model '{model_name}' does not support framework '{framework}'. "
+            f"Allowed: {list(supported_lower)}. "
+            f"Set `model.supported_frameworks` in the spec yaml to change this."
+        )
+
+
 def build_model_from_spec(
     spec: DictConfig,
     framework: str,
@@ -530,6 +563,7 @@ def build_model_from_spec(
         An instantiated model.
     """
     model_name = spec.model.name.lower()
+    _check_framework_supported(spec, framework, model_name)
     config = spec_to_config(spec, encoder=encoder)
     model_class = get_model_class(model_name, framework)
 

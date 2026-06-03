@@ -5,10 +5,10 @@ user-graph channel (history + topic nodes). The two channels interact
 across ``graph_depth`` layers: each graph's attention incorporates the
 other channel's context vector.
 
-This file also hosts the scatter utilities (``scatter_softmax``,
-``scatter_sum``) used by the user-graph context, and the shared
-``ScaledDotProductAttention`` used in both context extractors. No
-``torch_scatter`` dependency.
+Topic-level aggregation uses the batched scatter ops from
+``_graph_utils`` (semantic equivalents of the
+``torch_scatter.scatter_softmax`` / ``scatter_sum`` calls in the
+DIGAT reference at ``reference_codes/digat/graphEncoders.py:129``).
 """
 
 from __future__ import annotations
@@ -21,63 +21,7 @@ import torch.nn.functional as F
 
 from src.core.models.configs import DIGATConfig
 
-# ======================================================================
-# Scatter utilities (replace torch_scatter)
-# ======================================================================
-
-
-def scatter_softmax(
-    src: torch.Tensor, index: torch.Tensor, num_groups: int
-) -> torch.Tensor:
-    """Per-group softmax without ``torch_scatter``.
-
-    Args:
-        src: ``(B, N)`` scores.
-        index: ``(B, N)`` int group assignments in ``[0, num_groups)``.
-        num_groups: Total number of groups.
-
-    Returns:
-        ``(B, N)`` softmax-normalised within each group.
-    """
-    batch_size, _ = src.shape
-    idx = index.long()
-
-    group_max = torch.full(
-        (batch_size, num_groups), float("-inf"), device=src.device, dtype=src.dtype
-    )
-    group_max.scatter_reduce_(1, idx, src, reduce="amax", include_self=True)
-    element_max = group_max.gather(1, idx)  # (batch_size, num_items)
-
-    exp_src = torch.exp(src - element_max)
-
-    group_sum = torch.zeros(batch_size, num_groups, device=src.device, dtype=src.dtype)
-    group_sum.scatter_add_(1, idx, exp_src)
-    element_sum = group_sum.gather(1, idx)  # (batch_size, num_items)
-
-    return exp_src / (element_sum + 1e-10)
-
-
-def scatter_sum(
-    src: torch.Tensor, index: torch.Tensor, dim: int, dim_size: int
-) -> torch.Tensor:
-    """Grouped sum without ``torch_scatter``.
-
-    Args:
-        src: ``(B, N, D)`` values.
-        index: ``(B, N)`` int group assignments in ``[0, dim_size)``.
-        dim: Dimension to scatter along (must be 1).
-        dim_size: Output size along the scatter dimension.
-
-    Returns:
-        ``(B, dim_size, D)`` summed values per group.
-    """
-    batch_size, _, feat_dim = src.shape
-    out = torch.zeros(
-        batch_size, dim_size, feat_dim, device=src.device, dtype=src.dtype
-    )
-    idx = index.unsqueeze(-1).expand_as(src)
-    return out.scatter_add_(dim, idx, src)
-
+from .._graph_utils import scatter_softmax_batched, scatter_sum_batched
 
 # ======================================================================
 # Shared attention primitive
@@ -268,9 +212,9 @@ class GraphEncoder(nn.Module):
         Q = self.user_news_Q(news_ctx).unsqueeze(2)
         scores = torch.bmm(K, Q).squeeze(2) / self.scale  # (B, H)
 
-        alpha = scatter_softmax(scores, cat_indices, num_categories)  # (B, H)
+        alpha = scatter_softmax_batched(scores, cat_indices, num_categories)  # (B, H)
         weighted = alpha.unsqueeze(-1) * hist  # (B, H, D)
-        topic_emb = scatter_sum(weighted, cat_indices, dim=1, dim_size=num_categories)
+        topic_emb = scatter_sum_batched(weighted, cat_indices, dim_size=num_categories)
         topic_emb = self.topic_dropout(F.relu(self.topic_affine(topic_emb)) + topic_emb)
 
         return self.user_ctx_attn(topic_emb, news_ctx, mask=cat_mask)

@@ -103,15 +103,28 @@ class NewsEncoder(nnx.Module):
         self.category_embedding = category_embedding
         self.subcategory_embedding = subcategory_embedding
 
-        emb = config.embedding_size
+        # Option-2 PLM: per-news Transformer + intent disentanglement
+        # run at the text encoder's native dim (300 for GloVe, 768 for
+        # BERT-base). The only post-pool projection is in intent_layers
+        # (text_dim+cat_dim -> intent_dim). Preserves the BERT signal
+        # through the per-news Transformer + mean pool.
         t_dim = title_text_encoder.output_dim
         a_dim = abstract_text_encoder.output_dim
-        self.title_proj: nnx.Module = (
-            nnx.Linear(t_dim, emb, rngs=rngs) if t_dim != emb else _Identity()
-        )
-        self.abstract_proj: nnx.Module = (
-            nnx.Linear(a_dim, emb, rngs=rngs) if a_dim != emb else _Identity()
-        )
+        # CROWN shares Transformer blocks across views, so dims must match.
+        if t_dim != a_dim:
+            raise ValueError(
+                f"CROWN expects title_text_encoder.output_dim ({t_dim}) "
+                f"to match abstract_text_encoder.output_dim ({a_dim})."
+            )
+        if t_dim % config.num_heads != 0:
+            raise ValueError(
+                f"CROWN Transformer: text_dim={t_dim} not divisible by "
+                f"num_heads={config.num_heads}. Override "
+                "spec.model.architecture.news_encoder.num_heads in the "
+                f"experiment yaml to a divisor of {t_dim} (e.g. 12 for "
+                "BERT-base 768d -> head_dim 64)."
+            )
+        self.text_dim = int(t_dim)
 
         self.news_embedding_dim = (
             config.intent_embedding_dim * 2
@@ -121,21 +134,21 @@ class NewsEncoder(nnx.Module):
 
         self.dropout = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
         self.title_pos = PositionalEncoding(
-            emb, config.dropout_rate, config.max_title_length, rngs=rngs
+            t_dim, config.dropout_rate, config.max_title_length, rngs=rngs
         )
         self.body_pos = PositionalEncoding(
-            emb, config.dropout_rate, config.max_abstract_length, rngs=rngs
+            t_dim, config.dropout_rate, config.max_abstract_length, rngs=rngs
         )
 
         self.title_transformer = TransformerEncoderLayer(
-            emb,
+            t_dim,
             config.num_heads,
             config.feedforward_dim,
             config.dropout_rate,
             rngs=rngs,
         )
         self.body_transformer = TransformerEncoderLayer(
-            emb,
+            t_dim,
             config.num_heads,
             config.feedforward_dim,
             config.dropout_rate,
@@ -149,7 +162,9 @@ class NewsEncoder(nnx.Module):
             cat_concat_dim, config.category_embedding_dim, rngs=rngs
         )
 
-        intent_input_dim = emb + config.category_embedding_dim
+        # Intent layers map text_dim+cat_dim -> intent_dim — the only
+        # post-pool projection for CROWN.
+        intent_input_dim = t_dim + config.category_embedding_dim
         self.intent_layers = nnx.List(
             [
                 nnx.Linear(intent_input_dim, config.intent_embedding_dim, rngs=rngs)
@@ -217,8 +232,8 @@ class NewsEncoder(nnx.Module):
 
         title_tokens, title_mask = self.title_text_encoder(news_idx)
         body_tokens, body_mask = self.abstract_text_encoder(news_idx)
-        title_emb = self.dropout(self.title_proj(title_tokens), deterministic=det)
-        body_emb = self.dropout(self.abstract_proj(body_tokens), deterministic=det)
+        title_emb = self.dropout(title_tokens, deterministic=det)  # (N, T, text_dim)
+        body_emb = self.dropout(body_tokens, deterministic=det)
         title_mask = title_mask.astype(jnp.bool_)
         body_mask = body_mask.astype(jnp.bool_)
 
@@ -228,14 +243,12 @@ class NewsEncoder(nnx.Module):
         title_enc = self.title_transformer(title_emb, deterministic=det)
         body_enc = self.body_transformer(body_emb, deterministic=det)
 
-        title_w = title_mask.astype(title_enc.dtype)[:, :, None]
-        body_w = body_mask.astype(body_enc.dtype)[:, :, None]
-        title_pool = jnp.sum(title_enc * title_w, axis=1) / jnp.maximum(
-            jnp.sum(title_w, axis=1), 1.0
-        )
-        body_pool = jnp.sum(body_enc * body_w, axis=1) / jnp.maximum(
-            jnp.sum(body_w, axis=1), 1.0
-        )
+        # Unmasked mean pool — matches reference
+        # ``crown-www25/newsEncoders.py:164,168`` which uses plain
+        # ``.mean(dim=1)`` over the transformer output. The masked
+        # variant flattened the intent signal in our ablations.
+        title_pool = jnp.mean(title_enc, axis=1)
+        body_pool = jnp.mean(body_enc, axis=1)
 
         cat_emb = self.category_embedding(category_ids)
         subcat_emb = self.subcategory_embedding(subcategory_ids)
@@ -277,10 +290,3 @@ class NewsEncoder(nnx.Module):
             axis=-1,
         )
         return news_repr.reshape(*leading_shape, self.news_embedding_dim)
-
-
-class _Identity(nnx.Module):
-    """Pass-through used when text_dim already equals embedding_size."""
-
-    def __call__(self, x: jax.Array) -> jax.Array:
-        return x

@@ -48,11 +48,13 @@ jax-cuda = [
 ]
 
 # PyTorch — pick ONE: pytorch (CPU/macOS), cu118, cu124, cu126, cu130
-pytorch = ["torch>=2.6.0"]
-cu118 = ["torch>=2.6.0"]
-cu124 = ["torch>=2.6.0"]
-cu126 = ["torch>=2.6.0"]
-cu130 = ["torch>=2.6.0"]
+# torch_geometric is pure-Python; its built-in utils.softmax/scatter cover our scatter needs
+# without the compiled torch_scatter wheel.
+pytorch = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
+cu118 = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
+cu124 = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
+cu126 = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
+cu130 = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
 
 # All frameworks (JAX + PyTorch)
 all = ["newsrex[jax]", "newsrex[pytorch]"]

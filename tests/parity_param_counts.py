@@ -225,7 +225,6 @@ def _shared_config(name: str) -> dict[str, Any]:
             k_hops=1,
             num_neighbors=2,
             use_entity=False,
-            use_torchgeo=False,
         )
     raise ValueError(name)
 

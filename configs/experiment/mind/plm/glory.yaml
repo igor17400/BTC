@@ -1,0 +1,81 @@
+# @package _global_
+#
+# GLORY on MIND-small with frozen token-level PLM word embeddings.
+#
+# Single-view (title only) — GLORY's reference doesn't consume abstracts.
+# The PLM replaces only the per-news text encoder. Pre-built news graph,
+# entity branch, and GNN are unchanged.
+#
+# Option-2 PLM: the per-news MHA runs at BERT-base's native hidden dim
+# (768). We override head_num=12, head_dim=64 (12 * 64 = 768) so the
+# news_dim = head_num * head_dim matches plm_dim and the GatedGraphConv
+# also runs at 768 — preserves the full BERT signal end-to-end through
+# the GNN.
+#
+# Usage: python src/train.py experiment=mind/plm/glory framework=pytorch
+
+defaults:
+  - /spec: glory
+  - /dataset: mind
+  - /sampling: base
+  - /encoder: bert
+  - _self_
+
+name: mind_glory_plm
+model_name: GLORY
+seed: 42
+
+# Override news-encoder dims so head_num * head_dim == plm_dim=768.
+# Spec default (20 * 20 = 400) doesn't divide 768.
+spec:
+  model:
+    architecture:
+      news_encoder:
+        num_heads: 12
+        head_num: 12
+        head_dim: 64
+
+# Single-view: GLORY doesn't use abstracts, drop the abstract cache.
+encoder:
+  text_field_abstract: ""
+  max_length: ${spec.inputs.title.max_length}
+
+dataset:
+  version: small
+  max_title_length: ${spec.inputs.title.max_length}
+  max_history_length: ${spec.inputs.history.max_length}
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  embedding_size: ${spec.model.embedding.size}
+  process_title: ${spec.inputs.process_title}
+  process_abstract: ${spec.inputs.process_abstract}
+  process_category: ${spec.inputs.process_category}
+  process_subcategory: ${spec.inputs.process_subcategory}
+  process_entities: ${spec.inputs.process_entities}
+  process_user_id: ${spec.inputs.process_user_id}
+
+train:
+  batch_size: ${spec.training.batch_size}
+  num_epochs: ${spec.training.num_epochs}
+  learning_rate: ${spec.training.learning_rate}
+  gradient_clip_val: ${spec.training.gradient_clip_val}
+  grad_accum_steps: ${spec.training.grad_accum_steps}
+  early_stopping:
+    patience: ${spec.training.early_stopping.patience}
+    min_improvement: ${spec.training.early_stopping.min_improvement}
+
+eval:
+  fast_evaluation: true
+  # Spec default 128 may be too generous with PLM tokens + entity branch
+  # on a 24 GB 3090. Halve to 64 for safety; cheap to raise later.
+  batch_size: 64
+
+sampling:
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  strategy: ${spec.training.negative_sampling.strategy}
+  random:
+    replace: false
+
+device:
+  gpu_ids: [0]
+  # bf16 for memory headroom (matches CROWN-PLM convention).
+  precision: bfloat16

@@ -21,6 +21,7 @@ from torch.utils.data import DataLoader
 
 from src.core.io.logging import log_early_stopping, log_epoch_end
 from src.core.io.progress import create_progress
+from src.core.io.saving import cleanup_val_staging, promote_best_val_predictions
 from src.core.io.timing import PhaseStats
 
 from .device import setup_device
@@ -147,17 +148,46 @@ def training_loop(
     wandb_run = wandb.run if enable_wandb else None
 
     # ---- Tracking ----
+    best_metric_key = "auc"
+    if cfg and hasattr(cfg, "train"):
+        best_metric_key = str(getattr(cfg.train, "best_metric", "auc")).lower()
     best_metrics: dict[str, Any] = {"average_metric_value": -float("inf")}
     stopper = EarlyStopping(
         patience=early_stopping_patience,
         min_improvement=early_stopping_min_improvement,
     )
+
+    def _score_for_tracking(metrics: dict[str, float]) -> float:
+        """Pick the scalar used for best-checkpoint + early-stopping."""
+        if best_metric_key == "avg":
+            keys = ["auc", "mrr", "ndcg@5", "ndcg@10"]
+            vs = [metrics[k] for k in keys if k in metrics]
+            return sum(vs) / len(vs) if vs else 0.0
+        # default — and reference's behavior — is raw AUC
+        return float(metrics.get(best_metric_key, 0.0))
+
     timing: dict[str, Any] = {
         "train_epochs": [],
         "val_epochs": [],
         "time_to_first_step_seconds": None,
     }
     experiment_start = time.time()
+
+    # ---- Step-based validation config (mirrors reference GLORY's
+    # ``val_steps`` + ``val_skip_epochs``). When ``cfg.train.val_steps``
+    # is set, validation runs every N optimizer steps instead of (only)
+    # at epoch boundaries. ``val_skip_epochs`` defers step-based vals
+    # until ``val_skip_epochs * batches_per_epoch`` steps have elapsed.
+    val_steps_cfg: int | None = None
+    val_skip_epochs_cfg: float = 0.0
+    if cfg and hasattr(cfg, "train"):
+        v = getattr(cfg.train, "val_steps", None)
+        if v is not None:
+            try:
+                val_steps_cfg = int(v) if int(v) > 0 else None
+            except (TypeError, ValueError):
+                val_steps_cfg = None
+        val_skip_epochs_cfg = float(getattr(cfg.train, "val_skip_epochs", 0.0))
 
     # ---- Mixed precision setup (once, outside the epoch loop) ----
     # ``cfg.device.precision`` selects the autocast dtype:
@@ -240,12 +270,24 @@ def training_loop(
                         torch.nn.utils.clip_grad_norm_(
                             model.parameters(), cfg.train.gradient_clip_val
                         )
+                    # Reference GLORY (main.py:50-55) only steps the LR
+                    # scheduler when AMP's GradScaler did NOT downshift —
+                    # i.e. fp16 overflow did not occur in this micro-step.
+                    # During warmup with fp16, the scaler can downshift
+                    # tens of times in the first ~500 steps; NewsReX
+                    # without this guard burns those steps off the warmup
+                    # schedule even though optimizer.step() was a no-op.
                     if scaler is not None:
                         scaler.step(optimizer)
+                        old_scale = scaler.get_scale()
                         scaler.update()
+                        new_scale = scaler.get_scale()
+                        scaler_step_succeeded = new_scale >= old_scale
                     else:
                         optimizer.step()
-                    if scheduler is not None:
+                        scaler_step_succeeded = True
+
+                    if scheduler is not None and scaler_step_succeeded:
                         scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
 
@@ -263,6 +305,93 @@ def training_loop(
                 samples_seen += int(batch_labels.shape[0])
 
                 progress.update(batch_task, advance=1)
+
+                # ---------- Step-based validation ----------
+                # When val_steps_cfg is set, run validation every N
+                # optimizer steps (mirrors reference GLORY's main loop:
+                # reference_codes/GLORY/src/main.py:69-86).
+                if val_steps_cfg is not None and is_step and eval_fn is not None:
+                    global_step_count = (epoch - 1) * total_micro + (micro_idx + 1)
+                    skip_until = int(val_skip_epochs_cfg * total_micro)
+                    if (
+                        global_step_count > skip_until
+                        and global_step_count % val_steps_cfg == 0
+                    ):
+                        model.eval()
+                        step_eval_start = time.time()
+                        step_val_metrics = eval_fn(model, epoch=epoch)
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                        step_val_time = time.time() - step_eval_start
+                        model.train()
+
+                        n_imps_step = (
+                            int(step_val_metrics.get("_num_impressions", 0))
+                            if isinstance(step_val_metrics, dict)
+                            else 0
+                        )
+                        timing["val_epochs"].append(
+                            PhaseStats(
+                                wall_seconds=step_val_time,
+                                n_samples=n_imps_step or None,
+                                throughput_samples_per_s=(
+                                    n_imps_step / step_val_time
+                                    if (n_imps_step and step_val_time > 0)
+                                    else None
+                                ),
+                            ).to_dict()
+                        )
+
+                        avg_metric_step = _score_for_tracking(step_val_metrics)
+
+                        is_best_step = (
+                            avg_metric_step > best_metrics["average_metric_value"]
+                        )
+                        if is_best_step:
+                            best_metrics = {
+                                "epoch_number": epoch,
+                                "step_number": global_step_count,
+                                "train_loss": running_loss / max(num_batches, 1),
+                                "average_metric_value": avg_metric_step,
+                                **{f"val_{k}": v for k, v in step_val_metrics.items()},
+                            }
+                            if save_dir:
+                                ckpt_path = Path(save_dir) / "model.safetensors"
+                                ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+                                flat = {
+                                    k: v.detach().cpu().contiguous()
+                                    for k, v in model.state_dict().items()
+                                }
+                                save_safetensors(flat, str(ckpt_path))
+                                promote_best_val_predictions(
+                                    Path(save_dir).parent / "predictions"
+                                )
+
+                        # Inline log so progress doesn't swallow it.
+                        print(
+                            f"[step val] epoch={epoch} step={global_step_count} "
+                            f"auc={step_val_metrics.get('auc', float('nan')):.4f} "
+                            f"mrr={step_val_metrics.get('mrr', float('nan')):.4f} "
+                            f"ndcg@10={step_val_metrics.get('ndcg@10', float('nan')):.4f} "
+                            f"{'*BEST*' if is_best_step else ''} "
+                            f"best={best_metrics['average_metric_value']:.4f}",
+                            flush=True,
+                        )
+
+                        if wandb_run is not None:
+                            wandb_log = {
+                                f"val/{k}": v
+                                for k, v in step_val_metrics.items()
+                                if not k.startswith("_")
+                            }
+                            wandb_log["epoch"] = epoch
+                            wandb_log["step"] = global_step_count
+                            wandb.log(wandb_log)
+
+                        # Step-based early stop.
+                        if stopper.step(avg_metric_step):
+                            log_early_stopping(epoch, early_stopping_patience)
+                            break
 
             if torch.cuda.is_available():
                 torch.cuda.synchronize()
@@ -290,7 +419,13 @@ def training_loop(
             val_time = None
             is_best = False
 
-            if eval_fn is not None:
+            # Propagate step-based early stop out of the epoch loop.
+            if stopper.wait >= stopper.patience:
+                break
+
+            # End-of-epoch validation only when step-based is NOT active.
+            # When val_steps_cfg is set, vals fire inside the batch loop.
+            if eval_fn is not None and val_steps_cfg is None:
                 eval_start = time.time()
                 val_metrics = eval_fn(model, epoch=epoch)
                 if torch.cuda.is_available():
@@ -312,9 +447,7 @@ def training_loop(
                 timing["val_epochs"].append(val_stats.to_dict())
 
                 # Best tracking
-                main_metrics = ["auc", "mrr", "ndcg@5", "ndcg@10"]
-                vals = [val_metrics[m] for m in main_metrics if m in val_metrics]
-                avg_metric = sum(vals) / len(vals) if vals else 0.0
+                avg_metric = _score_for_tracking(val_metrics)
 
                 if avg_metric > best_metrics["average_metric_value"]:
                     is_best = True
@@ -333,6 +466,9 @@ def training_loop(
                             for k, v in model.state_dict().items()
                         }
                         save_safetensors(flat, str(ckpt_path))
+                        promote_best_val_predictions(
+                            Path(save_dir).parent / "predictions"
+                        )
 
             # Log epoch (shared format)
             log_epoch_end(
@@ -358,6 +494,9 @@ def training_loop(
                 wandb.log(log_data)
 
             progress.update(epoch_task, advance=1)
+
+    if save_dir:
+        cleanup_val_staging(Path(save_dir).parent / "predictions")
 
     best_metrics["timing"] = timing
     return best_metrics
