@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-NewsReX is a modular and extensible framework for news recommendation systems research, implementing state-of-the-art models with a focus on reproducibility and ease of use. The framework supports three backends — **JAX/Flax**, **Keras 3**, and **PyTorch** — behind a unified Hydra-based configuration system. This project draws inspiration from [newsreclib](https://github.com/andreeaiana/newsreclib).
+NewsReX is a modular and extensible framework for news recommendation systems research, implementing state-of-the-art models with a focus on reproducibility and ease of use. The framework supports two backends — **JAX/Flax** and **PyTorch** — behind a unified Hydra-based configuration system.
 
 ## Features
 
@@ -37,6 +37,8 @@ NewsReX is a modular and extensible framework for news recommendation systems re
 | **Custom** | Generic loader for MIND-format datasets |
 | **Synthetic** | In-memory randomly generated data — no downloads, used for smoke tests |
 
+This project draws inspiration from [newsreclib](https://github.com/andreeaiana/newsreclib).
+
 ## Project Structure
 
 ```
@@ -61,9 +63,7 @@ NewsReX/
 │   │   ├── search/                 # Optuna-based HPO (optimizer, search spaces)
 │   │   └── io/                     # Logging (Rich + W&B), config utils, saving
 │   ├── frameworks/
-│   │   ├── keras/                  # runner, models, dataloaders, losses, layers
 │   │   ├── pytorch/                # runner, models, dataloaders, losses, layers
-│   │   │   └── models/digat.py     # DIGAT (PyTorch-only)
 │   │   └── jax/                    # runner, models, dataloaders, losses, layers
 │   └── benchmarks/                 # Cross-framework benchmarking runner + reporting
 ├── configs/
