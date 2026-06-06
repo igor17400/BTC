@@ -105,7 +105,9 @@ def _build_glove(
         )
     word_id_by_id = _word_ids_by_parsed_id(processed_news, key)
     vocab_size = int(processed_news["vocab_size"])
-    pretrained = processed_news.get("embeddings") if kind == "title" else None
+    # Title and abstract share the same word vocabulary, so both views must be
+    # initialised from the pretrained GloVe matrix.
+    pretrained = processed_news.get("embeddings")
 
     if framework == "pytorch":
         from src.frameworks.pytorch.layers.text_encoder import GloveTextEncoder
