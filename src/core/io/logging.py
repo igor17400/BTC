@@ -3,10 +3,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import wandb
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
 from rich.logging import RichHandler
+
+import wandb
 
 console = Console()
 
@@ -62,9 +63,6 @@ def setup_logging(level: str = "INFO") -> None:
         logging.WARNING
     )  # Reduce JAX compilation messages
     logging.getLogger("jaxlib").setLevel(logging.WARNING)  # Reduce JAXlib messages
-
-    # Keras 3 logging
-    logging.getLogger("keras").setLevel(logging.INFO)  # Show important Keras messages
 
 
 def setup_wandb_session(cfg: DictConfig, output_dir: Path | str | None = None) -> None:

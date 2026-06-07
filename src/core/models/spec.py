@@ -443,18 +443,6 @@ def spec_to_config(spec: DictConfig, encoder: DictConfig | None = None):
 # ---------------------------------------------------------------------------
 
 _MODEL_CLASS_PATHS = {
-    "keras": {
-        "caum": "src.frameworks.keras.models.caum.CAUM",
-        "nrms": "src.frameworks.keras.models.nrms.NRMS",
-        "naml": "src.frameworks.keras.models.naml.NAML",
-        "lstur": "src.frameworks.keras.models.lstur.LSTUR",
-        "crown": "src.frameworks.keras.models.crown.CROWN",
-        "digat": "src.frameworks.keras.models.digat.DIGAT",
-        "pprec": "src.frameworks.keras.models.pprec.PPRec",
-        "glory": "src.frameworks.keras.models.glory.GLORY",
-        "miner": "src.frameworks.keras.models.miner.MINER",
-        "tccm": "src.frameworks.keras.models.tccm.TCCM",
-    },
     "pytorch": {
         "caum": "src.frameworks.pytorch.models.caum.model.CAUM",
         "nrms": "src.frameworks.pytorch.models.nrms.model.NRMS",
@@ -487,7 +475,7 @@ def get_model_class(model_name: str, framework: str):
 
     Args:
         model_name: Model name (e.g., "nrms", "naml").
-        framework: Framework name (e.g., "keras", "pytorch", "jax").
+        framework: Framework name (e.g., "pytorch", "jax").
 
     Returns:
         The model class.
@@ -518,7 +506,7 @@ def get_model_class(model_name: str, framework: str):
 # ---------------------------------------------------------------------------
 
 
-_ALL_FRAMEWORKS = ("pytorch", "jax", "keras")
+_ALL_FRAMEWORKS = ("pytorch", "jax")
 
 
 def _check_framework_supported(
@@ -552,7 +540,7 @@ def build_model_from_spec(
 
     Args:
         spec: Parsed YAML spec (the `spec` key from the Hydra config).
-        framework: Target framework ("keras", "pytorch", "jax").
+        framework: Target framework ("pytorch", "jax").
         processed_news: Processed news data dict (vocab_size, embeddings, etc.).
         encoder: Optional top-level encoder config (``cfg.encoder``) — when
             provided and the model supports it, swaps the GloVe news encoder

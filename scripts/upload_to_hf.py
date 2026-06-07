@@ -61,7 +61,7 @@ def _detect_model_name(run_path: Path) -> str:
 def _detect_framework(run_path: Path) -> str:
     """Detect framework from the run path."""
     for parent in [run_path] + list(run_path.parents):
-        if parent.name in ("pytorch", "keras", "jax"):
+        if parent.name in ("pytorch", "jax"):
             return parent.name
     return "unknown"
 
@@ -105,7 +105,7 @@ def _detect_encoder(run_path: Path) -> str:
     the segment immediately below the framework dir. Falls back to ``"glove"``.
     """
     parts = run_path.resolve().parts
-    frameworks = {"pytorch", "jax", "keras"}
+    frameworks = {"pytorch", "jax"}
     for i, p in enumerate(parts):
         if p in frameworks and i + 1 < len(parts):
             return parts[i + 1]

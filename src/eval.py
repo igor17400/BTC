@@ -27,7 +27,6 @@ sys.argv.append(
 )
 
 FRAMEWORK_MODULES = {
-    "keras": "src.frameworks.keras.runner",
     "pytorch": "src.frameworks.pytorch.runner",
     "jax": "src.frameworks.jax.runner",
 }

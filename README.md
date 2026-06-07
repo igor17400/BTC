@@ -4,12 +4,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://github.com/astral-sh/ruff)
 
-NewsReX is a modular and extensible framework for news recommendation systems research, implementing state-of-the-art models with a focus on reproducibility and ease of use. The framework supports two backends — **JAX/Flax** and **PyTorch** — behind a unified Hydra-based configuration system.
+NewsReX is a modular and extensible framework for news recommendation systems research, implementing state-of-the-art models with a focus on reproducibility and ease of use. The framework supports **JAX/Flax** and **PyTorch** backends behind a unified Hydra-based configuration system.
 
 ## Features
 
 - **6 SOTA news recommendation models** with a unified training and evaluation pipeline
-- **Multi-framework support**: JAX/Flax (JIT + XLA), Keras 3, PyTorch — switchable via a single flag
+- **Multi-framework support**: JAX/Flax (JIT + XLA) and PyTorch — switchable via a single flag
 - **Hydra-based configuration** with composable experiment, model spec, and dataset configs
 - **Multi-seed training** with automatic mean ± std aggregation
 - **Optuna hyperparameter search** with a two-phase search strategy
@@ -19,14 +19,14 @@ NewsReX is a modular and extensible framework for news recommendation systems re
 
 ## Supported Models
 
-| Model | Keras | JAX | PyTorch | Reference |
-|-------|:-----:|:---:|:-------:|-----------|
-| **NRMS** — Neural Recommendation with Multi-Head Self-Attention | ✓ | ✓ | ✓ | EMNLP 2019 |
-| **NAML** — Attentive Multi-View Learning | ✓ | ✓ | ✓ | EMNLP 2019 |
-| **LSTUR** — Long- and Short-term User Representations | ✓ | ✓ | ✓ | NAACL 2020 |
-| **CROWN** — Intent Disentanglement + Bipartite GNN | ✓ | ✓ | ✓ | WWW 2025 |
-| **PP-Rec** — Popularity-Aware Recommendation | ✓ | ✓ | ✓ | ACL 2021 |
-| **DIGAT** — Dual Interactive Graph Attention Networks | — | — | ✓ | EMNLP 2022 |
+| Model | JAX | PyTorch | Reference |
+|-------|:---:|:-------:|-----------|
+| **NRMS** — Neural Recommendation with Multi-Head Self-Attention | ✓ | ✓ | EMNLP 2019 |
+| **NAML** — Attentive Multi-View Learning | ✓ | ✓ | EMNLP 2019 |
+| **LSTUR** — Long- and Short-term User Representations | ✓ | ✓ | NAACL 2020 |
+| **CROWN** — Intent Disentanglement + Bipartite GNN | ✓ | ✓ | WWW 2025 |
+| **PP-Rec** — Popularity-Aware Recommendation | ✓ | ✓ | ACL 2021 |
+| **DIGAT** — Dual Interactive Graph Attention Networks | — | ✓ | EMNLP 2022 |
 
 ## Supported Datasets
 
@@ -64,7 +64,7 @@ NewsReX/
 │   │   └── io/                     # Logging (Rich + W&B), config utils, saving
 │   ├── frameworks/
 │   │   ├── pytorch/                # runner, models, dataloaders, losses, layers
-│   │   └── jax/                    # runner, models, dataloaders, losses, layers
+│   │   └── jax/                    # runner, models, dataloaders, losses, layers (Flax NNX)
 │   └── benchmarks/                 # Cross-framework benchmarking runner + reporting
 ├── configs/
 │   ├── config.yaml                 # Base config (framework, device, train/eval defaults)
@@ -133,9 +133,6 @@ uv run python src/train.py experiment=mind/crown framework=pytorch
 
 # PyTorch — DIGAT (PyTorch-only model)
 uv run python src/train.py experiment=mind/digat framework=pytorch
-
-# Keras backend — NAML on MIND-small
-uv run python src/train.py experiment=mind/naml framework=keras
 ```
 
 Override any config value on the command line:

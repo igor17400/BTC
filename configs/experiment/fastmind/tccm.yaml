@@ -1,7 +1,7 @@
 # @package _global_
 #
 # TCCM on fastMIND (25% user subset of MIND-small for fast iteration)
-# Usage: python src/train.py experiment=fastmind/tccm framework=keras
+# Usage: python src/train.py experiment=fastmind/tccm framework=jax
 
 defaults:
   - /experiment/mind/glove/tccm

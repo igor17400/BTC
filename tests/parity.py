@@ -92,27 +92,6 @@ class TestNRMSParity:
 
         shapes = {}
 
-        # Keras
-        try:
-            import os
-
-            os.environ["KERAS_BACKEND"] = "jax"
-            from src.frameworks.keras.models.nrms import NRMS as KerasNRMS
-
-            model = KerasNRMS(
-                processed_news=processed_news,
-                embedding_size=64,
-                multiheads=2,
-                head_dim=8,
-                max_title_length=10,
-                max_history_length=5,
-                max_impressions_length=3,
-            )
-            output = model(inputs, training=False)
-            shapes["keras"] = tuple(output.shape)
-        except ImportError:
-            pytest.skip("Keras not available")
-
         # PyTorch
         try:
             import torch
@@ -175,13 +154,13 @@ class TestNRMSParity:
         processed_news = _make_processed_news()
         inputs = _make_inputs()
 
+        # PyTorch
         try:
-            import os
+            import torch
 
-            os.environ["KERAS_BACKEND"] = "jax"
-            from src.frameworks.keras.models.nrms import NRMS as KerasNRMS
+            from src.frameworks.pytorch.models.nrms import NRMS as TorchNRMS
 
-            model = KerasNRMS(
+            model = TorchNRMS(
                 processed_news=processed_news,
                 embedding_size=64,
                 multiheads=2,
@@ -190,9 +169,14 @@ class TestNRMSParity:
                 max_history_length=5,
                 max_impressions_length=3,
             )
-            output = np.array(model(inputs, training=True))
+            model.eval()
+            with torch.no_grad():
+                hist = torch.from_numpy(inputs["hist_tokens"])
+                cand = torch.from_numpy(inputs["cand_tokens"])
+                output = model(hist, cand, training=False)
+            output_np = output.numpy()
             # Softmax output should sum to ~1
-            row_sums = output.sum(axis=-1)
+            row_sums = output_np.sum(axis=-1)
             np.testing.assert_allclose(row_sums, 1.0, atol=1e-5)
         except ImportError:
-            pytest.skip("Keras not available")
+            pytest.skip("PyTorch not available")

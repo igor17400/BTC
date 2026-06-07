@@ -1,7 +1,7 @@
 """NewsReX training entry point.
 
 Thin Hydra dispatcher — all framework logic lives in
-``src.frameworks.{keras,pytorch,jax}.runner.run(cfg)``.
+``src.frameworks.{pytorch,jax}.runner.run(cfg)``.
 
 When ``multi_seed.enabled`` is true, trains the model multiple times
 with different seeds, collects metrics, and reports mean ± std.
@@ -18,7 +18,6 @@ from src.core.io.logging import console, setup_logging
 from src.core.io.progress import set_default_backend
 
 FRAMEWORK_MODULES = {
-    "keras": "src.frameworks.keras.runner",
     "pytorch": "src.frameworks.pytorch.runner",
     "jax": "src.frameworks.jax.runner",
 }
@@ -26,7 +25,7 @@ FRAMEWORK_MODULES = {
 
 def _run_single(cfg: DictConfig) -> dict:
     """Run a single training pass and return metrics."""
-    framework = getattr(cfg, "framework", "keras")
+    framework = getattr(cfg, "framework", "jax")
     runner = importlib.import_module(FRAMEWORK_MODULES[framework])
     return runner.run(cfg) or {}
 
@@ -34,7 +33,7 @@ def _run_single(cfg: DictConfig) -> dict:
 def _run_multi_seed(cfg: DictConfig) -> None:
     """Run training across multiple seeds and report aggregated results."""
     seeds = list(cfg.multi_seed.seeds)
-    framework = getattr(cfg, "framework", "keras")
+    framework = getattr(cfg, "framework", "jax")
     model_name = cfg.model_name
 
     console.rule(
@@ -109,7 +108,7 @@ def main(cfg: DictConfig) -> None:
     setup_logging(level=cfg.logging.level if hasattr(cfg.logging, "level") else "INFO")
     set_default_backend(cfg.logging.get("progress_backend", "rich"))
 
-    framework = getattr(cfg, "framework", "keras")
+    framework = getattr(cfg, "framework", "jax")
 
     if framework not in FRAMEWORK_MODULES:
         raise ValueError(

@@ -11,7 +11,7 @@ defaults:
 
 search:
   model: nrms           # nrms, naml, lstur
-  framework: pytorch    # pytorch, keras, jax
+  framework: pytorch    # pytorch, jax
   dataset: mind         # experiment dataset group
   phase: 1              # 1 = training dynamics, 2 = architecture
   n_trials: 20

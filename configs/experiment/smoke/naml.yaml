@@ -1,7 +1,7 @@
 # @package _global_
 #
 # Smoke test: NAML on synthetic data (1 epoch, tiny batch)
-# Usage: python src/train.py experiment=smoke/naml framework=keras
+# Usage: python src/train.py experiment=smoke/naml framework=jax
 
 defaults:
   - /spec: naml
@@ -55,4 +55,3 @@ metrics:
 device:
   gpu_ids: [0]
   precision: float32
-  keras_backend: jax  # Options: jax, torch

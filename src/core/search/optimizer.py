@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 
 FRAMEWORK_MODULES = {
     "pytorch": "src.frameworks.pytorch.runner",
-    "keras": "src.frameworks.keras.runner",
     "jax": "src.frameworks.jax.runner",
 }
 

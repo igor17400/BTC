@@ -54,4 +54,3 @@ metrics:
 device:
   gpu_ids: [0]
   precision: float32
-  keras_backend: jax

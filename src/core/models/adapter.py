@@ -2,7 +2,7 @@
 
 The shared :mod:`src.core.models.evaluation` module needs to invoke
 framework-specific encoder modules and convert framework-native tensors
-to numpy. To stay framework-agnostic it never imports torch / keras /
+to numpy. To stay framework-agnostic it never imports torch /
 jax directly. Instead, each framework provides a small adapter that
 implements the :class:`FrameworkAdapter` protocol below, and the shared
 evaluator only depends on this protocol.

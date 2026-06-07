@@ -1,7 +1,7 @@
 # @package _global_
 #
 # NAML on Japanese news dataset
-# Usage: python src/train.py experiment=japanese/naml framework=keras
+# Usage: python src/train.py experiment=japanese/naml framework=jax
 
 defaults:
   - /spec: naml

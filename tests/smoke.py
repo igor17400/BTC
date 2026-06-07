@@ -8,8 +8,6 @@ Usage:
     # Specific models and frameworks
     uv run python tests/smoke.py --models nrms naml --frameworks jax pytorch
 
-    # With Keras backends
-    uv run python tests/smoke.py --models nrms --frameworks jax pytorch keras+jax keras+torch
 
 Logs are saved to tests/.smoke_logs/<model>_<framework>.log for inspection.
 """
@@ -30,7 +28,7 @@ LOGS_DIR = Path(__file__).parent / ".smoke_logs"
 console = Console()
 
 ALL_MODELS = ["nrms", "naml", "lstur", "pprec", "crown"]
-ALL_FRAMEWORKS = ["jax", "pytorch", "keras+jax", "keras+torch"]
+ALL_FRAMEWORKS = ["jax", "pytorch"]
 
 
 def run_one(model: str, framework: str) -> dict:
@@ -58,13 +56,7 @@ def run_one(model: str, framework: str) -> dict:
         "logging.enable_wandb=false",
     ]
 
-    # Parse framework spec: "keras+jax" → framework=keras, backend=jax
-    if "+" in framework:
-        fw, backend = framework.split("+")
-        cmd.append(f"framework={fw}")
-        cmd.append(f"device.keras_backend={backend}")
-    else:
-        cmd.append(f"framework={framework}")
+    cmd.append(f"framework={framework}")
 
     # Log file for this run
     log_name = f"{model}_{framework.replace('+', '_')}.log"

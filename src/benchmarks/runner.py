@@ -13,7 +13,7 @@ from rich.table import Table
 
 console = Console()
 
-SUPPORTED_FRAMEWORKS = ["keras", "pytorch", "jax"]
+SUPPORTED_FRAMEWORKS = ["pytorch", "jax"]
 
 
 def run_single_framework(
@@ -24,7 +24,7 @@ def run_single_framework(
 
     Args:
         cfg: Hydra configuration
-        framework: One of 'keras', 'pytorch', 'jax'
+        framework: One of 'pytorch', 'jax'
 
     Returns:
         Dictionary with metrics, timing, and metadata
@@ -45,7 +45,6 @@ def run_single_framework(
         import importlib
 
         framework_modules = {
-            "keras": "src.frameworks.keras.runner",
             "pytorch": "src.frameworks.pytorch.runner",
             "jax": "src.frameworks.jax.runner",
         }

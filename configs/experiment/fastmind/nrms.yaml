@@ -1,7 +1,7 @@
 # @package _global_
 #
 # NRMS on fastMIND (25% user subset of MIND-small for fast iteration)
-# Usage: python src/train.py experiment=fastmind/nrms framework=keras
+# Usage: python src/train.py experiment=fastmind/nrms framework=jax
 
 defaults:
   - /experiment/mind/glove/nrms
