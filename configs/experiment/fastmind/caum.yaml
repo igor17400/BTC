@@ -4,7 +4,7 @@
 # Usage: python src/train.py experiment=fastmind/caum framework=keras
 
 defaults:
-  - /experiment/mind/caum
+  - /experiment/mind/glove/caum
   - override /dataset: fastmind
   - _self_
 

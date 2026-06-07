@@ -110,7 +110,6 @@ def tccm_fast_evaluate(
     intervention_value = float(getattr(cfg, "intervention_value", 0.5))
 
     impression_times = behaviors_data.get("impression_times")
-    candidate_news_ids_data = behaviors_data.get("candidate_news_ids")
 
     # Pre-compute wall-clock buckets for every eval impression once.
     import pandas as pd
@@ -138,11 +137,8 @@ def tccm_fast_evaluate(
             imp_id_to_row[int(iid)] = i
 
     publish_h_lookup = (
-        (
-            pd.to_datetime(np.asarray(publish_time)) - pd.Timestamp(dataset_start)
-        ).total_seconds().to_numpy()
-        / 3600.0
-    )
+        pd.to_datetime(np.asarray(publish_time)) - pd.Timestamp(dataset_start)
+    ).total_seconds().to_numpy() / 3600.0
 
     # ------------------------------------------------------------------
     # Pass 1 — resolve per-impression candidate row indices and assemble
@@ -287,7 +283,9 @@ def tccm_fast_evaluate(
         else:
             rel_scores = rec["rel_vecs"] @ rec["user_vector"]
             if use_intervention or rec["start"] is None or rec["start"] < 0:
-                pop_scores = np.full(rel_scores.shape, intervention_value, dtype=np.float32)
+                pop_scores = np.full(
+                    rel_scores.shape, intervention_value, dtype=np.float32
+                )
             else:
                 pop_scores = all_pop_scores[rec["start"] : rec["stop"]]
             scores = rec["eta"] * rel_scores + (1.0 - rec["eta"]) * pop_scores
@@ -298,5 +296,5 @@ def tccm_fast_evaluate(
     progress.remove_task(imp_task)
 
     final = compute_metrics(group_labels, group_preds, metrics_calculator, progress)
-    final["num_impressions"] = len(group_labels)
+    final["_num_impressions"] = len(group_labels)
     return final

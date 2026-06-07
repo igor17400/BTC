@@ -4,6 +4,7 @@ Standalone functions extracted from NewsDatasetBase for reading news TSV files,
 tokenizing titles/abstracts, and orchestrating the full news processing pipeline.
 """
 
+import csv
 import json
 import logging
 import os
@@ -56,7 +57,15 @@ def read_all_news(dataset_path: Path) -> pd.DataFrame:
     ]
 
     def read_news_file(file_path: Path) -> pd.DataFrame:
-        """Read a news.tsv file with auto-detected column format."""
+        """Read a news.tsv file with auto-detected column format.
+
+        ``quoting=csv.QUOTE_NONE`` is required: MIND news titles and abstracts
+        contain unescaped double-quotes (e.g. ``"No more Mr. Nice Guy"``). With
+        the default ``quotechar='"'``, pandas misparses these rows and
+        ``on_bad_lines="skip"`` silently drops them — ~1,153 news in
+        MIND-small, which then cascades into phantom skip-edges in the GLORY
+        click-trajectory graph and missing tokens/embeddings everywhere.
+        """
         return pd.read_table(
             file_path,
             header=None,
@@ -64,6 +73,7 @@ def read_all_news(dataset_path: Path) -> pd.DataFrame:
             na_filter=False,
             on_bad_lines="skip",
             engine="python",
+            quoting=csv.QUOTE_NONE,
         )
 
     for split in ("train", "valid", "test"):
@@ -379,6 +389,18 @@ def process_news(
             embedding_matrix = create_embeddings_fn(vocab)
             np.save(embeddings_file, embedding_matrix)
 
+        # Raw text retained per news in the same row order as
+        # ``news_ids_original_strings``. Needed by the PLM encoder
+        # (:mod:`src.core.data.encoders.plm`) which tokenises and embeds
+        # the raw strings rather than the GloVe-tokenised arrays. Strings
+        # are cheap (~few MB for MIND-small) so pickling them is fine.
+        title_by_id = dict(zip(all_news_df["id"], all_news_df["title"]))
+        abstract_by_id = dict(zip(all_news_df["id"], all_news_df["abstract"]))
+        raw_titles = [str(title_by_id.get(nid, "")) for nid in unique_news_ids_str]
+        raw_abstracts = [
+            str(abstract_by_id.get(nid, "")) for nid in unique_news_ids_str
+        ]
+
         processed_news_content: dict[str, Any] = {
             "news_ids_original_strings": unique_news_ids_str,
             "tokens": tokenized_titles_np,
@@ -388,6 +410,8 @@ def process_news(
             "subcategory_indices": subcategory_indices,
             "num_categories": len(unique_categories),
             "num_subcategories": len(unique_subcategories),
+            "raw_titles": raw_titles,
+            "raw_abstracts": raw_abstracts,
         }
 
         with open(processed_news_file, "wb") as f:
@@ -407,6 +431,25 @@ def process_news(
                 processed_news_content["news_ids_original_strings"]
             )
         }
+
+        # Legacy caches written before PLM-encoder support didn't keep
+        # raw text. Backfill by re-reading the news.tsv once — cheap
+        # relative to a full re-tokenisation.
+        if "raw_titles" not in processed_news_content:
+            logger.info("Backfilling raw_titles/raw_abstracts into cached news data...")
+            all_news_df = read_all_news(dataset_path)
+            title_by_id = dict(zip(all_news_df["id"], all_news_df["title"]))
+            abstract_by_id = dict(zip(all_news_df["id"], all_news_df["abstract"]))
+            unique_news_ids_str = processed_news_content["news_ids_original_strings"]
+            processed_news_content["raw_titles"] = [
+                str(title_by_id.get(nid, "")) for nid in unique_news_ids_str
+            ]
+            processed_news_content["raw_abstracts"] = [
+                str(abstract_by_id.get(nid, "")) for nid in unique_news_ids_str
+            ]
+            # Rewrite the cache so the next run skips the backfill.
+            with open(processed_news_file, "wb") as f:
+                pickle.dump(processed_news_content, f)
 
     # Load embeddings as NumPy array (no framework conversion here)
     if embeddings_file.exists():

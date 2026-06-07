@@ -33,7 +33,9 @@ import pandas as pd
 logger = logging.getLogger(__name__)
 
 
-def _hour_bucket(ts: pd.Timestamp, dataset_start: pd.Timestamp, bucket_hours: int) -> int:
+def _hour_bucket(
+    ts: pd.Timestamp, dataset_start: pd.Timestamp, bucket_hours: int
+) -> int:
     delta_h = (pd.Timestamp(ts) - pd.Timestamp(dataset_start)).total_seconds() / 3600.0
     return int(delta_h // bucket_hours)
 
@@ -257,7 +259,9 @@ def build_per_token_buckets(
     # impression's events into its own popularity score, which inflates
     # train metrics and hurts test generalization on MIND-small.
     impr_ts = pd.to_datetime(impression_times)
-    delta_h = (impr_ts - pd.Timestamp(dataset_start)).total_seconds().to_numpy() / 3600.0
+    delta_h = (
+        impr_ts - pd.Timestamp(dataset_start)
+    ).total_seconds().to_numpy() / 3600.0
     impr_buckets = np.clip(
         np.floor(delta_h / bucket_hours).astype(np.int64) - 1,
         0,

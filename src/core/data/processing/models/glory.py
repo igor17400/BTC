@@ -100,11 +100,62 @@ def build_news_feature_matrix(
 # ----------------------------------------------------------------------
 
 
+def _build_edges_from_raw_behaviors(
+    raw_behaviors_path: Path,
+    news_str_id_to_int_idx: dict[str, int],
+    use_graph_type: int,
+) -> Counter:
+    """Build edge counter by reading raw behaviors.tsv (FULL history).
+
+    Mirrors reference GLORY's ``prepare_news_graph``
+    (``reference_codes/GLORY/src/dataload/data_preprocess.py:242-278``)
+    which uses each user's full click history straight from
+    behaviors.tsv -- NOT the truncated ``histories_news_ids`` array
+    (which is capped at ``max_history_length=50`` for the model's
+    user-encoder input). For users with >50 clicks the truncated
+    version silently drops the bulk of their click trajectory, which
+    severely depresses edge weights and starves GLORY's global graph
+    encoder. See GLORY_PARITY_FINDINGS.md.
+    """
+    edge_counter: Counter = Counter()
+    seen_users: set = set()
+    with open(raw_behaviors_path, encoding="utf-8") as f:
+        for line in f:
+            parts = line.strip().split("\t")
+            if len(parts) < 4:
+                continue
+            user_id = parts[1]
+            if user_id in seen_users:
+                continue
+            seen_users.add(user_id)
+            history_str_ids = parts[3].split() if parts[3] else []
+            history = [
+                news_str_id_to_int_idx[s]
+                for s in history_str_ids
+                if s in news_str_id_to_int_idx
+            ]
+            if len(history) < 2:
+                continue
+            if use_graph_type == 0:
+                for i in range(len(history) - 1):
+                    edge_counter[(history[i], history[i + 1])] += 1
+            elif use_graph_type == 1:
+                for i in range(len(history) - 1):
+                    for j in range(i + 1, len(history)):
+                        edge_counter[(history[i], history[j])] += 1
+                        edge_counter[(history[j], history[i])] += 1
+            else:
+                raise ValueError(f"Unknown use_graph_type={use_graph_type}")
+    return edge_counter
+
+
 def build_news_graph(
     train_behaviors: dict,
     num_news: int,
     use_graph_type: int = 0,
     cache_path: Path | None = None,
+    raw_behaviors_path: Path | None = None,
+    news_str_id_to_int_idx: dict[str, int] | None = None,
 ) -> dict:
     """Build the global news graph from user click trajectories.
 
@@ -120,6 +171,14 @@ def build_news_graph(
         use_graph_type: 0 = trajectory (directed consecutive edges),
             1 = co-occurrence (undirected all-pairs).
         cache_path: Optional path to load/save the result.
+        raw_behaviors_path: Optional path to the raw ``behaviors.tsv``
+            file.  When provided (with ``news_str_id_to_int_idx``),
+            edges are built from each user's FULL history (matching
+            reference GLORY).  When not provided, falls back to the
+            truncated ``histories_news_ids`` in ``train_behaviors``
+            (capped at ``max_history_length``).
+        news_str_id_to_int_idx: String news ID → processed_news row
+            index map (required when ``raw_behaviors_path`` is given).
 
     Returns:
         Dict with ``edge_index`` ``(2, E)`` int64, ``edge_attr`` ``(E,)``
@@ -129,6 +188,45 @@ def build_news_graph(
         logger.info(f"Loading cached GLORY news graph from {cache_path}")
         with open(cache_path, "rb") as f:
             return pickle.load(f)
+
+    # Preferred path: read raw behaviors.tsv → full histories (matches
+    # reference). Falls back to truncated ``histories_news_ids`` only
+    # when raw data isn't reachable (e.g. synthetic datasets).
+    if (
+        raw_behaviors_path is not None
+        and news_str_id_to_int_idx is not None
+        and raw_behaviors_path.exists()
+    ):
+        logger.info(
+            f"Building GLORY news graph from raw behaviors at "
+            f"{raw_behaviors_path} (full histories)."
+        )
+        edge_counter = _build_edges_from_raw_behaviors(
+            raw_behaviors_path, news_str_id_to_int_idx, use_graph_type
+        )
+        edges = list(edge_counter.keys())
+        if edges:
+            edge_index = np.asarray(edges, dtype=np.int64).T
+            edge_attr = np.asarray([edge_counter[e] for e in edges], dtype=np.int64)
+        else:
+            edge_index = np.zeros((2, 0), dtype=np.int64)
+            edge_attr = np.zeros((0,), dtype=np.int64)
+        graph = {
+            "edge_index": edge_index,
+            "edge_attr": edge_attr,
+            "num_nodes": int(num_news),
+        }
+        logger.info(
+            f"Built GLORY news graph (raw-behaviors): {graph['num_nodes']} "
+            f"nodes, {edge_index.shape[1]} directed edges, "
+            f"total weight {int(edge_attr.sum())}."
+        )
+        if cache_path is not None:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(cache_path, "wb") as f:
+                pickle.dump(graph, f)
+            logger.info(f"Cached GLORY news graph to {cache_path}")
+        return graph
 
     histories = train_behaviors.get("histories_news_ids")
     if histories is None:
@@ -357,7 +455,8 @@ def build_entity_graph(
         edges = list(edge_counter.keys())
         ent_edge_index = np.asarray(edges, dtype=np.int64).T
         ent_edge_attr = np.asarray(
-            [edge_counter[e] for e in edges], dtype=np.int64,
+            [edge_counter[e] for e in edges],
+            dtype=np.int64,
         )
         # Make undirected (matching reference).
         rev = ent_edge_index[[1, 0]]
@@ -371,7 +470,8 @@ def build_entity_graph(
         edges_dedup = list(dedup.keys())
         ent_edge_index = np.asarray(edges_dedup, dtype=np.int64).T
         ent_edge_attr = np.asarray(
-            [dedup[e] for e in edges_dedup], dtype=np.int64,
+            [dedup[e] for e in edges_dedup],
+            dtype=np.int64,
         )
 
     graph = {
@@ -456,26 +556,37 @@ def sample_subgraph(
     neighbor_dict: dict[int, list[int]],
     k_hops: int,
     num_neighbors: int,
+    max_nodes: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """k-hop neighbor expansion from a user's history.
 
     BFS-style expansion: at each hop, every current node contributes its
     top-``num_neighbors`` neighbors (by edge weight).  The resulting
-    node list is de-duplicated via ``np.unique`` (sorted), and
-    ``history_mapping`` gives the de-duplicated indices of the original
-    history items.
+    node list is de-duplicated and ``history_mapping`` gives the
+    de-duplicated indices of the original history items.
 
     Args:
         history_ids: ``(H,)`` int array of news IDs (0 = padding).
         neighbor_dict: From :func:`build_neighbor_dict`.
         k_hops: Expansion depth.
         num_neighbors: Max neighbors per node per hop.
+        max_nodes: If set, pad/truncate the subgraph to exactly this
+            many nodes. Padding extends with ``0`` (the padding sentinel
+            news id); truncation prefers history nodes first, then
+            earlier hops, dropping the latest hop's neighbors first.
+            **Used for JAX so that XLA compiles a single fixed-shape
+            kernel across all impressions.** ``None`` (default) keeps
+            the original variable-size behavior for PyTorch.
 
     Returns:
         ``(unique_node_ids, history_mapping)`` — both numpy int arrays.
-        ``unique_node_ids`` is the sorted union of history + expanded
-        neighbors; ``history_mapping[i]`` is the index of
-        ``history_ids[i]`` within ``unique_node_ids``.
+        When ``max_nodes`` is ``None``, ``unique_node_ids`` is the sorted
+        union of history + expanded neighbors; ``history_mapping[i]`` is
+        the index of ``history_ids[i]`` within ``unique_node_ids``.
+        When ``max_nodes`` is set, ``unique_node_ids`` has shape
+        ``(max_nodes,)`` exactly, ordered as
+        ``[history..., hop1_neighbors..., hop2_neighbors..., 0_padding...]``,
+        and ``history_mapping[i]`` is the corresponding index.
     """
     hist = np.asarray(history_ids, dtype=np.int64)
     hist_valid = hist[hist > 0]
@@ -492,11 +603,34 @@ def sample_subgraph(
         current = next_hop
         all_nodes.extend(next_hop)
 
-    unique, inverse = np.unique(
-        np.asarray(all_nodes, dtype=np.int64), return_inverse=True
-    )
-    # inverse[:len(hist_valid)] gives us the mapping for original history.
-    hist_mapping = inverse[: hist_valid.size]
+    if max_nodes is None:
+        # Existing path: sort-dedupe, hist_mapping is the inverse index.
+        unique, inverse = np.unique(
+            np.asarray(all_nodes, dtype=np.int64), return_inverse=True
+        )
+        hist_mapping = inverse[: hist_valid.size]
+        return unique, hist_mapping
+
+    # Padded path (for JAX): order-preserving dedupe, then truncate /
+    # pad to exactly ``max_nodes``. History nodes occupy the first
+    # ``hist_valid.size`` slots, so they survive truncation as long as
+    # ``hist_valid.size <= max_nodes`` (always true with his_size=50,
+    # max_nodes>=64).
+    seen: dict[int, int] = {}
+    ordered: list[int] = []
+    for node in all_nodes:
+        node_int = int(node)
+        if node_int not in seen:
+            seen[node_int] = len(ordered)
+            ordered.append(node_int)
+        if len(ordered) >= max_nodes:
+            break  # truncate: drop remaining (latest-hop) neighbors
+
+    while len(ordered) < max_nodes:
+        ordered.append(0)  # pad with news id 0 (the padding sentinel)
+
+    unique = np.asarray(ordered, dtype=np.int64)
+    hist_mapping = np.asarray([seen[int(h)] for h in hist_valid], dtype=np.int64)
     return unique, hist_mapping
 
 
@@ -540,6 +674,9 @@ def extract_edges_for_subgraph(
     *,
     csr: tuple[np.ndarray, np.ndarray] | None = None,
     num_nodes: int | None = None,
+    max_edges: int | None = None,
+    n_real_nodes: int | None = None,
+    pad_node_idx: int | None = None,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Extract the node-induced subgraph on ``node_ids``.
 
@@ -565,19 +702,33 @@ def extract_edges_for_subgraph(
         (GLORY's ``GatedGraphConv`` ignores edge weights).
     """
     if node_ids.size == 0:
-        return np.zeros((2, 0), dtype=np.int64), np.zeros((0,), dtype=np.int64)
+        return _pad_edges(
+            np.zeros((2, 0), dtype=np.int64),
+            np.zeros((0,), dtype=np.int64),
+            max_edges,
+            pad_node_idx,
+        )
+
+    # When the caller padded ``node_ids``, only the first ``n_real_nodes``
+    # entries are real news; the rest are sentinels that we must skip
+    # during edge extraction (otherwise global_to_local[0] gets clobbered
+    # by repeated padding entries).
+    if n_real_nodes is not None:
+        real_node_ids = node_ids[:n_real_nodes]
+    else:
+        real_node_ids = node_ids
 
     if csr is not None and num_nodes is not None:
         indptr, in_srcs = csr
         # Membership test in O(1) per lookup.
         node_set = np.zeros(num_nodes, dtype=bool)
-        node_set[node_ids] = True
+        node_set[real_node_ids] = True
         global_to_local = np.full(num_nodes, -1, dtype=np.int64)
-        global_to_local[node_ids] = np.arange(node_ids.size, dtype=np.int64)
+        global_to_local[real_node_ids] = np.arange(real_node_ids.size, dtype=np.int64)
 
         sub_src_chunks: list[np.ndarray] = []
         sub_dst_chunks: list[np.ndarray] = []
-        for local_dst, dst in enumerate(node_ids):
+        for local_dst, dst in enumerate(real_node_ids):
             start = indptr[dst]
             end = indptr[dst + 1]
             if start == end:
@@ -591,20 +742,32 @@ def extract_edges_for_subgraph(
             sub_dst_chunks.append(np.full(valid_srcs.size, local_dst, dtype=np.int64))
 
         if not sub_src_chunks:
-            return np.zeros((2, 0), dtype=np.int64), np.zeros((0,), dtype=np.int64)
+            return _pad_edges(
+                np.zeros((2, 0), dtype=np.int64),
+                np.zeros((0,), dtype=np.int64),
+                max_edges,
+                pad_node_idx,
+            )
         sub_src = np.concatenate(sub_src_chunks)
         sub_dst = np.concatenate(sub_dst_chunks)
-        return (
+        return _pad_edges(
             np.stack([sub_src, sub_dst], axis=0).astype(np.int64),
             np.zeros(sub_src.size, dtype=np.int64),
+            max_edges,
+            pad_node_idx,
         )
 
     # Fallback: searchsorted path (slow but keeps the public API
     # working for callers that don't supply a CSR).
     if edge_index.size == 0:
-        return np.zeros((2, 0), dtype=np.int64), np.zeros((0,), dtype=np.int64)
+        return _pad_edges(
+            np.zeros((2, 0), dtype=np.int64),
+            np.zeros((0,), dtype=np.int64),
+            max_edges,
+            pad_node_idx,
+        )
 
-    node_set = np.sort(node_ids)
+    node_set = np.sort(real_node_ids)
     src, dst = edge_index[0], edge_index[1]
     pos_src = np.searchsorted(node_set, src)
     pos_dst = np.searchsorted(node_set, dst)
@@ -616,10 +779,52 @@ def extract_edges_for_subgraph(
     )
     mask = valid_src & valid_dst
     if not mask.any():
-        return np.zeros((2, 0), dtype=np.int64), np.zeros((0,), dtype=np.int64)
+        return _pad_edges(
+            np.zeros((2, 0), dtype=np.int64),
+            np.zeros((0,), dtype=np.int64),
+            max_edges,
+            pad_node_idx,
+        )
     sub_src = pos_src[mask]
     sub_dst = pos_dst[mask]
     sub_attr = (
         edge_attr[mask] if edge_attr.size > 0 else np.zeros(mask.sum(), dtype=np.int64)
     )
-    return np.stack([sub_src, sub_dst], axis=0).astype(np.int64), sub_attr
+    return _pad_edges(
+        np.stack([sub_src, sub_dst], axis=0).astype(np.int64),
+        sub_attr,
+        max_edges,
+        pad_node_idx,
+    )
+
+
+def _pad_edges(
+    sub_edges: np.ndarray,
+    sub_attr: np.ndarray,
+    max_edges: int | None,
+    pad_node_idx: int | None,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Pad/truncate a subgraph's edge_index to ``max_edges`` (no-op when
+    ``max_edges is None``).
+
+    Padded slots are self-loops at ``pad_node_idx``, which should be a
+    reserved position (e.g. ``max_nodes - 1``) that's never gathered by
+    ``hist_mapping`` — keeps real nodes' aggregated messages unaffected.
+    """
+    if max_edges is None:
+        return sub_edges, sub_attr
+    e = sub_edges.shape[1]
+    if e == max_edges:
+        return sub_edges, sub_attr
+    if e > max_edges:
+        # Truncate (rare; only when the subgraph is unusually dense).
+        return sub_edges[:, :max_edges], sub_attr[:max_edges]
+    # Pad with (pad_node_idx, pad_node_idx) self-loops.
+    pidx = pad_node_idx if pad_node_idx is not None else 0
+    pad_count = max_edges - e
+    pad_block = np.full((2, pad_count), pidx, dtype=sub_edges.dtype)
+    sub_edges = np.concatenate([sub_edges, pad_block], axis=1)
+    sub_attr = np.concatenate(
+        [sub_attr, np.zeros(pad_count, dtype=sub_attr.dtype)], axis=0
+    )
+    return sub_edges, sub_attr

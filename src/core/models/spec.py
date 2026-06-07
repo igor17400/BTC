@@ -13,6 +13,7 @@ from .configs import (
     CAUMConfig,
     CROWNConfig,
     DIGATConfig,
+    EncoderConfig,
     GLORYConfig,
     LSTURConfig,
     MINERConfig,
@@ -20,6 +21,7 @@ from .configs import (
     NRMSConfig,
     PPRecConfig,
     TCCMConfig,
+    TextPoolerConfig,
 )
 
 # ---------------------------------------------------------------------------
@@ -27,12 +29,56 @@ from .configs import (
 # ---------------------------------------------------------------------------
 
 
-def spec_to_nrms_config(spec: DictConfig) -> NRMSConfig:
+def _encoder_from_cfg(encoder_cfg: DictConfig | None) -> EncoderConfig:
+    """Build an EncoderConfig from the top-level ``cfg.encoder`` dict.
+
+    Accepts ``None`` (defaults to GloVe) so the existing call-sites that
+    don't yet pass an encoder keep working.
+    """
+    if encoder_cfg is None:
+        return EncoderConfig()
+    return EncoderConfig(
+        type=encoder_cfg.get("type", "glove"),
+        embedding_size=encoder_cfg.get("embedding_size", 300),
+        plm_name=encoder_cfg.get("plm_name", ""),
+        plm_dim=encoder_cfg.get("plm_dim", 0),
+        text_field=encoder_cfg.get("text_field", "title"),
+        max_length=encoder_cfg.get("max_length", 32),
+        text_field_abstract=encoder_cfg.get("text_field_abstract", "") or "",
+        max_length_abstract=encoder_cfg.get("max_length_abstract", 50),
+        batch_size=encoder_cfg.get("batch_size", 64),
+        trainability=encoder_cfg.get("trainability", "frozen_cached"),
+        trainable_layers=encoder_cfg.get("trainable_layers", 0),
+    )
+
+
+def _text_pooler_from_arch(arch: DictConfig) -> TextPoolerConfig:
+    """Read the ``text_pooler`` block from a model architecture spec.
+
+    Tolerates missing sub-fields so old specs (no ``text_pooler`` block)
+    pick up the dataclass defaults.
+    """
+    pooler_cfg = arch.get("text_pooler")
+    if pooler_cfg is None:
+        return TextPoolerConfig()
+    return TextPoolerConfig(
+        type=pooler_cfg.get("type", "attention"),
+        num_heads=pooler_cfg.get("num_heads", 6),
+        head_dim=pooler_cfg.get("head_dim", 128),
+        attention_query_dim=pooler_cfg.get("attention_query_dim", 200),
+        dropout_rate=pooler_cfg.get("dropout_rate", 0.0),
+    )
+
+
+def spec_to_nrms_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> NRMSConfig:
     """Convert a parsed NRMS spec into NRMSConfig."""
     arch = spec.model.architecture
     return NRMSConfig(
         embedding_size=spec.model.embedding.size,
-        multiheads=arch.news_encoder.num_heads,
+        news_num_heads=arch.news_encoder.num_heads,
+        user_num_heads=arch.user_encoder.num_heads,
         head_dim=arch.news_encoder.head_dim,
         attention_hidden_dim=arch.news_encoder.attention_hidden_dim,
         dropout_rate=spec.model.dropout_rate,
@@ -41,10 +87,13 @@ def spec_to_nrms_config(spec: DictConfig) -> NRMSConfig:
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_naml_config(spec: DictConfig) -> NAMLConfig:
+def spec_to_naml_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> NAMLConfig:
     """Convert a parsed NAML spec into NAMLConfig."""
     arch = spec.model.architecture
     views = arch.news_encoder.views
@@ -64,11 +113,15 @@ def spec_to_naml_config(spec: DictConfig) -> NAMLConfig:
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
+        process_abstract=spec.inputs.get("process_abstract", True),
         seed=spec.model.seed,
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_lstur_config(spec: DictConfig) -> LSTURConfig:
+def spec_to_lstur_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> LSTURConfig:
     """Convert a parsed LSTUR spec into LSTURConfig."""
     arch = spec.model.architecture
     return LSTURConfig(
@@ -90,10 +143,13 @@ def spec_to_lstur_config(spec: DictConfig) -> LSTURConfig:
         use_subcategory=spec.inputs.get("process_subcategory", False),
         category_embedding_dim=spec.model.get("category_embedding_dim", 100),
         subcategory_embedding_dim=spec.model.get("subcategory_embedding_dim", 100),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
+def spec_to_crown_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> CROWNConfig:
     """Convert a parsed CROWN spec into CROWNConfig."""
     arch = spec.model.architecture
     ne = arch.news_encoder
@@ -116,7 +172,7 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
         attention_dim=ne.attention_dim,
         alpha=spec.training.get("auxiliary_alpha", 0.3),
         # Bipartite GNN (paper §3.3)
-        gnn_type=ue.get("gnn_type", "gat"),
+        gnn_type=ue.get("gnn_type", "graphsage"),
         graph_num_layers=ue.get("graph_num_layers", 1),
         graph_hidden_dim=ue.get("graph_hidden_dim", 0),
         gat_num_heads=ue.get("gat_num_heads", 4),
@@ -132,6 +188,7 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
@@ -140,7 +197,9 @@ def spec_to_crown_config(spec: DictConfig) -> CROWNConfig:
 # ---------------------------------------------------------------------------
 
 
-def spec_to_pprec_config(spec: DictConfig) -> PPRecConfig:
+def spec_to_pprec_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> PPRecConfig:
     """Convert a parsed PP-Rec spec into PPRecConfig."""
     arch = spec.model.architecture
     ne = arch.news_encoder
@@ -174,10 +233,13 @@ def spec_to_pprec_config(spec: DictConfig) -> PPRecConfig:
         max_impressions_length=spec.inputs.impressions.max_length,
         max_entities=spec.inputs.get("max_entities", 5),
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_digat_config(spec: DictConfig) -> DIGATConfig:
+def spec_to_digat_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> DIGATConfig:
     """Convert a parsed DIGAT spec into DIGATConfig."""
 
     ne = spec.model.architecture.news_encoder
@@ -196,11 +258,21 @@ def spec_to_digat_config(spec: DictConfig) -> DIGATConfig:
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_glory_config(spec: DictConfig) -> GLORYConfig:
-    """Convert a parsed GLORY spec into GLORYConfig."""
+def spec_to_glory_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> GLORYConfig:
+    """Convert a parsed GLORY spec into GLORYConfig.
+
+    Args:
+        spec: Parsed YAML spec (``cfg.spec``).
+        encoder: Optional top-level ``cfg.encoder`` — when provided and not
+            GloVe, the model swaps its GloVe word lookup for a frozen-cached
+            PLM lookup (TextEncoder pattern, same as NRMS / CROWN).
+    """
     ne = spec.model.architecture.news_encoder
     ge = spec.model.architecture.graph_encoder
     return GLORYConfig(
@@ -219,12 +291,14 @@ def spec_to_glory_config(spec: DictConfig) -> GLORYConfig:
         k_hops=ge.get("k_hops", 2),
         num_neighbors=ge.get("num_neighbors", 8),
         use_entity=spec.model.get("use_entity", False),
-        use_torchgeo=spec.model.get("use_torchgeo", False),
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
-def spec_to_tccm_config(spec: DictConfig) -> TCCMConfig:
+def spec_to_tccm_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> TCCMConfig:
     """Convert a parsed TCCM spec into TCCMConfig."""
     arch = spec.model.architecture
     ne = arch.news_encoder
@@ -263,6 +337,7 @@ def spec_to_tccm_config(spec: DictConfig) -> TCCMConfig:
         max_impressions_length=spec.inputs.impressions.max_length,
         max_entities=spec.inputs.get("max_entities", 5),
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
@@ -288,7 +363,9 @@ def spec_to_miner_config(spec: DictConfig) -> MINERConfig:
     )
 
 
-def spec_to_caum_config(spec: DictConfig) -> CAUMConfig:
+def spec_to_caum_config(
+    spec: DictConfig, encoder: DictConfig | None = None
+) -> CAUMConfig:
     """Convert a parsed CAUM spec into CAUMConfig."""
     arch = spec.model.architecture
     ne = arch.news_encoder
@@ -317,6 +394,7 @@ def spec_to_caum_config(spec: DictConfig) -> CAUMConfig:
         max_impressions_length=spec.inputs.impressions.max_length,
         max_entities=spec.inputs.get("max_entities", 5),
         process_user_id=spec.inputs.get("process_user_id", False),
+        encoder=_encoder_from_cfg(encoder),
     )
 
 
@@ -334,11 +412,14 @@ _SPEC_CONVERTERS = {
 }
 
 
-def spec_to_config(spec: DictConfig):
+def spec_to_config(spec: DictConfig, encoder: DictConfig | None = None):
     """Convert a YAML spec to the appropriate Config dataclass.
 
     Args:
         spec: Parsed YAML spec (the `spec` key from the Hydra config).
+        encoder: Optional top-level encoder config (``cfg.encoder``). Only
+            consumed by converters that have been updated to accept it
+            (currently NRMS); silently ignored by others.
 
     Returns:
         The corresponding Config dataclass instance.
@@ -350,7 +431,11 @@ def spec_to_config(spec: DictConfig):
             f"Unknown model '{model_name}' in spec. "
             f"Supported: {list(_SPEC_CONVERTERS.keys())}"
         )
-    return converter(spec)
+    # Try the new (spec, encoder) signature first; fall back to legacy.
+    try:
+        return converter(spec, encoder=encoder)
+    except TypeError:
+        return converter(spec)
 
 
 # ---------------------------------------------------------------------------
@@ -371,28 +456,28 @@ _MODEL_CLASS_PATHS = {
         "tccm": "src.frameworks.keras.models.tccm.TCCM",
     },
     "pytorch": {
-        "caum": "src.frameworks.pytorch.models.caum.CAUM",
-        "nrms": "src.frameworks.pytorch.models.nrms.NRMS",
-        "naml": "src.frameworks.pytorch.models.naml.NAML",
-        "lstur": "src.frameworks.pytorch.models.lstur.LSTUR",
+        "caum": "src.frameworks.pytorch.models.caum.model.CAUM",
+        "nrms": "src.frameworks.pytorch.models.nrms.model.NRMS",
+        "naml": "src.frameworks.pytorch.models.naml.model.NAML",
+        "lstur": "src.frameworks.pytorch.models.lstur.model.LSTUR",
         "crown": "src.frameworks.pytorch.models.crown.CROWN",
         "digat": "src.frameworks.pytorch.models.digat.DIGAT",
         "glory": "src.frameworks.pytorch.models.glory.GLORY",
-        "pprec": "src.frameworks.pytorch.models.pprec.PPRec",
+        "pprec": "src.frameworks.pytorch.models.pprec.model.PPRec",
         "miner": "src.frameworks.pytorch.models.miner.MINER",
-        "tccm": "src.frameworks.pytorch.models.tccm.TCCM",
+        "tccm": "src.frameworks.pytorch.models.tccm.model.TCCM",
     },
     "jax": {
-        "caum": "src.frameworks.jax.models.caum.CAUM",
-        "nrms": "src.frameworks.jax.models.nrms.NRMS",
-        "naml": "src.frameworks.jax.models.naml.NAML",
-        "lstur": "src.frameworks.jax.models.lstur.LSTUR",
+        "caum": "src.frameworks.jax.models.caum.model.CAUM",
+        "nrms": "src.frameworks.jax.models.nrms.model.NRMS",
+        "naml": "src.frameworks.jax.models.naml.model.NAML",
+        "lstur": "src.frameworks.jax.models.lstur.model.LSTUR",
         "crown": "src.frameworks.jax.models.crown.CROWN",
-        "pprec": "src.frameworks.jax.models.pprec.PPRec",
+        "pprec": "src.frameworks.jax.models.pprec.model.PPRec",
         "digat": "src.frameworks.jax.models.digat.DIGAT",
         "glory": "src.frameworks.jax.models.glory.GLORY",
         "miner": "src.frameworks.jax.models.miner.MINER",
-        "tccm": "src.frameworks.jax.models.tccm.TCCM",
+        "tccm": "src.frameworks.jax.models.tccm.model.TCCM",
     },
 }
 
@@ -433,10 +518,34 @@ def get_model_class(model_name: str, framework: str):
 # ---------------------------------------------------------------------------
 
 
+_ALL_FRAMEWORKS = ("pytorch", "jax", "keras")
+
+
+def _check_framework_supported(
+    spec: DictConfig, framework: str, model_name: str
+) -> None:
+    """Raise if the spec restricts framework support and `framework` isn't in the list.
+
+    Spec opts into restriction with ``model.supported_frameworks: [pytorch]`` (or any
+    subset). When the field is absent, all frameworks are allowed (backwards-compatible).
+    """
+    supported = spec.model.get("supported_frameworks", None)
+    if supported is None:
+        return
+    supported_lower = [str(f).lower() for f in supported]
+    if framework.lower() not in supported_lower:
+        raise ValueError(
+            f"Model '{model_name}' does not support framework '{framework}'. "
+            f"Allowed: {list(supported_lower)}. "
+            f"Set `model.supported_frameworks` in the spec yaml to change this."
+        )
+
+
 def build_model_from_spec(
     spec: DictConfig,
     framework: str,
     processed_news: dict[str, Any],
+    encoder: DictConfig | None = None,
     **extra_kwargs,
 ):
     """Build a model from a YAML spec.
@@ -445,13 +554,17 @@ def build_model_from_spec(
         spec: Parsed YAML spec (the `spec` key from the Hydra config).
         framework: Target framework ("keras", "pytorch", "jax").
         processed_news: Processed news data dict (vocab_size, embeddings, etc.).
+        encoder: Optional top-level encoder config (``cfg.encoder``) — when
+            provided and the model supports it, swaps the GloVe news encoder
+            for a frozen PLM lookup.
         **extra_kwargs: Additional kwargs passed to the model constructor.
 
     Returns:
         An instantiated model.
     """
     model_name = spec.model.name.lower()
-    config = spec_to_config(spec)
+    _check_framework_supported(spec, framework, model_name)
+    config = spec_to_config(spec, encoder=encoder)
     model_class = get_model_class(model_name, framework)
 
     # Build kwargs from config fields + processed_news

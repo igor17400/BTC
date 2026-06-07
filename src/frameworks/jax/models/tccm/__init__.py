@@ -1,13 +1,16 @@
-"""TCCM (Time and Content-Aware Causal Model) — JAX/Flax NNX port.
+"""TCCM (Flax NNX) — folder-style model.
 
-Same architecture as the PyTorch TCCM: PP-Rec ``co1`` news/user encoders
-for the user-content matching score, plus a content-aware popularity
-encoder driven by per-token bucketed CTR and a reciprocal-power
-timeliness module.
+Layout:
+    popularity.py — TCCM-specific popularity encoder + activity gater
+    model.py      — top-level TCCM, composes PP-Rec encoders +
+                    TCCM popularity branch
+
+Relevance branch (news / user encoder) is reused from PP-Rec; see
+:mod:`src.frameworks.jax.models.pprec`.
 """
 
-from .layers import TCCMActivityGater, TCCMPopularityEncoder
 from .model import TCCM
+from .popularity import TCCMActivityGater, TCCMPopularityEncoder
 
 __all__ = [
     "TCCM",

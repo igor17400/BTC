@@ -4,7 +4,7 @@
 # Usage: python src/train.py experiment=fastmind/tccm framework=keras
 
 defaults:
-  - /experiment/mind/tccm
+  - /experiment/mind/glove/tccm
   - override /dataset: fastmind
   - _self_
 

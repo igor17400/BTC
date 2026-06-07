@@ -4,7 +4,7 @@
 # Usage: python src/train.py experiment=fastmind/naml framework=keras
 
 defaults:
-  - /experiment/mind/naml
+  - /experiment/mind/glove/naml
   - override /dataset: fastmind
   - _self_
 

@@ -2,10 +2,7 @@
 name = "newsrex"
 version = "0.1.0"
 description = "A modular framework for news recommendation systems research using Keras, JAX, and Hydra"
-authors = [
-  { name = "Igor L.R. Azevedo", email = "igorlima1740@gmail.com" },
-  { name = "David Phol", email = "davidphol@gmail.com" },
-]
+authors = [{ name = "Igor L.R. Azevedo", email = "igorazevedo@acm.org" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.12,<3.15"
@@ -37,43 +34,43 @@ dependencies = [
 # Convention: bare name = CPU/portable default, "-cuda" suffix = NVIDIA GPU.
 # Compose with --extra dev for development tools.
 
-keras = ["keras>=3.10.0"]
-
 # JAX
 jax = [
-  "keras>=3.10.0",
-  "jax>=0.6.2",
-  "jaxlib>=0.6.2",
+  "jax==0.9.2",
+  "jaxlib==0.9.2",
   "flax>=0.10.0",
   "optax>=0.2.5",
 ]
-jax-cuda = ["newsrex[jax]", "jax-cuda12-plugin>=0.6.2"]
+jax-cuda = [
+  "newsrex[jax]",
+  "jax-cuda12-plugin==0.9.2",
+  "jax-cuda12-pjrt==0.9.2",
+]
 
-# PyTorch
-pytorch = ["keras>=3.10.0", "torch>=2.6.0"]
-pytorch-cuda = ["keras>=3.10.0", "torch>=2.6.0"]
+# PyTorch — pick ONE: pytorch (CPU/macOS), cu118, cu124, cu126, cu130
+# torch_geometric is pure-Python; its built-in utils.softmax/scatter cover our scatter needs
+# without the compiled torch_scatter wheel.
+pytorch = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
+cu118 = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
+cu124 = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
+cu126 = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
+cu130 = ["torch>=2.6.0", "torch_geometric>=2.7.0"]
 
-# All frameworks (Keras + JAX + PyTorch)
+# All frameworks (JAX + PyTorch)
 all = ["newsrex[jax]", "newsrex[pytorch]"]
-all-cuda = [
-  "keras>=3.10.0",
-  "jax>=0.6.2",
-  "jaxlib>=0.6.2",
-  "flax>=0.10.0",
-  "optax>=0.2.5",
-  "jax-cuda12-plugin>=0.6.2",
-  "torch>=2.6.0",
-]
+all-cu118 = ["newsrex[jax]", "newsrex[cu118]", "newsrex[jax-cuda]"]
+all-cu124 = ["newsrex[jax]", "newsrex[cu124]", "newsrex[jax-cuda]"]
+all-cu126 = ["newsrex[jax]", "newsrex[cu126]", "newsrex[jax-cuda]"]
+all-cu130 = ["newsrex[jax]", "newsrex[cu130]", "newsrex[jax-cuda]"]
+
+# Modal (remote GPU training)
+modal = ["modal>=0.73.0"]
 
 # Hyperparameter search
 search = ["optuna>=3.6.0", "optuna-dashboard>=0.15.0"]
 
 # VewsX visualization platform
-viz = [
-  "streamlit>=1.45.0",
-  "scipy>=1.11.0",
-  "wordcloud>=1.9.0",
-]
+viz = ["streamlit>=1.45.0", "scipy>=1.11.0", "wordcloud>=1.9.0"]
 
 # Development tools — framework-agnostic. Compose with any framework extra:
 #   uv sync --extra dev --extra all        # CPU dev environment
@@ -133,35 +130,59 @@ ignore = [
 known-first-party = ["src"]
 
 [tool.uv]
-# Declare CPU and CUDA extras as mutually exclusive so uv doesn't try
-# to satisfy both in a single universal lockfile (the wheels don't coexist).
+# Resolve for both macOS (dev) and Linux (SSH server / Modal).
+environments = [
+  "sys_platform == 'darwin' and platform_machine == 'arm64'",
+  "sys_platform == 'linux' and platform_machine == 'x86_64'",
+]
+
+# PyTorch backends are mutually exclusive — pick only one.
 conflicts = [
   [
     { extra = "pytorch" },
-    { extra = "pytorch-cuda" },
-  ],
-  [
-    { extra = "jax" },
-    { extra = "jax-cuda" },
+    { extra = "cu118" },
+    { extra = "cu124" },
+    { extra = "cu126" },
+    { extra = "cu130" },
   ],
   [
     { extra = "all" },
-    { extra = "all-cuda" },
+    { extra = "all-cu118" },
+    { extra = "all-cu124" },
+    { extra = "all-cu126" },
+    { extra = "all-cu130" },
   ],
 ]
 
-# PyTorch wheel index for the CUDA 12.6 variant.
-# `explicit = true` means packages are only pulled from here when
-# specifically requested via [tool.uv.sources] — never as a fallback.
+# PyTorch wheel indexes per CUDA version.
+[[tool.uv.index]]
+name = "pytorch-cu118"
+url = "https://download.pytorch.org/whl/cu118"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu124"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
 [[tool.uv.index]]
 name = "pytorch-cu126"
 url = "https://download.pytorch.org/whl/cu126"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
 
 [tool.uv.sources]
-# Always resolve torch from the CUDA 12.6 index so that transitive
-# dependencies (e.g. sentence-transformers) don't pull a cu130 wheel
-# that requires a newer driver than we have.
-torch = { index = "pytorch-cu126" }
+# Route torch to the correct index based on the chosen extra.
+torch = [
+  { index = "pytorch-cu118", extra = "cu118" },
+  { index = "pytorch-cu124", extra = "cu124" },
+  { index = "pytorch-cu126", extra = "cu126" },
+  { index = "pytorch-cu130", extra = "cu130" },
+]
 
 [tool.pyright]
 typeCheckingMode = "basic"

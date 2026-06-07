@@ -112,7 +112,7 @@ def fast_evaluate(
     final_metrics = compute_metrics(
         group_labels, group_preds, metrics_calculator, progress
     )
-    final_metrics["num_impressions"] = len(group_labels)
+    final_metrics["_num_impressions"] = len(group_labels)
 
     if save_predictions_path:
         save_predictions_to_file_fn(

@@ -4,15 +4,84 @@ Each Config dataclass defines the hyperparameters for a specific model architect
 These are framework-agnostic and used by Keras, PyTorch, and JAX implementations.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+
+
+@dataclass
+class EncoderConfig:
+    """Encoder backbone selection — describes how text becomes features.
+
+    ``type='glove'`` keeps the legacy behaviour (pretrained GloVe word
+    embeddings; models tokenize and run their own per-token encoders).
+    PLM types (``bert`` | ``roberta`` | ``sbert`` | ``distilbert``)
+    cache the token-level HF output at dataset-init time and expose it
+    to models as a frozen lookup. Both ``text_field`` (e.g. title) and
+    ``text_field_abstract`` are cached when the dataset provides the
+    corresponding raw text. Models decide which views to consume.
+
+    Model-specific concerns (poolers, view selection, etc.) live in
+    each model's spec, not here.
+    """
+
+    type: str = "glove"  # 'glove' | 'bert' | 'roberta' | 'sbert' | 'distilbert'
+
+    # GloVe-only
+    embedding_size: int = 300
+
+    # PLM-only (ignored when type=='glove')
+    plm_name: str = ""  # HF model id or alias from PLM_REGISTRY
+    plm_dim: int = 0  # pretrained hidden size (set at build time)
+    text_field: str = "title"
+    max_length: int = 32
+    text_field_abstract: str = ""
+    max_length_abstract: int = 50
+    batch_size: int = 64
+
+    # Trainability regime — orthogonal to the model architecture.
+    #   "frozen_cached"     — encode once offline; train-time = lookup.
+    #   "last_n_trainable"  — HF model in graph; freeze all but the last N
+    #                         transformer blocks. (Pass 2 — not yet implemented.)
+    #   "full_trainable"    — HF model in graph; everything trainable. (Pass 2.)
+    trainability: str = "frozen_cached"
+    trainable_layers: int = 0
+
+
+@dataclass
+class TextPoolerConfig:
+    """Pooler over per-news token features. Used by models that consume
+    token-level PLM caches and want to collapse them to a per-news
+    vector at training time (e.g. NRMS's IP2-style attention pooler).
+
+    Lives at the model level (not the encoder) because each model
+    independently decides whether and how to pool token-level features.
+    """
+
+    type: str = "attention"  # 'mean' | 'cls' | 'attention' | 'gate'
+    num_heads: int = 6
+    head_dim: int = 128
+    attention_query_dim: int = 200
+    dropout_rate: float = 0.0
 
 
 @dataclass
 class NRMSConfig:
-    """Configuration class for NRMS model parameters."""
+    """Configuration class for NRMS model parameters.
+
+    The model runs MHSA at two different dims:
+      - News-side: ``text_encoder.output_dim`` (300 for GloVe, 768 for
+        BERT-base, 1024 for BERT-large, ...). Driven by ``news_num_heads``.
+        Must satisfy ``text_dim % news_num_heads == 0``.
+      - User-side: ``embedding_size`` (the model's news_dim — the dim
+        the user vector lives in). Driven by ``user_num_heads``. Must
+        satisfy ``embedding_size % user_num_heads == 0``.
+
+    News-side MHSA output is projected to ``embedding_size`` after the
+    additive pool when ``text_dim != embedding_size``.
+    """
 
     embedding_size: int = 300
-    multiheads: int = 16
+    news_num_heads: int = 16
+    user_num_heads: int = 16
     head_dim: int = 16
     attention_hidden_dim: int = 200
     dropout_rate: float = 0.2
@@ -21,6 +90,7 @@ class NRMSConfig:
     max_history_length: int = 50
     max_impressions_length: int = 5
     process_user_id: bool = False
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -42,7 +112,12 @@ class NAMLConfig:
     max_history_length: int = 50
     max_impressions_length: int = 5
     process_user_id: bool = False
+    # When False the abstract view is dropped entirely (encoder + view-attention
+    # input), so NAML runs on title + category + subcategory only. Mirrors the
+    # spec's ``inputs.process_abstract`` flag.
+    process_abstract: bool = True
     seed: int = 42
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -69,6 +144,7 @@ class LSTURConfig:
     use_subcategory: bool = False
     category_embedding_dim: int = 100
     subcategory_embedding_dim: int = 100
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -101,8 +177,9 @@ class CROWNConfig:
     alpha: float = 0.3  # auxiliary category-prediction loss weight
 
     # Bipartite user-news GNN (paper §3.3 eq. 8)
-    # Paper uses GAT; reference code ships GraphSAGE. Both supported for ablation.
-    gnn_type: str = "gat"  # 'gat' or 'graphsage'
+    # Paper uses GAT; reference code ships GraphSAGE. Default = graphsage
+    # (matches the reference; honours [[feedback_paper_vs_reference_code]]).
+    gnn_type: str = "graphsage"  # 'graphsage' or 'gat'
     graph_num_layers: int = 1
     graph_hidden_dim: int = 0  # 0 = auto (news_embedding_dim); set explicitly for Keras
     gat_num_heads: int = 4
@@ -124,6 +201,7 @@ class CROWNConfig:
     # Training
     process_user_id: bool = False
     gradient_clip_norm: float = 4.0
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -161,15 +239,10 @@ class GLORYConfig:
     entity_emb_dim: int = 100
     entity_neighbors: int = 10
 
-    # Backend for graph ops. ``True`` swaps our pure-PyTorch
-    # ``GatedGraphConv`` for ``torch_geometric.nn.GatedGraphConv``
-    # (CUDA-optimized scatter/gather). Default ``False`` keeps the
-    # framework-agnostic pure-PyTorch path.
-    use_torchgeo: bool = False
-
     # Standard
     process_user_id: bool = False
     gradient_clip_norm: float = 1.0
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
     @property
     def news_embedding_dim(self) -> int:
@@ -215,6 +288,7 @@ class DIGATConfig:
     # Training
     process_user_id: bool = False
     gradient_clip_norm: float = 1.0
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
     @property
     def news_embedding_dim(self) -> int:
@@ -302,6 +376,7 @@ class TCCMConfig:
     max_entities: int = 5
 
     process_user_id: bool = False
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -361,6 +436,7 @@ class PPRecConfig:
     max_entities: int = 5
 
     process_user_id: bool = False
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass
@@ -415,6 +491,7 @@ class CAUMConfig:
 
     # Training
     process_user_id: bool = False
+    encoder: EncoderConfig = field(default_factory=EncoderConfig)
 
 
 @dataclass

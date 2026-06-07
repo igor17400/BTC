@@ -1,0 +1,17 @@
+# Canonical Sentence-BERT encoder. See bert.yaml for schema documentation.
+# Note: SBERT is purpose-built for sentence-level embeddings, so models
+# that read its token-level cache should be prepared for the slightly
+# different per-token semantics (mean pooling is the canonical usage).
+type: sbert
+slug: sbert
+plm_name: sbert           # → "sentence-transformers/all-MiniLM-L6-v2"
+plm_dim: 384
+
+text_field: title
+max_length: 32
+text_field_abstract: abstract
+max_length_abstract: 50
+batch_size: 128
+
+trainability: frozen_cached
+trainable_layers: 0

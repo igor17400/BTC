@@ -45,6 +45,7 @@ def digat_evaluate(
     mode: str = "val",
     batch_size: int = 64,
     id_remap: np.ndarray | None = None,
+    encoder_type: str = "glove",
     save_predictions_path: str | None = None,
     epoch: int | None = None,
 ) -> dict[str, float]:
@@ -86,6 +87,17 @@ def digat_evaluate(
 
     num_news = news_tokens.shape[0]
 
+    # Under PLM the encoder looks up token features by parsed news_idx,
+    # so build a row_id -> parsed_id table once.
+    parsed_news_ids: np.ndarray | None = None
+    if encoder_type != "glove":
+        from src.core.data.encoders.plm import _parse_news_id
+
+        news_id_strings = list(processed_news["news_ids_original_strings"])
+        parsed_news_ids = np.asarray(
+            [_parse_news_id(nid, "N") for nid in news_id_strings], dtype=np.int64
+        )
+
     # ------------------------------------------------------------------
     # 1. Pre-compute news MSA embeddings for ALL corpus news
     # ------------------------------------------------------------------
@@ -93,8 +105,12 @@ def digat_evaluate(
     all_news_emb = np.zeros((num_news, D), dtype=np.float32)
     for start in range(0, num_news, batch_size):
         end = min(start + batch_size, num_news)
-        tokens_batch = news_tokens[start:end]  # (B, T)
-        mask_batch = (tokens_batch != 0).astype(np.float32)
+        if encoder_type == "glove":
+            tokens_batch = news_tokens[start:end]  # (B, T)
+            mask_batch = (tokens_batch != 0).astype(np.float32)
+        else:
+            tokens_batch = parsed_news_ids[start:end]  # (B,) parsed ids
+            mask_batch = np.zeros_like(tokens_batch, dtype=np.float32)  # ignored
         all_news_emb[start:end] = adapter.encode_digat_news(
             news_encoder, tokens_batch, mask_batch
         )
@@ -131,7 +147,7 @@ def digat_evaluate(
             "mrr": 0.0,
             "ndcg@5": 0.0,
             "ndcg@10": 0.0,
-            "num_impressions": 0,
+            "_num_impressions": 0,
         }
 
     hist_ids_raw = np.asarray(behaviors["histories_news_ids"]).astype(np.int64)
@@ -223,12 +239,14 @@ def digat_evaluate(
         metrics = compute_metrics(
             group_labels, group_preds, metrics_calculator, progress
         )
-    metrics["num_impressions"] = len(group_labels)
+    metrics["_num_impressions"] = len(group_labels)
 
     if save_predictions_path:
         predictions = {}
         for i, (labels, preds) in enumerate(zip(group_labels, group_preds)):
             predictions[str(i)] = (labels.tolist(), preds.tolist())
-        save_predictions_to_file_fn(predictions, save_predictions_path, epoch, mode=mode)
+        save_predictions_to_file_fn(
+            predictions, save_predictions_path, epoch, mode=mode
+        )
 
     return metrics

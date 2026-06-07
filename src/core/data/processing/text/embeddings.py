@@ -61,14 +61,17 @@ def _create_glove_embeddings(
         raise ValueError("GloVe embeddings or vocab map could not be loaded.")
 
     glove_array = np.asarray(glove_tensor_tf)
-    glove_mean_np = np.mean(glove_array, axis=0)
-    glove_std_np = np.std(glove_array, axis=0)
 
+    # Reference GLORY (utils/common.py:60) initialises the embedding
+    # matrix to zeros and only overwrites rows whose word is found in
+    # the pretrained .vec file. Missing-from-GloVe words (including
+    # [PAD] and [UNK]) stay at zero. Matching that behaviour here:
+    # any rare news-specific word (proper nouns, neologisms) missing
+    # from GloVe contributes a zero embedding rather than a random
+    # Gaussian — the random init injects ~1000 noisy rows the model
+    # must learn to suppress, which contributes to the early-epoch
+    # overfit observed in GLORY.
     embedding_matrix = np.zeros((len(vocab), embedding_size), dtype=np.float32)
-    embedding_matrix[vocab["[PAD]"]] = np.zeros(embedding_size, dtype=np.float32)
-    embedding_matrix[vocab["[UNK]"]] = np.random.normal(
-        loc=glove_mean_np, scale=glove_std_np, size=embedding_size
-    ).astype(np.float32)
 
     if "<NUM>" in vocab:
         num_token_id = vocab["<NUM>"]
@@ -79,10 +82,7 @@ def _create_glove_embeddings(
             glove_number_idx = glove_vocab_map.get("number")
             if glove_number_idx is not None:
                 embedding_matrix[num_token_id] = glove_array[glove_number_idx]
-            else:
-                embedding_matrix[num_token_id] = np.random.normal(
-                    loc=glove_mean_np, scale=glove_std_np, size=embedding_size
-                ).astype(np.float32)
+            # else: leave at zero (matches reference fallback behaviour)
 
     with create_progress(console=console) as progress:
         task = progress.add_task("Populating embedding matrix...", total=len(vocab))
@@ -93,10 +93,7 @@ def _create_glove_embeddings(
             glove_word_idx = glove_vocab_map.get(word)
             if glove_word_idx is not None:
                 embedding_matrix[idx] = glove_array[glove_word_idx]
-            else:
-                embedding_matrix[idx] = np.random.normal(
-                    loc=glove_mean_np, scale=glove_std_np, size=embedding_size
-                ).astype(np.float32)
+            # else: leave at zero (matches reference)
             progress.advance(task)
 
     return embedding_matrix

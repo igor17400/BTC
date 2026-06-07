@@ -209,6 +209,7 @@ def build_digat_train_features(
     news_str_id_to_int: dict[str, int] | None = None,
     int_to_news_str_id: dict[int, str] | None = None,
     id_remap: np.ndarray | None = None,
+    encoder_type: str = "glove",
 ) -> tuple[dict[str, np.ndarray], np.ndarray]:
     """Assemble all features DIGAT needs for training.
 
@@ -238,6 +239,18 @@ def build_digat_train_features(
     news_graph = sag_data["news_graph"]  # (num_news, G_n, G_n)
     news_graph_mask = sag_data["news_graph_mask"]  # (num_news, G_n)
 
+    # Under PLM, the model encoder consumes parsed news_idx instead of
+    # token tensors — build a (num_news,) row_id -> parsed_id table so
+    # we can map SAG row indices to PLM cache keys.
+    parsed_news_ids: np.ndarray | None = None
+    if encoder_type != "glove":
+        from src.core.data.encoders.plm import _parse_news_id
+
+        news_id_strings = list(processed_news["news_ids_original_strings"])
+        parsed_news_ids = np.asarray(
+            [_parse_news_id(nid, "N") for nid in news_id_strings], dtype=np.int64
+        )
+
     hist_tokens = np.asarray(behaviors_data["history_news_tokens"])  # (N, H, T)
     hist_categories = np.asarray(behaviors_data["history_news_categories"])  # (N, H)
     raw_cand_ids = np.asarray(behaviors_data["candidate_news_ids"])
@@ -247,6 +260,7 @@ def build_digat_train_features(
         else:
             # Fallback: extract numeric part from string IDs (e.g. "N82" → 82).
             import re
+
             vfunc = np.vectorize(lambda x: int(re.sub(r"[^0-9]", "", str(x)) or 0))
         cand_ids = vfunc(raw_cand_ids).astype(np.int64)
     else:
@@ -269,32 +283,51 @@ def build_digat_train_features(
     N = hist_tokens.shape[0]
 
     logger.info("Building DIGAT candidate SAG features...")
-    cand_sag_node_ids = news_node_ID[cand_ids]  # (N, C, G_n)
-    cand_tokens = news_tokens[cand_sag_node_ids]  # (N, C, G_n, T)
-    cand_mask = (cand_tokens != 0).astype(np.float32)  # (N, C, G_n, T)
+    cand_sag_node_ids = news_node_ID[cand_ids]  # (N, C, G_n) — SAG row indices
     cand_graph = news_graph[cand_ids]  # (N, C, G_n, G_n)
     cand_graph_mask = news_graph_mask[cand_ids]  # (N, C, G_n)
 
     logger.info("Building DIGAT user-topic graphs...")
     user_data = build_user_graphs(hist_categories, max_history, num_categories)
 
-    hist_mask = (hist_tokens != 0).astype(np.float32)  # (N, H, T)
-
-    features = {
-        "hist_tokens": hist_tokens,
-        "hist_mask": hist_mask,
-        "cand_tokens": cand_tokens,
-        "cand_mask": cand_mask,
-        "cand_graph": cand_graph.astype(np.float32),
-        "cand_graph_mask": cand_graph_mask.astype(np.float32),
-        "user_graph": user_data["user_graph"].astype(np.float32),
-        "user_category_mask": user_data["user_category_mask"].astype(np.float32),
-        "user_category_indices": user_data["user_category_indices"],
-    }
+    if encoder_type == "glove":
+        cand_tokens = news_tokens[cand_sag_node_ids]  # (N, C, G_n, T)
+        cand_mask = (cand_tokens != 0).astype(np.float32)
+        hist_mask = (hist_tokens != 0).astype(np.float32)  # (N, H, T)
+        features = {
+            "hist_tokens": hist_tokens,
+            "hist_mask": hist_mask,
+            "cand_tokens": cand_tokens,
+            "cand_mask": cand_mask,
+            "cand_graph": cand_graph.astype(np.float32),
+            "cand_graph_mask": cand_graph_mask.astype(np.float32),
+            "user_graph": user_data["user_graph"].astype(np.float32),
+            "user_category_mask": user_data["user_category_mask"].astype(np.float32),
+            "user_category_indices": user_data["user_category_indices"],
+        }
+    else:
+        # Map SAG row indices → parsed news_idx (PLM cache keys).
+        cand_news_idx = parsed_news_ids[cand_sag_node_ids].astype(
+            np.int64
+        )  # (N, C, G_n)
+        # ``histories_news_ids`` from the behaviors cache are already
+        # parsed news IDs (see pipelines/news.py). Use them directly so
+        # the lookup hits the PLM cache without going through SAG remap.
+        hist_news_idx = np.asarray(behaviors_data["histories_news_ids"], dtype=np.int64)
+        features = {
+            "hist_tokens": hist_news_idx,
+            "cand_tokens": cand_news_idx,
+            "cand_graph": cand_graph.astype(np.float32),
+            "cand_graph_mask": cand_graph_mask.astype(np.float32),
+            "user_graph": user_data["user_graph"].astype(np.float32),
+            "user_category_mask": user_data["user_category_mask"].astype(np.float32),
+            "user_category_indices": user_data["user_category_indices"],
+        }
 
     logger.info(
-        f"DIGAT features: cand_tokens {cand_tokens.shape}, "
+        f"DIGAT features: hist_tokens {features['hist_tokens'].shape}, "
+        f"cand_tokens {features['cand_tokens'].shape}, "
         f"user_graph {user_data['user_graph'].shape}, "
-        f"N={N} behaviors"
+        f"N={N} behaviors, encoder={encoder_type}"
     )
     return features, labels

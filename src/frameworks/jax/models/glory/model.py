@@ -28,162 +28,17 @@ from flax import nnx
 from src.core.models.configs import GLORYConfig
 
 from ..base import BaseModel
-from .layers import (
-    AttentionPooling,
-    EntityEncoder,
-    GatedGraphConv,
-    GlobalEntityEncoder,
-    MultiHeadAttention,
-)
-
-# ======================================================================
-# News encoder (local — no graph)
-# ======================================================================
+from .global_encoder import EntityEncoder, GatedGraphConv, GlobalEntityEncoder
+from .news_encoder import AttentionPooling, NewsEncoder
+from .user_encoder import ClickEncoder, UserEncoder
 
 
-class GLORYNewsEncoder(nnx.Module):
-    """Local news encoder: word emb → dropout → MHA → LN → drop → pool → LN.
-
-    Consumes a (*, T + E + 1 + 1 + 1) feature tensor where the columns
-    are [title tokens (T), entity ids (E), category, subcategory,
-    news_index].  Only the title tokens are used here.
-    """
-
-    def __init__(
-        self,
-        config: GLORYConfig,
-        word_embedding: nnx.Embed,
-        *,
-        rngs: nnx.Rngs,
-    ):
-        self.word_embedding = word_embedding
-        self.news_dim = config.head_num * config.head_dim
-        self.title_size = config.title_size
-        self.entity_size = config.entity_size
-
-        self.dropout1 = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
-        self.msa = MultiHeadAttention(
-            config.word_emb_dim,
-            config.word_emb_dim,
-            config.word_emb_dim,
-            config.head_num,
-            config.head_dim,
-            rngs=rngs,
-        )
-        self.layernorm1 = nnx.LayerNorm(self.news_dim, rngs=rngs)
-        self.dropout2 = nnx.Dropout(rate=config.dropout_rate, rngs=rngs)
-        self.attn_pool = AttentionPooling(
-            self.news_dim,
-            config.attention_hidden_dim,
-            rngs=rngs,
-        )
-        self.layernorm2 = nnx.LayerNorm(self.news_dim, rngs=rngs)
-
-    def __call__(
-        self,
-        news_input: jax.Array,
-        mask: jax.Array | None = None,
-        *,
-        training: bool = False,
-    ) -> jax.Array:
-        det = not training
-        B, N = news_input.shape[:2]
-        title_tokens = news_input[..., : self.title_size].astype(jnp.int32)
-        flat_title = title_tokens.reshape(B * N, self.title_size)
-
-        word_emb = self.dropout1(
-            self.word_embedding(flat_title),
-            deterministic=det,
-        )
-
-        attn_out = self.msa(word_emb, word_emb, word_emb, mask)
-        attn_out = self.layernorm1(attn_out)
-        attn_out = self.dropout2(attn_out, deterministic=det)
-
-        pooled = self.attn_pool(attn_out, mask)
-        pooled = self.layernorm2(pooled)
-
-        return pooled.reshape(B, N, self.news_dim)
-
-
-# ======================================================================
-# Click / User / Candidate encoders
-# ======================================================================
-
-
-class GLORYClickEncoder(nnx.Module):
-    """Fuse per-clicked-news views via attention pooling.
-
-    Stacks 2 views (title, graph) or 3 views (title, graph, entity)
-    depending on whether entity_emb is provided.
-    """
-
-    def __init__(self, config: GLORYConfig, *, rngs: nnx.Rngs):
-        self.news_dim = config.head_num * config.head_dim
-        self.attn_pool = AttentionPooling(
-            self.news_dim,
-            config.attention_hidden_dim,
-            rngs=rngs,
-        )
-
-    def __call__(
-        self,
-        title_emb: jax.Array,  # (B, N, D)
-        graph_emb: jax.Array,  # (B, N, D)
-        entity_emb: jax.Array | None = None,  # (B, N, D)
-    ) -> jax.Array:
-        B, N = title_emb.shape[:2]
-        if entity_emb is not None:
-            stacked = jnp.stack(
-                [title_emb, graph_emb, entity_emb],
-                axis=-2,
-            )  # (B, N, 3, D)
-            num_views = 3
-        else:
-            stacked = jnp.stack(
-                [title_emb, graph_emb],
-                axis=-2,
-            )  # (B, N, 2, D)
-            num_views = 2
-        stacked = stacked.reshape(B * N, num_views, self.news_dim)
-        fused = self.attn_pool(stacked)  # (B*N, D)
-        return fused.reshape(B, N, self.news_dim)
-
-
-class GLORYUserEncoder(nnx.Module):
-    """Pool a sequence of clicked-news embeddings into a user vector."""
-
-    def __init__(self, config: GLORYConfig, *, rngs: nnx.Rngs):
-        self.news_dim = config.head_num * config.head_dim
-        self.msa = MultiHeadAttention(
-            self.news_dim,
-            self.news_dim,
-            self.news_dim,
-            config.head_num,
-            config.head_dim,
-            rngs=rngs,
-        )
-        self.attn_pool = AttentionPooling(
-            self.news_dim,
-            config.attention_hidden_dim,
-            rngs=rngs,
-        )
-
-    def __call__(
-        self,
-        clicked_news: jax.Array,  # (B, H, D)
-        mask: jax.Array | None = None,
-    ) -> jax.Array:
-        h = self.msa(clicked_news, clicked_news, clicked_news, mask)
-        return self.attn_pool(h, mask)
-
-
-class GLORYCandidateEncoder(nnx.Module):
+class CandidateEncoder(nnx.Module):
     """Candidate encoder.
 
-    Without entities: Linear + LeakyReLU on title embeddings.
-    With entities: stack [title, origin_entity, neighbor_entity] →
-    AttentionPooling → Linear + LeakyReLU.
+    Without entities: ``Linear + LeakyReLU`` on title embeddings.
+    With entities: stack ``[title, origin_entity, neighbor_entity]`` →
+    ``AttentionPooling`` → ``Linear + LeakyReLU``.
     """
 
     def __init__(self, config: GLORYConfig, *, rngs: nnx.Rngs):
@@ -219,11 +74,6 @@ class GLORYCandidateEncoder(nnx.Module):
         return jax.nn.leaky_relu(self.linear(cand_emb), negative_slope=0.2)
 
 
-# ======================================================================
-# Full GLORY model
-# ======================================================================
-
-
 class GLORY(BaseModel):
     """GLORY: local news encoder + global GNN + user fusion + dot scoring."""
 
@@ -255,7 +105,7 @@ class GLORY(BaseModel):
         )
         self.word_embedding.embedding.value = jnp.asarray(embeddings_matrix)
 
-        self.local_news_encoder = GLORYNewsEncoder(
+        self.local_news_encoder = NewsEncoder(
             config,
             self.word_embedding,
             rngs=rngs,
@@ -266,9 +116,9 @@ class GLORY(BaseModel):
             aggr="add",
             rngs=rngs,
         )
-        self.click_encoder = GLORYClickEncoder(config, rngs=rngs)
-        self.user_encoder = GLORYUserEncoder(config, rngs=rngs)
-        self.candidate_encoder = GLORYCandidateEncoder(config, rngs=rngs)
+        self.click_encoder = ClickEncoder(config, rngs=rngs)
+        self.user_encoder = UserEncoder(config, rngs=rngs)
+        self.candidate_encoder = CandidateEncoder(config, rngs=rngs)
 
         # Entity path (optional).
         if self.use_entity:

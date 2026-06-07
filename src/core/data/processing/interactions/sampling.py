@@ -9,6 +9,13 @@ class ImpressionSampler:
         self.cfg = cfg
         self.max_length = cfg.max_impressions_length
         self.strategy = cfg.strategy
+        # Matches reference GLORY behavior when False: val/test candidates
+        # are returned in the order they appear in behaviors.tsv rather than
+        # np.random.shuffle'd. Default True preserves prior NewsReX
+        # behavior; flip via cfg.sampling.shuffle_eval_candidates=false.
+        self.shuffle_eval_candidates = bool(
+            getattr(cfg, "shuffle_eval_candidates", True)
+        )
         np.random.seed(cfg.random_seed)
 
     def sample_candidates_news(
@@ -55,10 +62,13 @@ class ImpressionSampler:
             all_impressions = positives + negatives
             all_labels = [1] * len(positives) + [0] * len(negatives)
 
-            # Shuffle together to avoid order bias
-            combined = list(zip(all_impressions, all_labels))
-            np.random.shuffle(combined)
-            all_impressions, all_labels = zip(*combined)
+            # Shuffle together to avoid order bias (when enabled).
+            # Reference GLORY does NOT shuffle eval candidates — they
+            # come straight from behaviors.tsv in order.
+            if self.shuffle_eval_candidates:
+                combined = list(zip(all_impressions, all_labels))
+                np.random.shuffle(combined)
+                all_impressions, all_labels = zip(*combined)
 
             return list(all_impressions), list(all_labels)
 
@@ -109,21 +119,11 @@ class ImpressionSampler:
             return self._random_sample_negatives(negatives, k)
 
     def _random_sample_negatives(self, negatives: list[int], k: int) -> list[int]:
-        """Random sampling strategy.
-
-        Args:
-            negatives: List of negative samples
-            k: Number of samples to return
-
-        Returns:
-            List of sampled negative items
-        """
+        """Random sampling strategy."""
         if k > len(negatives):
-            # If we need more samples than available, repeat the list and sample
             repeated_negatives = negatives * (k // len(negatives) + 1)
             return list(np.random.choice(repeated_negatives, size=k, replace=False))
-        else:
-            return list(np.random.choice(negatives, size=k, replace=False))
+        return list(np.random.choice(negatives, size=k, replace=False))
 
     def _popularity_based_negatives(
         self, negatives: list[int], k: int, news_info: dict

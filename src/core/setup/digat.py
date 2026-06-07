@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 import numpy as np
 
 from src.core.data.processing.models.digat import (
@@ -18,11 +16,17 @@ from src.core.models.evaluations.custom.digat import digat_evaluate
 from .types import ModelSetupResult
 
 
-def setup_digat(spec, dataset_provider, processed_news) -> ModelSetupResult:
+def setup_digat(
+    spec, dataset_provider, processed_news, encoder_cfg=None
+) -> ModelSetupResult:
     """Prepare DIGAT training data, SAG graphs, and eval closure factory.
 
     This is the framework-agnostic core of DIGAT setup, shared by JAX,
     PyTorch, and Keras runners.
+
+    ``encoder_cfg`` controls token vs news_idx packing — under PLM the
+    train features carry parsed news_idx tensors and the evaluator
+    pre-computes corpus embeddings by id instead of by row.
     """
     sag_config = spec.model.architecture.graph_encoder
     digat_cfg = DIGATConfig(
@@ -32,18 +36,54 @@ def setup_digat(spec, dataset_provider, processed_news) -> ModelSetupResult:
         max_history_length=spec.inputs.history.max_length,
         max_impressions_length=spec.inputs.impressions.max_length,
     )
+    encoder_type = (
+        encoder_cfg.get("type", "glove") if encoder_cfg is not None else "glove"
+    )
 
     # Build SAG data
     if hasattr(dataset_provider, "dataset_path"):
         all_news_df = read_all_news(dataset_provider.dataset_path)
         id_map = dataset_provider.news_str_id_to_int_idx
         cache_dir = dataset_provider.dataset_path / "processed"
+        # Restrict SAG corpus to news appearing in train/news.tsv. Without
+        # this, valid/test-only news appear as graph neighbors of train
+        # news during training, leaking eval-set representations into
+        # the model. Reference DIGAT does the equivalent via its
+        # mode='corpus' filter (construct_SAG.py:32).
+        import csv as _csv
+
+        import pandas as _pd
+
+        cols = [
+            "id",
+            "category",
+            "subcategory",
+            "title",
+            "abstract",
+            "url",
+            "title_entities",
+            "abstract_entities",
+        ]
+        corpus_news_str_ids: set[str] | None = None
+        train_news_path = dataset_provider.dataset_path / "train" / "news.tsv"
+        if train_news_path.exists():
+            train_df = _pd.read_table(
+                train_news_path,
+                header=None,
+                names=cols,
+                na_filter=False,
+                on_bad_lines="skip",
+                engine="python",
+                quoting=_csv.QUOTE_NONE,
+            )
+            corpus_news_str_ids = set(train_df["id"].astype(str))
         sag_data = construct_sag(
             all_news_df,
             id_map,
             sag_hops=digat_cfg.sag_hops,
             sag_neighbors=digat_cfg.sag_neighbors,
             cache_dir=cache_dir,
+            corpus_news_str_ids=corpus_news_str_ids,
         )
     else:
         num_news = processed_news["tokens"].shape[0]
@@ -75,6 +115,7 @@ def setup_digat(spec, dataset_provider, processed_news) -> ModelSetupResult:
         news_graph_size=digat_cfg.news_graph_size,
         max_title_length=digat_cfg.max_title_length,
         id_remap=id_remap,
+        encoder_type=encoder_type,
     )
 
     # Mutable context — eval_fn reads from here, rebuild_test_remap writes to it
@@ -83,10 +124,19 @@ def setup_digat(spec, dataset_provider, processed_news) -> ModelSetupResult:
         "id_remap": id_remap,
         "remap_path": remap_path,
         "num_categories": num_categories,
+        "encoder_type": encoder_type,
     }
 
-    def make_eval_fn(model, adapter, metrics_engine, dataset_provider,
-                     processed_news, eval_batch_size, output_run_dir, **_):
+    def make_eval_fn(
+        model,
+        adapter,
+        metrics_engine,
+        dataset_provider,
+        processed_news,
+        eval_batch_size,
+        output_run_dir,
+        **_,
+    ):
         def eval_fn(model, mode="val", epoch=None, **kwargs):
             return digat_evaluate(
                 news_encoder=model.news_encoder,
@@ -102,9 +152,11 @@ def setup_digat(spec, dataset_provider, processed_news) -> ModelSetupResult:
                 mode=mode,
                 batch_size=eval_batch_size,
                 id_remap=ctx["id_remap"],
+                encoder_type=ctx["encoder_type"],
                 save_predictions_path=str(output_run_dir / "predictions"),
                 epoch=epoch,
             )
+
         return eval_fn
 
     def rebuild_test_remap(dataset_provider, processed_news):

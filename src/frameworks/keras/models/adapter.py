@@ -18,10 +18,13 @@ from keras import ops
 def _no_grad_context():
     """Return a torch.no_grad() context if the backend is torch, else nullcontext."""
     import keras
+
     if keras.backend.backend() == "torch":
         import torch
+
         return torch.no_grad()
     from contextlib import nullcontext
+
     return nullcontext()
 
 
@@ -59,9 +62,7 @@ class KerasAdapter:
             vec = encoder(features, training=False)
         return ops.convert_to_numpy(vec)
 
-    def encode_user_interests(
-        self, user_encoder: Any, features: Any
-    ) -> np.ndarray:
+    def encode_user_interests(self, user_encoder: Any, features: Any) -> np.ndarray:
         """Run the MINER user encoder to get K interest vectors.
 
         Returns:
@@ -112,6 +113,7 @@ class KerasAdapter:
             ``(C,)`` numpy array of popularity scores.
         """
         import keras
+
         b = keras.ops.convert_to_tensor(bucket_input, dtype="int32")
         t = keras.ops.convert_to_tensor(time_input, dtype="int32")
         with _no_grad_context():
@@ -145,6 +147,7 @@ class KerasAdapter:
             (C,) numpy array of scores, one per candidate.
         """
         import keras
+
         C = cand_vectors.shape[0]
         D = cand_vectors.shape[1]
         H = clicked_vecs.shape[0]
@@ -185,6 +188,7 @@ class KerasAdapter:
     ) -> np.ndarray:
         """Run the DIGAT MSA news encoder on a raw token batch."""
         import keras
+
         tokens_k = keras.ops.convert_to_tensor(tokens, dtype="int32")
         mask_k = keras.ops.convert_to_tensor(mask, dtype="float32")
         with _no_grad_context():
@@ -203,6 +207,7 @@ class KerasAdapter:
     ) -> np.ndarray:
         """Compute SAG graph context vectors for a batch of news."""
         import keras
+
         sag_emb_k = keras.ops.convert_to_tensor(sag_emb, dtype="float32")
         sag_mask_k = keras.ops.convert_to_tensor(sag_mask, dtype="float32")
         with _no_grad_context():
@@ -227,6 +232,7 @@ class KerasAdapter:
         Large impressions (100+ candidates) are chunked to avoid OOM.
         """
         import keras
+
         C = int(cand_sag_emb.shape[0])
         H = user_hist_emb.shape[0]
         D = user_hist_emb.shape[1]
@@ -246,9 +252,15 @@ class KerasAdapter:
 
                 news_ctx, user_ctx = graph_encoder(
                     (
-                        keras.ops.convert_to_tensor(cand_sag_emb[start:end], dtype="float32"),
-                        keras.ops.convert_to_tensor(cand_sag_graph[start:end], dtype="float32"),
-                        keras.ops.convert_to_tensor(cand_sag_mask[start:end], dtype="float32"),
+                        keras.ops.convert_to_tensor(
+                            cand_sag_emb[start:end], dtype="float32"
+                        ),
+                        keras.ops.convert_to_tensor(
+                            cand_sag_graph[start:end], dtype="float32"
+                        ),
+                        keras.ops.convert_to_tensor(
+                            cand_sag_mask[start:end], dtype="float32"
+                        ),
                         keras.ops.convert_to_tensor(hist_b, dtype="float32"),
                         keras.ops.convert_to_tensor(u_graph_b, dtype="float32"),
                         keras.ops.convert_to_tensor(u_cat_mask_b, dtype="float32"),
@@ -275,6 +287,7 @@ class KerasAdapter:
     ) -> np.ndarray:
         """Run GLORY local news encoder over the full corpus."""
         import keras
+
         num_news = news_features.shape[0]
         news_dim = news_encoder.news_dim
         out = np.zeros((num_news, news_dim), dtype=np.float32)
@@ -282,10 +295,12 @@ class KerasAdapter:
             for start in range(0, num_news, batch_size):
                 end = min(start + batch_size, num_news)
                 batch = keras.ops.convert_to_tensor(
-                    news_features[start:end], dtype="int32",
+                    news_features[start:end],
+                    dtype="int32",
                 )
                 emb = news_encoder(
-                    keras.ops.expand_dims(batch, axis=0), training=False,
+                    keras.ops.expand_dims(batch, axis=0),
+                    training=False,
                 )
                 out[start:end] = ops.convert_to_numpy(
                     keras.ops.squeeze(emb, axis=0),
@@ -300,6 +315,7 @@ class KerasAdapter:
     ) -> np.ndarray:
         """Run the global GatedGraphConv on the full news graph."""
         import keras
+
         x = keras.ops.convert_to_tensor(all_news_emb, dtype="float32")
         ei = keras.ops.convert_to_tensor(edge_index, dtype="int32")
         with _no_grad_context():
@@ -327,20 +343,25 @@ class KerasAdapter:
         fusion.
         """
         import keras
+
         ct = keras.ops.expand_dims(
-            keras.ops.convert_to_tensor(clicked_title, dtype="float32"), axis=0,
+            keras.ops.convert_to_tensor(clicked_title, dtype="float32"),
+            axis=0,
         )
         cg = keras.ops.expand_dims(
-            keras.ops.convert_to_tensor(clicked_graph, dtype="float32"), axis=0,
+            keras.ops.convert_to_tensor(clicked_graph, dtype="float32"),
+            axis=0,
         )
         cl = keras.ops.expand_dims(
-            keras.ops.convert_to_tensor(cand_local, dtype="float32"), axis=0,
+            keras.ops.convert_to_tensor(cand_local, dtype="float32"),
+            axis=0,
         )
         with _no_grad_context():
             fused = click_encoder(ct, cg)
             user_emb = user_encoder(fused)
             cand_final = candidate_encoder(cl)
             scores = keras.ops.sum(
-                cand_final * keras.ops.expand_dims(user_emb, axis=1), axis=-1,
+                cand_final * keras.ops.expand_dims(user_emb, axis=1),
+                axis=-1,
             )
         return ops.convert_to_numpy(keras.ops.squeeze(scores, axis=0))

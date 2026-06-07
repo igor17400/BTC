@@ -1,0 +1,8 @@
+# GloVe word embeddings — the default encoder.
+# Existing behavior: token IDs from a per-language GloVe vocab are
+# embedded via an `nn.Embedding` initialised from the pretrained matrix,
+# then run through per-model architecture-specific encoders (NRMS title
+# MHSA, NAML view CNN, etc.).
+type: glove
+slug: glove          # output-path segment; keeps GloVe runs separate from PLM runs
+embedding_size: 300

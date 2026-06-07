@@ -1,14 +1,29 @@
 import datetime
 import logging
 from pathlib import Path
+from typing import Any
 
+import wandb
 from omegaconf import DictConfig, OmegaConf
 from rich.console import Console
 from rich.logging import RichHandler
 
-import wandb
-
 console = Console()
+
+
+def _public_numeric_metrics(metrics: dict[str, Any]) -> dict[str, float]:
+    """Filter out underscore-prefixed bookkeeping keys and non-numeric values.
+
+    Keys starting with ``_`` (e.g. ``_num_impressions``) are private
+    metadata that shouldn't be logged or pushed to W&B alongside real
+    metrics. Centralized so console / W&B / file sinks all apply the
+    same filter.
+    """
+    return {
+        k: float(v)
+        for k, v in metrics.items()
+        if not k.startswith("_") and isinstance(v, (int, float))
+    }
 
 
 def setup_logging(level: str = "INFO") -> None:
@@ -114,9 +129,15 @@ def log_epoch_summary_fn(
     console.rule()
 
     if wandb.run and wandb_cache is not None:
+        # Filter out underscore-prefixed bookkeeping / non-numeric values
+        # so W&B only ingests real scalar metrics.
         wandb_payload = {
-            f"train/{k}": v for k, v in epoch_train_metrics_results.items()
-        } | {f"val/{k}": v for k, v in epoch_val_metrics_results.items()}
+            f"train/{k}": v
+            for k, v in _public_numeric_metrics(epoch_train_metrics_results).items()
+        } | {
+            f"val/{k}": v
+            for k, v in _public_numeric_metrics(epoch_val_metrics_results).items()
+        }
         log_metrics_to_wandb_fn(wandb_payload, current_epoch_idx + 1, wandb_cache)
 
 
@@ -158,10 +179,11 @@ def log_epoch_end(
     console.log("  ".join(parts))
 
     if val_metrics:
-        val_parts = []
-        for k, v in val_metrics.items():
-            if k != "num_impressions":
-                val_parts.append(f"{k}={v:.4f}")
+        val_parts = [
+            f"{k}={v:.4f}"
+            for k, v in val_metrics.items()
+            if not k.startswith("_") and isinstance(v, (int, float))
+        ]
         val_str = "  ".join(val_parts)
         time_str = f"  time={val_time:.1f}s" if val_time else ""
         console.log(f"  val: {val_str}{time_str}")
@@ -177,16 +199,12 @@ def log_early_stopping(epoch: int, patience: int) -> None:
 
 
 def log_test_results(metrics: dict[str, float]) -> None:
-    parts = []
-    for k, v in metrics.items():
-        if k != "num_impressions":
-            parts.append(f"{k}={v:.4f}")
+    public = _public_numeric_metrics(metrics)
+    parts = [f"{k}={v:.4f}" for k, v in public.items()]
     console.log(f"[bold green]Test results:[/bold green] {'  '.join(parts)}")
 
     if wandb.run:
-        wandb.log(
-            {f"test/{k}": v for k, v in metrics.items() if k != "num_impressions"}
-        )
+        wandb.log({f"test/{k}": v for k, v in public.items()})
 
 
 def log_training_complete(model_name: str, framework: str, total_time: float) -> None:

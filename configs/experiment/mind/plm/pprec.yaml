@@ -1,0 +1,67 @@
+# @package _global_
+#
+# PP-Rec on MIND-small with frozen token-level PLM word embeddings.
+#
+# The PLM replaces only the GloVe word embedding — every other branch
+# (entity MHSA + bidirectional cross-attention, category embedding,
+# popularity, recency, activity gater) is unchanged. Title-tokens are
+# replaced with cached (T, plm_dim) BERT outputs projected down to
+# ``embedding_size`` and fed into the existing MHSA / cross-attn /
+# AdditiveAttention pipeline.
+#
+# Skips the abstract PLM cache (PP-Rec only consumes the title view).
+# Usage: python src/train.py experiment=mind/plm/pprec framework=pytorch
+
+defaults:
+  - /spec: pprec
+  - /dataset: mind
+  - /sampling: base
+  - /encoder: bert
+  - _self_
+
+name: mind_pprec_plm
+model_name: PPRec
+seed: 42
+
+encoder:
+  text_field_abstract: ""
+
+dataset:
+  version: small
+  max_title_length: ${spec.inputs.title.max_length}
+  max_history_length: ${spec.inputs.history.max_length}
+  process_title: ${spec.inputs.process_title}
+  process_abstract: ${spec.inputs.process_abstract}
+  process_category: ${spec.inputs.process_category}
+  process_subcategory: ${spec.inputs.process_subcategory}
+  process_user_id: ${spec.inputs.process_user_id}
+  process_entities: true
+  max_entities: ${spec.inputs.max_entities}
+
+# PLM-specific batch override. PP-Rec JAX PLM at the spec default
+# bs=256 OOMs at the epoch-1→2 transition: XLA holds the JIT-compiled
+# eval graph (per-impression scoring is heavy) in memory while
+# planning the next training step, and the 10.88 GB allocation
+# fails on a 40 GB GPU. bs=64 / eval_bs=128 fits cleanly with
+# room for both graphs in the XLA cache.
+train:
+  batch_size: 64
+  num_epochs: ${spec.training.num_epochs}
+  learning_rate: ${spec.training.learning_rate}
+  early_stopping:
+    patience: ${spec.training.early_stopping.patience}
+    min_improvement: ${spec.training.early_stopping.min_improvement}
+
+eval:
+  fast_evaluation: true
+  batch_size: 128
+
+sampling:
+  max_impressions_length: ${spec.inputs.impressions.max_length}
+  strategy: ${spec.training.negative_sampling.strategy}
+  random:
+    replace: false
+
+device:
+  gpu_ids: [0]
+  precision: float32

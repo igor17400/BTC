@@ -19,16 +19,20 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import optax
+import wandb
 from flax import nnx
 from rich.console import Console
 from safetensors.numpy import save_file as save_safetensors
 
-import wandb
 from src.core.io.logging import (
     log_early_stopping,
     log_epoch_end,
 )
 from src.core.io.progress import ProgressManager, create_progress
+from src.core.io.saving import cleanup_val_staging, promote_best_val_predictions
+from src.core.io.timing import PhaseStats
+
+from .losses import categorical_cross_entropy
 
 logger = logging.getLogger(__name__)
 
@@ -76,7 +80,14 @@ def make_train_step(loss_fn, get_aux_loss=None, use_jit: bool = True):
                 total = total + get_aux_loss(model)
             return total
 
-        loss, grads = nnx.value_and_grad(_loss)(model)
+        # Differentiate only ``nnx.Param`` leaves. Without this, NNX
+        # differentiates ALL Variables in the model — including any
+        # FrozenCache subclass used to hold frozen PLM caches. A 10 GB
+        # abstract cache → 10 GB zero-gradient buffer → OOM at the
+        # epoch-2 train-step retrace boundary.
+        loss, grads = nnx.value_and_grad(_loss, argnums=nnx.DiffState(0, nnx.Param))(
+            model
+        )
         if _OPT_UPDATE_TAKES_MODEL:
             optimizer.update(model, grads)
         else:
@@ -157,6 +168,7 @@ def training_loop(
     gradient_clip_norm: float = 0.0,
     early_stopping_patience: int = 5,
     early_stopping_min_improvement: float = 0.01,
+    warmup_ratio: float = 0.0,
     loss_fn=None,
     get_aux_loss=None,
     use_jit: bool = True,
@@ -194,8 +206,6 @@ def training_loop(
     """
     # ---- Loss function ---------------------------------------------------
     if loss_fn is None:
-        from .losses import categorical_cross_entropy
-
         loss_fn = categorical_cross_entropy
 
     train_step = make_train_step(loss_fn, get_aux_loss=get_aux_loss, use_jit=use_jit)
@@ -204,10 +214,29 @@ def training_loop(
     components = []
     if gradient_clip_norm > 0:
         components.append(optax.clip_by_global_norm(gradient_clip_norm))
-    if weight_decay > 0:
-        components.append(optax.adamw(learning_rate, weight_decay=weight_decay))
+
+    # LR schedule: optional linear warmup then constant
+    if warmup_ratio > 0.0 and hasattr(train_dataloader, "__len__"):
+        total_steps = num_epochs * len(train_dataloader)
+        warmup_steps = int(total_steps * warmup_ratio)
+        schedule = optax.warmup_constant_schedule(
+            init_value=0.0,
+            peak_value=learning_rate,
+            warmup_steps=warmup_steps,
+        )
+        if weight_decay > 0:
+            components.append(optax.adamw(schedule, weight_decay=weight_decay))
+        else:
+            components.append(optax.adam(schedule))
+        logger.info(
+            f"LR warmup: {warmup_steps} steps ({warmup_ratio * 100:.0f}% of {total_steps})"
+        )
     else:
-        components.append(optax.adam(learning_rate))
+        if weight_decay > 0:
+            components.append(optax.adamw(learning_rate, weight_decay=weight_decay))
+        else:
+            components.append(optax.adam(learning_rate))
+
     tx = optax.chain(*components) if len(components) > 1 else components[0]
 
     optimizer = nnx.Optimizer(model, tx, wrt=nnx.Param)
@@ -242,8 +271,9 @@ def training_loop(
 
     # ---- Timing ----------------------------------------------------------
     timing: dict[str, Any] = {
-        "epoch_training_times": [],
-        "epoch_validation_times": [],
+        "train_epochs": [],
+        "val_epochs": [],
+        "time_to_first_step_seconds": None,
     }
     experiment_start = time.time()
 
@@ -257,6 +287,7 @@ def training_loop(
             epoch_start = time.time()
             epoch_loss = 0.0
             num_batches = 0
+            samples_seen = 0
 
             # Batch loop
             batch_task = progress.add_task(
@@ -269,8 +300,16 @@ def training_loop(
 
             for batch_features, batch_labels in train_dataloader:
                 loss = train_step(model, optimizer, batch_features, batch_labels)
+                # block on first step in the run so the JIT-compile cost
+                # is captured rather than buried in async dispatch.
+                if timing["time_to_first_step_seconds"] is None:
+                    jax.block_until_ready(loss)
+                    timing["time_to_first_step_seconds"] = (
+                        time.time() - experiment_start
+                    )
                 epoch_loss += float(loss)
                 num_batches += 1
+                samples_seen += int(getattr(batch_labels, "shape", [0])[0])
                 progress.update(
                     batch_task,
                     advance=1,
@@ -279,12 +318,26 @@ def training_loop(
                         f"(Loss: {epoch_loss / num_batches:.4f})"
                     ),
                 )
+            # Force completion of all dispatched work so wall_seconds is honest.
+            jax.block_until_ready(loss)
 
             progress.remove_task(batch_task)
 
             avg_loss = epoch_loss / max(num_batches, 1)
             epoch_train_time = time.time() - epoch_start
-            timing["epoch_training_times"].append(epoch_train_time)
+
+            train_stats = PhaseStats(
+                wall_seconds=epoch_train_time,
+                n_steps=num_batches,
+                n_samples=samples_seen,
+                throughput_samples_per_s=(
+                    samples_seen / epoch_train_time if epoch_train_time > 0 else None
+                ),
+                throughput_steps_per_s=(
+                    num_batches / epoch_train_time if epoch_train_time > 0 else None
+                ),
+            )
+            timing["train_epochs"].append(train_stats.to_dict())
 
             # ---- Evaluation ----------------------------------------------
             val_metrics: dict[str, float] | None = None
@@ -295,7 +348,20 @@ def training_loop(
                 eval_start = time.time()
                 val_metrics = eval_fn(model, epoch=epoch, **(eval_kwargs or {}))
                 eval_time = time.time() - eval_start
-                timing["epoch_validation_times"].append(eval_time)
+
+                n_imps = (
+                    int(val_metrics.get("_num_impressions", 0))
+                    if isinstance(val_metrics, dict)
+                    else 0
+                )
+                val_stats = PhaseStats(
+                    wall_seconds=eval_time,
+                    n_samples=n_imps or None,
+                    throughput_samples_per_s=(
+                        n_imps / eval_time if (n_imps and eval_time > 0) else None
+                    ),
+                )
+                timing["val_epochs"].append(val_stats.to_dict())
 
                 # Best tracking
                 main_metrics = ["auc", "mrr", "ndcg@5", "ndcg@10"]
@@ -313,6 +379,10 @@ def training_loop(
                     # Deep-copy best model state so later NaN corruption
                     # doesn't propagate into the saved checkpoint.
                     best_state = jax.tree.map(lambda x: x.copy(), nnx.state(model))
+                    if save_dir:
+                        promote_best_val_predictions(
+                            Path(save_dir).parent / "predictions"
+                        )
 
             # Log epoch (shared format)
             log_epoch_end(
@@ -359,7 +429,16 @@ def training_loop(
 
             # Flatten the state dict to dot-separated keys and convert
             # all arrays to numpy.  PRNGKey arrays are skipped (not
-            # model weights).
+            # model weights). Frozen PLM caches are also skipped — they
+            # are large (multi-GB) read-only buffers regenerable from
+            # ``.cache/plm_embeds/`` on disk, and including them bloats
+            # checkpoints to ~6-10 GB per seed.
+            _PLM_CACHE_SUBSTRINGS = (
+                "token_embeddings",
+                "attention_mask",
+                "plm_token_embeddings",
+                "plm_attention_mask",
+            )
             flat = {}
             for key_path, leaf in jax.tree_util.tree_leaves_with_path(best_state):
                 name = ".".join(str(k) for k in key_path)
@@ -367,11 +446,14 @@ def training_loop(
                     leaf.dtype, jax.dtypes.prng_key
                 ):
                     continue  # skip RNG state
+                if any(s in name for s in _PLM_CACHE_SUBSTRINGS):
+                    continue  # skip frozen PLM token/mask caches
                 flat[name] = np.asarray(leaf)
             save_safetensors(flat, str(ckpt_path))
             logger.info("Saved best model weights to %s", ckpt_path)
 
-    timing["total_training_time"] = time.time() - experiment_start
-    best_metrics["timing"] = timing
+    if save_dir:
+        cleanup_val_staging(Path(save_dir).parent / "predictions")
 
+    best_metrics["timing"] = timing
     return best_metrics

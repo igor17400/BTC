@@ -115,7 +115,9 @@ def test_popularity_encoder_forward():
     out_np = keras.ops.convert_to_numpy(out)
     assert out_np.shape == (B,), out_np.shape
     assert np.isfinite(out_np).all(), "non-finite popularity score"
-    print(f"[OK] popularity encoder: out range [{out_np.min():.3f}, {out_np.max():.3f}]")
+    print(
+        f"[OK] popularity encoder: out range [{out_np.min():.3f}, {out_np.max():.3f}]"
+    )
 
 
 # ---- 3. Full TCCM model forward (and backward) on synthetic data ----------

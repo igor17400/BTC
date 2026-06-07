@@ -158,5 +158,8 @@ def compute_metrics(
         "loss": (val_loss_total / num_valid) if num_valid > 0 else 0.0,
     }
     for name, vals in metric_agg.items():
-        final[name] = float(np.mean(vals)) if vals else 0.0
+        # nanmean: skip degenerate impressions (AUC=NaN when one class
+        # only), matching reference GLORY's np.nanmean over per-impression
+        # sklearn AUC.
+        final[name] = float(np.nanmean(vals)) if vals else 0.0
     return final

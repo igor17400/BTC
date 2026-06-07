@@ -4,7 +4,7 @@
 # Usage: python src/train.py experiment=fastmind/nrms framework=keras
 
 defaults:
-  - /experiment/mind/nrms
+  - /experiment/mind/glove/nrms
   - override /dataset: fastmind
   - _self_
 

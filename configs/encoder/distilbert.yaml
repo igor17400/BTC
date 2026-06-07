@@ -1,0 +1,15 @@
+# Canonical DistilBERT encoder. See bert.yaml for schema documentation.
+# ~40% smaller, ~60% faster than BERT-base, retains ~97% of GLUE perf.
+type: distilbert
+slug: distilbert
+plm_name: distilbert      # → "distilbert-base-uncased"
+plm_dim: 768
+
+text_field: title
+max_length: 32
+text_field_abstract: abstract
+max_length_abstract: 50
+batch_size: 96
+
+trainability: frozen_cached
+trainable_layers: 0

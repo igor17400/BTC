@@ -1,16 +1,24 @@
 defaults:
 - _self_
-- experiment: mind/nrms  # default experiment (loads spec + dataset)
+- experiment: mind/glove/nrms  # default experiment (loads spec + dataset + encoder)
 - override hydra/hydra_logging: disabled
 - override hydra/job_logging: disabled
 
 # Hydra configuration
 hydra:
   run:
-    dir: ${output_base_dir}/train/${dataset.name}/${model_name}/${framework}/seed_${seed}
+    # Path layout segregates runs by validation_split_strategy and encoder
+    # so `random` vs `dev_as_val`, and GloVe vs PLM variants, don't
+    # overwrite each other. ``encoder.slug`` defaults to ``glove`` so
+    # existing GloVe paths gain a stable extra segment.
+    dir: ${output_base_dir}/train/${dataset.name}/${model_name}/${framework}/${encoder.slug}/${dataset.validation_split_strategy}/seed_${seed}
   sweep:
-    dir: ${output_base_dir}/multirun/${now:%Y-%m-%d}/${now:%H-%M-%S}
-    subdir: ${hydra.job.num}
+    # Multirun jobs land at the same structured path as single runs,
+    # not in a timestamped "multirun/" silo. Each override produces a
+    # unique (model_name, framework, encoder, split, seed) tuple so
+    # subdirs don't collide.
+    dir: ${output_base_dir}/train
+    subdir: ${dataset.name}/${model_name}/${framework}/${encoder.slug}/${dataset.validation_split_strategy}/seed_${seed}
   job:
     chdir: false
 
@@ -37,7 +45,7 @@ train:
   gradient_clip_val: 1.0
   grad_accum_steps: 1
   early_stopping:
-    patience: 5
+    patience: 3
     min_improvement: 0.01
 
 # Default evaluation parameters (overridden by experiment → spec)
@@ -53,8 +61,11 @@ eval:
 logging:
   project_name: NewsReX
   enable_wandb: true
-  experiment_name: ${framework}/${dataset.name}/${model_name}
-  wandb_group: ${framework}/${dataset.name}/${model_name}
+  # Include the validation split strategy AND encoder in W&B names so
+  # random / dev_as_val and GloVe / PLM variants don't share a name and
+  # group. The segments mirror the output directory layout above.
+  experiment_name: ${framework}/${dataset.name}/${model_name}/${encoder.slug}/${dataset.validation_split_strategy}
+  wandb_group: ${framework}/${dataset.name}/${model_name}/${encoder.slug}/${dataset.validation_split_strategy}
   progress_backend: rich  # "rich" (interactive) or "tqdm" (line-by-line, for background agents)
 
 # Metrics configuration

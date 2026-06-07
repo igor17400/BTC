@@ -153,6 +153,82 @@ class PyTorchAdapter:
         return scores.detach().cpu().numpy()
 
     # ------------------------------------------------------------------
+    # CROWN-specific methods (candidate-aware user encoder).
+    # ------------------------------------------------------------------
+
+    def encode_crown_history_graph(
+        self,
+        user_encoder: Any,
+        features: Any,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        """Encode history packed features through news encoder + 1-layer SAGE.
+
+        Args:
+            user_encoder: CROWN :class:`UserEncoder`.
+            features: ``(B, H, 3)`` packed ``[news_idx | cat | subcat]`` int.
+
+        Returns:
+            ``(gcn_news_np, mask_np)`` where ``gcn_news_np`` is
+            ``(B, H, D)`` GNN-updated history reps and ``mask_np`` is
+            ``(B, H)`` bool indicating valid slots.
+        """
+        user_encoder.eval()
+        device = next(user_encoder.parameters()).device
+        if isinstance(features, np.ndarray):
+            features = torch.as_tensor(features)
+        features = features.long().to(device)
+        with torch.no_grad():
+            mask = user_encoder.news_encoder.valid_mask(features)
+            news_history = user_encoder.news_encoder(features, compute_aux_loss=False)
+            gcn_news = user_encoder.run_gnn(news_history, mask)
+        return (
+            gcn_news.detach().cpu().numpy(),
+            mask.detach().cpu().numpy().astype(bool),
+        )
+
+    def run_crown_candidate_attention(
+        self,
+        user_encoder: Any,
+        gcn_news: np.ndarray,
+        hist_mask: np.ndarray,
+        cand_news_vecs: np.ndarray,
+        max_C: int | None = None,
+    ) -> np.ndarray:
+        """Candidate-aware scaled-dot attention + click score for one impression.
+
+        Args:
+            user_encoder: CROWN :class:`UserEncoder`.
+            gcn_news: ``(H, D)`` GNN-updated history reps (numpy).
+            hist_mask: ``(H,)`` bool numpy.
+            cand_news_vecs: ``(C, D)`` candidate news representations (numpy).
+            max_C: Optional pad-to size — kept for API parity with the
+                JAX adapter (where this is essential to avoid per-
+                impression JIT recompiles). On PyTorch the padding is
+                a no-op for correctness and just wastes a tiny bit of
+                compute on the padded zero rows.
+
+        Returns:
+            ``(real_C,)`` numpy array of click scores.
+        """
+        user_encoder.eval()
+        device = next(user_encoder.parameters()).device
+        real_C, D = cand_news_vecs.shape
+        pad_to = max_C if max_C is not None else real_C
+        if pad_to == real_C:
+            c_pad = cand_news_vecs
+        else:
+            c_pad = np.zeros((pad_to, D), dtype=np.float32)
+            c_pad[:real_C] = cand_news_vecs
+
+        g = torch.as_tensor(gcn_news, dtype=torch.float32, device=device).unsqueeze(0)
+        m = torch.as_tensor(hist_mask, dtype=torch.bool, device=device).unsqueeze(0)
+        c = torch.as_tensor(c_pad, dtype=torch.float32, device=device).unsqueeze(0)
+        with torch.no_grad():
+            user_per_cand = user_encoder.candidate_attention(g, c, m)
+            scores = (user_per_cand * c).sum(dim=-1)
+        return scores.squeeze(0)[:real_C].detach().cpu().numpy()
+
+    # ------------------------------------------------------------------
     # CAUM-specific methods
     # ------------------------------------------------------------------
 
@@ -213,13 +289,22 @@ class PyTorchAdapter:
         tokens: Any,
         mask: Any,
     ) -> Any:
-        """Run the DIGAT MSA news encoder on a raw token batch."""
+        """Run the DIGAT MSA news encoder on a raw token / id batch.
+
+        GloVe: ``tokens`` is 2D ``(B, T)`` — adds a num_news axis to
+        match the encoder's expected ``(B, N, T)`` shape.
+        PLM:   ``tokens`` is 1D ``(B,)`` parsed news_idx — adds the
+        num_news axis to make it ``(B, 1)``. Mask is ignored.
+        """
         news_encoder.eval()
         device = next(news_encoder.parameters()).device
         tokens_t = torch.as_tensor(tokens, dtype=torch.long).to(device)
-        mask_t = torch.as_tensor(mask, dtype=torch.float32).to(device)
         with torch.no_grad():
-            emb = news_encoder(tokens_t.unsqueeze(1), mask_t.unsqueeze(1))
+            if tokens_t.dim() == 1:
+                emb = news_encoder(tokens_t.unsqueeze(1), None)
+            else:
+                mask_t = torch.as_tensor(mask, dtype=torch.float32).to(device)
+                emb = news_encoder(tokens_t.unsqueeze(1), mask_t.unsqueeze(1))
         return emb.squeeze(1).detach().cpu().numpy()
 
     def encode_digat_graph_context(

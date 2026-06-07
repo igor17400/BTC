@@ -84,6 +84,34 @@ def _detect_seed(run_path: Path) -> str | None:
     return None
 
 
+def _detect_split_strategy(run_path: Path) -> str:
+    """Detect validation split strategy from the run path.
+
+    Expects the post-migration layout where the split is the parent of
+    ``seed_*``: ``.../{framework}/{split}/seed_*/``.
+    Falls back to ``"random"`` for legacy paths missing the split segment.
+    """
+    known_splits = {"random", "chronological", "dev_as_val"}
+    for parent in [run_path] + list(run_path.parents):
+        if parent.name in known_splits:
+            return parent.name
+    return "random"
+
+
+def _detect_encoder(run_path: Path) -> str:
+    """Detect the encoder (glove / bert / ...) from the run path.
+
+    Layout is ``.../{framework}/{encoder}/{split}/seed_*/`` — the encoder is
+    the segment immediately below the framework dir. Falls back to ``"glove"``.
+    """
+    parts = run_path.resolve().parts
+    frameworks = {"pytorch", "jax", "keras"}
+    for i, p in enumerate(parts):
+        if p in frameworks and i + 1 < len(parts):
+            return parts[i + 1]
+    return "glove"
+
+
 def _load_test_results(run_path: Path) -> dict:
     """Load test results if available."""
     p = run_path / "test_results.json"
@@ -224,13 +252,13 @@ cd NewsReX && uv sync
 
 # Run evaluation with best seed weights
 uv run python src/eval.py \\
-    experiment=mind/{model_name.lower()} \\
+    experiment=mind/glove/{model_name.lower()} \\
     framework={framework} \\
     weights=hf://{repo_id}/model.safetensors
 
 # Run evaluation with a specific seed
 uv run python src/eval.py \\
-    experiment=mind/{model_name.lower()} \\
+    experiment=mind/glove/{model_name.lower()} \\
     framework={framework} \\
     weights=hf://{repo_id}/seed_42/model.safetensors
 ```
@@ -283,7 +311,14 @@ def upload(
     model_name = _detect_model_name(ref_dir)
     framework = _detect_framework(ref_dir)
     dataset = _detect_dataset(ref_dir)
-    repo_id = f"{org}/{model_name}-{framework.upper()}-{dataset.replace(' ', '-')}"
+    split_strategy = _detect_split_strategy(ref_dir)
+    encoder = _detect_encoder(ref_dir)
+    # Repo name includes the encoder AND split strategy so glove/bert and
+    # dev_as_val/random weights don't collide in the same HF repo.
+    repo_id = (
+        f"{org}/{model_name}-{framework.upper()}-"
+        f"{dataset.replace(' ', '-')}-{encoder}-{split_strategy}"
+    )
 
     # Collect results per seed.
     seed_results = []
