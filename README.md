@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="newsrex_logo.png" alt="NewsReX Logo" width="300">
+</p>
+
 # _NewsReX_: A Modular Framework for News Recommendation Research
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/release/python-3120/)
