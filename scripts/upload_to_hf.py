@@ -286,6 +286,7 @@ def upload(
     org: str = "newsrex",
     private: bool = False,
     dry_run: bool = False,
+    tag: str | None = None,
 ):
     """Upload trained model(s) to Hugging Face Hub.
 
@@ -406,7 +407,13 @@ def upload(
             commit_message=f"Upload {model_name} ({framework}) trained on {dataset} — {len(seed_results)} seeds",
         )
 
+        # Pin this upload so later pushes to main don't move published results.
+        if tag:
+            api.create_tag(repo_id, tag=tag, repo_type="model", exist_ok=True)
+
     print(f"\nUploaded to: https://huggingface.co/{repo_id}")
+    if tag:
+        print(f'Tagged:      {tag}  (load with revision="{tag}")')
 
 
 def main():
@@ -440,6 +447,13 @@ def main():
         action="store_true",
         help="Show what would be uploaded without actually uploading",
     )
+    parser.add_argument(
+        "--tag",
+        type=str,
+        default=None,
+        help="Tag the uploaded revision (e.g. v1.0.0-cikm26) so later pushes "
+        "to main do not move published results",
+    )
     args = parser.parse_args()
 
     upload(
@@ -448,6 +462,7 @@ def main():
         org=args.org,
         private=args.private,
         dry_run=args.dry_run,
+        tag=args.tag,
     )
 
 
